@@ -146,10 +146,10 @@ footer { color: var(--muted); font-size: 13.5px; border-top: 1px solid var(--lin
 
   <main>
     <header>
-      <span class="eyebrow">email-canister · v0.2.0</span>
+      <span class="eyebrow">email-canister · v0.3.0</span>
       <h1>How email-canister works</h1>
       <p class="lede">email-canister is a product: a repository whose versioned releases hold the code a domain needs to run its own mail on the Internet Computer. A deployment serves one domain with two canisters you control, a C++ backend that receives, stores, indexes and sends mail, and a webmail that users sign in to with Internet Identity, plus a small domain canister for a domain registered elsewhere. The domain also needs a Caffeine app, which is not part of a release: it serves the domain's website, and sends mail through the release's bridge code added to its backend. This page explains each part, where it lives, how mail moves through them, and what you take on by relying on it.</p>
-      <div class="meta"><span>Covers release v0.2.0</span><span>Source: docs/design.md, docs/setup-guide.md, bridge/README.md, webmail/brand/README.md, scripts/make-release-zip.sh</span></div>
+      <div class="meta"><span>Covers release v0.3.0</span><span>Source: docs/design.md, docs/setup-guide.md, bridge/README.md, webmail/brand/README.md, scripts/make-release-zip.sh</span></div>
     </header>
 
     <section id="overview">
@@ -559,7 +559,7 @@ footer { color: var(--muted); font-size: 13.5px; border-top: 1px solid var(--lin
             <dt>Code</dt><dd>C++20 compiled to wasm, from the repository's <code>src/</code>. It links libetpan for MIME parsing and SQLite with FTS5. The release ships the compiled wasm.</dd>
             <dt>Does</dt><dd>Receives mail from the SMTP gateway, stores and indexes it in one SQLite file per mailbox, serves the mailbox API and each member's download of a mailbox to the webmail, sends through the relay bridge, and enforces every access rule.</dd>
             <dt>Interfaces</dt><dd>Candid, described in <code>email-canister.did</code>: SMTP methods, <code>mail_*</code> methods for the mailboxes a user is a member of, <code>admin_*</code> methods for controllers, and timers that call <code>ingest_*</code> methods and <code>outbox_pump</code> on itself.</dd>
-            <dt>Limits</dt><dd>One domain per canister. 40B instructions per update call and 5B per query bound every operation; see <a href="#limits">Measured limits</a>. Stop the canister before upgrading; timers are re-armed afterwards from <code>control.db</code>. An upgrade keeps the mail: the ingest timer takes each mailbox file to the release's schema, one at a time. A canister that runs v0.1.x cannot be upgraded to v0.2.0 or later: it is reinstalled, which erases its mail.</dd>
+            <dt>Limits</dt><dd>One domain per canister. 40B instructions per update call and 5B per query bound every operation; see <a href="#limits">Measured limits</a>. Stop the canister before upgrading; timers are re-armed afterwards from <code>control.db</code>. An upgrade keeps the mail: the ingest timer takes each mailbox file to the release's schema, one at a time. A canister that runs v0.1.x cannot be upgraded to a later release: it is reinstalled, which erases its mail.</dd>
           </dl>
         </div>
         <div class="component">
@@ -728,7 +728,7 @@ footer { color: var(--muted); font-size: 13.5px; border-top: 1px solid var(--lin
           </tbody>
         </table>
       </div>
-      <div class="prose"><p>One database per mailbox, measured by the v0.2.0 test suite:</p></div>
+      <div class="prose"><p>One database per mailbox, measured by the test suite, whose cost bounds every release passes:</p></div>
       <div class="table-wrap">
         <table>
           <thead><tr><th>Operation</th><th>Instructions</th><th>Share of its limit</th></tr></thead>
@@ -778,7 +778,7 @@ footer { color: var(--muted); font-size: 13.5px; border-top: 1px solid var(--lin
     </section>
 
     <footer>
-      <p>Updated for release v0.2.0. The source of truth is the repository: <code>docs/design.md</code> for the design and its measurements, <code>docs/setup-guide.md</code> for deploying, and <code>ROADMAP.md</code> for what comes next, including aliases, mailbox states and per-mailbox rate limits.</p>
+      <p>Updated for release v0.3.0. The source of truth is the repository: <code>docs/design.md</code> for the design and its measurements, <code>docs/setup-guide.md</code> for deploying, and <code>ROADMAP.md</code> for what comes next, including aliases, mailbox states and per-mailbox rate limits.</p>
     </footer>
   </main>
 </div>
