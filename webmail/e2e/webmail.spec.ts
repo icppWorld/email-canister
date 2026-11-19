@@ -3374,3 +3374,42 @@ test('a message marked unread while it loads stays unread', async ({
   expect(items[0].flags & FLAG_SEEN).toBe(0n)
   await context.close()
 })
+
+test('an unblock made while the list reloads stays', async ({ browser }) => {
+  deliver({
+    subject: 'Rash wren',
+    body: '<p>A wren.</p>',
+    from: 'Rash <rash@sender.example>',
+  })
+  await waitDrained()
+  const alice = await asAlice()
+  await alice.mail_block('alice', 'brisk@sender.example')
+  const { context, page } = await signedIn(browser, USER_A)
+  await openMail(page, 'wren')
+  await expect(page.getByTestId('subject')).toHaveText('Rash wren')
+  page.once('dialog', (dialog) => dialog.accept())
+  await page.getByRole('button', { name: 'Block sender' }).click()
+  const note = page.getByTestId('toast')
+  await expect(note).toHaveText(/Blocked rash@sender.example/)
+  await folder(page, 'Blocked senders')
+  const blocked = page.getByRole('region', { name: 'Blocked senders' })
+  await expect(blocked).toContainText('brisk@sender.example')
+  // The reload after Undo reads the list while brisk is still blocked
+  const loading = await hold(page, 'mail_blocked', { late: true })
+  await note.getByRole('button', { name: 'Undo' }).click()
+  await loading.seen
+  await blocked
+    .getByRole('listitem')
+    .filter({ hasText: 'brisk@sender.example' })
+    .getByRole('button', { name: 'Unblock' })
+    .click()
+  await expect(blocked).not.toContainText('brisk@sender.example')
+  loading.release()
+  await expect(blocked).not.toContainText('rash@sender.example')
+  // A moment more, for the earlier read to show
+  await page.waitForTimeout(2_000)
+  await expect(blocked).not.toContainText('brisk@sender.example', {
+    timeout: 1_000,
+  })
+  await context.close()
+})

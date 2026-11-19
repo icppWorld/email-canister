@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { errorText, type Blocked, type Mailbox } from './api'
 import { formatNs, memberName } from './format'
@@ -17,34 +17,35 @@ export function BlockedSenders({
   const [list, setList] = useState<Blocked[] | null>(null)
   const [error, setError] = useState('')
 
-  useEffect(() => {
-    // Only the newest load shows
-    let current = true
-    backend.mail_blocked().then(
-      (blocked) => {
-        if (!current) return
-        setList(blocked)
-        setError('')
-      },
-      (e) => {
-        if (current) setError(errorText(e))
-      }
-    )
-    return () => {
-      current = false
+  // Only the newest load shows: one read before an unblock would bring the
+  // address back
+  const latestLoad = useRef(0)
+  const load = useCallback(async () => {
+    const request = ++latestLoad.current
+    try {
+      const blocked = await backend.mail_blocked()
+      if (request !== latestLoad.current) return
+      setList(blocked)
+      setError('')
+    } catch (e) {
+      if (request === latestLoad.current) setError(errorText(e))
     }
-  }, [backend, refresh])
+  }, [backend])
+
+  useEffect(() => {
+    load()
+  }, [load, refresh])
 
   const unblock = async (address: string) => {
     try {
       await backend.mail_unblock(address)
-      setList(
-        (blocked) => blocked?.filter((b) => b.address !== address) ?? null
-      )
-      setError('')
     } catch (e) {
       setError(errorText(e))
+      return
     }
+    setList((blocked) => blocked?.filter((b) => b.address !== address) ?? null)
+    setError('')
+    load()
   }
 
   return (
