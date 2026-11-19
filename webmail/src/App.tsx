@@ -517,6 +517,7 @@ export function App() {
             backend={box}
             principal={principal}
             shared={shared}
+            refresh={refresh}
           />
         )}
         {current === 'blocked' && box && (
@@ -540,9 +541,10 @@ export function App() {
             // A send that ends after this draft was closed, as over a new
             // sign-in, leaves the draft open now alone
             if (sendingDraft.current?.clientId !== clientId) return
-            // The folder shown stays; the note leads to the Sent folder of the
-            // mailbox it was sent from
+            // The folder shown stays, reloaded, as a Sent list shows the
+            // message; the note leads to the Sent folder it was sent from
             setDraft(null)
+            setRefresh((count) => count + 1)
             setToast({
               text: 'Message sent',
               action: {

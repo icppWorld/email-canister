@@ -203,7 +203,7 @@ const asAlice = () =>
 async function compose(page: Page, subject: string): Promise<void> {
   await page.getByRole('button', { name: 'Compose' }).click()
   await page.getByLabel('To', { exact: true }).fill('friend@example.org')
-  await page.getByLabel('Subject').fill(subject)
+  await page.getByLabel('Subject', { exact: true }).fill(subject)
 }
 
 const send = (page: Page) =>
@@ -3411,5 +3411,145 @@ test('an unblock made while the list reloads stays', async ({ browser }) => {
   await expect(blocked).not.toContainText('brisk@sender.example', {
     timeout: 1_000,
   })
+  await context.close()
+})
+
+test('the compose window minimises and fills the screen, keeping what it holds', async ({
+  browser,
+}) => {
+  const { context, page } = await signedIn(browser, USER_A)
+  await compose(page, 'Window kestrel')
+  const window = page.getByRole('dialog', { name: 'New message' })
+  // The title bar names the message
+  await expect(window.getByRole('heading')).toHaveText('Window kestrel')
+  await window.getByLabel('Message').fill('Hovering.')
+  await window.getByRole('button', { name: 'Minimise' }).click()
+  await expect(window.getByLabel('Subject')).toBeHidden()
+  const bar = await window.boundingBox()
+  if (!bar) throw new Error('no window')
+  expect(bar.height).toBeLessThan(80)
+  // At the bottom right, clear of the note at the bottom left
+  expect(bar.x + bar.width).toBeGreaterThan(1200)
+  await window.getByRole('button', { name: 'Restore' }).click()
+  await expect(window.getByLabel('Message')).toHaveValue('Hovering.')
+  await window.getByRole('button', { name: 'Full screen' }).click()
+  const full = await window.boundingBox()
+  if (!full) throw new Error('no window')
+  expect(full.width).toBeGreaterThan(1100)
+  expect(full.height).toBeGreaterThan(600)
+  await expect(page.locator('.backdrop')).toBeVisible()
+  await window.getByRole('button', { name: 'Exit full screen' }).click()
+  const normal = await window.boundingBox()
+  if (!normal) throw new Error('no window')
+  expect(normal.width).toBeLessThanOrEqual(560)
+  await expect(page.locator('.backdrop')).toHaveCount(0)
+  await expect(window.getByLabel('Subject')).toHaveValue('Window kestrel')
+  await window.getByRole('button', { name: 'Close' }).click()
+  await expect(window).toHaveCount(0)
+  await context.close()
+})
+
+test('at phone width the list and the open message take turns, and compose fills the screen', async ({
+  browser,
+}) => {
+  deliver({ subject: 'Phone plover', body: '<p>A plover.</p>' })
+  await waitDrained()
+  const { context, page } = await signedIn(browser, USER_A, {
+    viewport: { width: 390, height: 844 },
+  })
+  const list = page.getByRole('region', { name: 'Messages' })
+  await openMail(page, 'plover')
+  await expect(page.getByTestId('subject')).toHaveText('Phone plover')
+  await expect(list).toBeHidden()
+  await page.getByRole('button', { name: 'Back' }).click()
+  await expect(list).toBeVisible()
+  await expect(page.getByTestId('subject')).toHaveCount(0)
+  // The list has the screen's height to itself
+  const box = await list.boundingBox()
+  if (!box) throw new Error('no list')
+  expect(box.height).toBeGreaterThan(500)
+
+  await page.getByRole('button', { name: 'Compose' }).click()
+  const window = page.getByRole('dialog', { name: 'New message' })
+  expect(await window.boundingBox()).toEqual({
+    x: 0,
+    y: 0,
+    width: 390,
+    height: 844,
+  })
+  await expect(window.getByRole('button', { name: 'Full screen' })).toBeHidden()
+  await window.getByRole('button', { name: 'Minimise' }).click()
+  const bar = await window.boundingBox()
+  if (!bar) throw new Error('no window')
+  expect(bar.height).toBeLessThan(80)
+  expect(bar.y + bar.height).toBe(844)
+  await context.close()
+})
+
+test('on a touch screen the row box and star are large enough to tap', async ({
+  browser,
+}) => {
+  deliver({ subject: 'Tapped dunlin', body: '<p>A dunlin.</p>' })
+  await waitDrained()
+  const { context, page } = await signedIn(browser, USER_A, {
+    viewport: { width: 390, height: 844 },
+    hasTouch: true,
+    isMobile: true,
+  })
+  expect(
+    await page.evaluate(() => matchMedia('(pointer: coarse)').matches)
+  ).toBe(true)
+  await search(page, 'dunlin')
+  const row = page.locator('li.message-row', { hasText: 'Tapped dunlin' })
+  await expect(row).toHaveCount(1)
+  for (const target of [
+    row.locator('.pick-area'),
+    row.getByRole('button', { name: 'Star Tapped dunlin', exact: true }),
+  ]) {
+    const box = await target.boundingBox()
+    if (!box) throw new Error('no target')
+    expect(box.width).toBeGreaterThanOrEqual(44)
+    expect(box.height).toBeGreaterThanOrEqual(44)
+  }
+  // The box itself keeps its size, and a tap away from it ticks it
+  const pick = row.getByRole('checkbox')
+  const drawn = await pick.boundingBox()
+  if (!drawn) throw new Error('no box')
+  expect(drawn.width).toBeLessThan(32)
+  await row.locator('.pick-area').tap({ position: { x: 40, y: 40 } })
+  await expect(pick).toBeChecked()
+  await context.close()
+})
+
+const QUILL = '4c'.repeat(32)
+
+test('a message sent while older mail is shown in Sent shows there', async ({
+  browser,
+}) => {
+  joinMailbox('quill', QUILL)
+  const quill = await asUser(QUILL, env.url, env.backend)
+  // More than one page
+  await Promise.all(
+    Array.from({ length: 51 }, (_, i) =>
+      quill.mail_send('quill', {
+        client_id: crypto.randomUUID(),
+        to: ['friend@example.org'],
+        cc: [],
+        bcc: [],
+        subject: `Quill page ${i}`,
+        html_body: '<p>Filler</p>',
+        attachments: [],
+      })
+    )
+  )
+  const { context, page } = await signedIn(browser, QUILL)
+  await folder(page, 'Sent')
+  const sent = page.getByRole('region', { name: 'Sent mail' })
+  await page.getByRole('button', { name: 'Older mail' }).click()
+  await expect(sent.getByRole('listitem')).toHaveCount(51)
+  await compose(page, 'Fresh quill')
+  await send(page)
+  await expect(page.getByRole('dialog', { name: 'New message' })).toHaveCount(0)
+  await expect(sent).toContainText('Fresh quill', { timeout: 4_000 })
   await context.close()
 })

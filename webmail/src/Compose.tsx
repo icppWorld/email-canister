@@ -8,6 +8,7 @@ import {
   type Backend,
   type MailboxInfo,
 } from './api'
+import { Icon } from './Icon'
 import { textToHtml } from './mime'
 
 // Held in memory only, so a draft survives signing in again but not a reload
@@ -23,6 +24,9 @@ export type Draft = {
   files?: File[]
   clientId?: string
 }
+
+// At phone width the window always fills the screen
+type Size = 'normal' | 'minimised' | 'full'
 
 function addresses(text: string): string[] {
   return text.split(/[,;\s]+/).filter(Boolean)
@@ -54,6 +58,7 @@ export function Compose({
   const [subject, setSubject] = useState(draft.subject ?? '')
   const [body, setBody] = useState(draft.body ?? '')
   const [files, setFiles] = useState<File[]>(draft.files ?? [])
+  const [size, setSize] = useState<Size>('normal')
   const [sending, setSending] = useState(false)
   const [error, setError] = useState('')
   // The same id across retries of this draft, also from another of the
@@ -100,101 +105,137 @@ export function Compose({
     }
   }
 
+  const minimised = size === 'minimised'
+  const full = size === 'full'
   return (
-    <div className="dialog" role="dialog" aria-label="New message">
-      <div className="toolbar">
-        <h2>New message</h2>
-        <button onClick={onClose}>Close</button>
-      </div>
-      {(mailboxes.length > 1 || !listed) && (
-        <label>
-          From
-          <select
-            aria-label="From"
-            value={from}
-            onChange={(e) => setFrom(e.target.value)}
+    <>
+      {full && <div className="backdrop" />}
+      <div
+        className={`dialog compose ${size}`}
+        role="dialog"
+        aria-label="New message"
+      >
+        <div className="compose-bar">
+          <h2>{subject.trim() || 'New message'}</h2>
+          <button
+            className="bare"
+            aria-label={minimised ? 'Restore' : 'Minimise'}
+            title={minimised ? 'Restore' : 'Minimise'}
+            onClick={() => setSize(minimised ? 'normal' : 'minimised')}
           >
-            {mailboxes.map((m) => (
-              <option key={m.local} value={m.local}>
-                {m.address}
-              </option>
-            ))}
-            {/* A draft from a mailbox no longer listed still says where from */}
-            {!listed && <option value={from}>{from}</option>}
-          </select>
-        </label>
-      )}
-      <label>
-        To
-        <input
-          aria-label="To"
-          value={to}
-          onChange={(e) => setTo(e.target.value)}
-        />
-      </label>
-      <label>
-        Cc
-        <input
-          aria-label="Cc"
-          value={cc}
-          onChange={(e) => setCc(e.target.value)}
-        />
-      </label>
-      <label>
-        Bcc
-        <input
-          aria-label="Bcc"
-          value={bcc}
-          onChange={(e) => setBcc(e.target.value)}
-        />
-      </label>
-      <label>
-        Subject
-        <input
-          aria-label="Subject"
-          value={subject}
-          onChange={(e) => setSubject(e.target.value)}
-        />
-      </label>
-      <textarea
-        aria-label="Message"
-        value={body}
-        onChange={(e) => setBody(e.target.value)}
-      />
-      <label className="files">
-        Attachments
-        <input
-          aria-label="Attachments"
-          type="file"
-          multiple
-          onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
-        />
-      </label>
-      {/* A file input cannot be refilled, so a restored draft names its files here */}
-      {files.length > 0 && (
-        <p className="hint" data-testid="attached">
-          Attached: {files.map((f) => f.name).join(', ')}
-        </p>
-      )}
-      {tooLarge && (
-        <p className="error" role="alert">
-          This message is too large to send. Attachments can total about 1.4 MB.
-        </p>
-      )}
-      {error && (
-        <p className="error" role="alert">
-          {error}
-        </p>
-      )}
-      <div className="row">
-        <button
-          className="primary"
-          onClick={send}
-          disabled={sending || tooLarge}
-        >
-          {sending ? 'Sending…' : 'Send'}
-        </button>
+            <Icon name={minimised ? 'chevronUp' : 'minus'} />
+          </button>
+          <button
+            className="bare full-toggle"
+            aria-label={full ? 'Exit full screen' : 'Full screen'}
+            title={full ? 'Exit full screen' : 'Full screen'}
+            onClick={() => setSize(full ? 'normal' : 'full')}
+          >
+            <Icon name={full ? 'minimize' : 'maximize'} />
+          </button>
+          <button
+            className="bare"
+            aria-label="Close"
+            title="Close"
+            onClick={onClose}
+          >
+            <Icon name="close" />
+          </button>
+        </div>
+        {/* Hidden, not removed, when minimised: the fields keep what they hold */}
+        <div className="compose-body" hidden={minimised}>
+          {(mailboxes.length > 1 || !listed) && (
+            <label>
+              From
+              <select
+                aria-label="From"
+                value={from}
+                onChange={(e) => setFrom(e.target.value)}
+              >
+                {mailboxes.map((m) => (
+                  <option key={m.local} value={m.local}>
+                    {m.address}
+                  </option>
+                ))}
+                {/* A draft from a mailbox no longer listed still says where from */}
+                {!listed && <option value={from}>{from}</option>}
+              </select>
+            </label>
+          )}
+          <label>
+            To
+            <input
+              aria-label="To"
+              value={to}
+              onChange={(e) => setTo(e.target.value)}
+            />
+          </label>
+          <label>
+            Cc
+            <input
+              aria-label="Cc"
+              value={cc}
+              onChange={(e) => setCc(e.target.value)}
+            />
+          </label>
+          <label>
+            Bcc
+            <input
+              aria-label="Bcc"
+              value={bcc}
+              onChange={(e) => setBcc(e.target.value)}
+            />
+          </label>
+          <label>
+            Subject
+            <input
+              aria-label="Subject"
+              value={subject}
+              onChange={(e) => setSubject(e.target.value)}
+            />
+          </label>
+          <textarea
+            aria-label="Message"
+            value={body}
+            onChange={(e) => setBody(e.target.value)}
+          />
+          <label className="files">
+            Attachments
+            <input
+              aria-label="Attachments"
+              type="file"
+              multiple
+              onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
+            />
+          </label>
+          {/* A file input cannot be refilled, so a restored draft names its files here */}
+          {files.length > 0 && (
+            <p className="hint" data-testid="attached">
+              Attached: {files.map((f) => f.name).join(', ')}
+            </p>
+          )}
+          {tooLarge && (
+            <p className="error" role="alert">
+              This message is too large to send. Attachments can total about 1.4
+              MB.
+            </p>
+          )}
+          {error && (
+            <p className="error" role="alert">
+              {error}
+            </p>
+          )}
+          <div className="row">
+            <button
+              className="primary"
+              onClick={send}
+              disabled={sending || tooLarge}
+            >
+              {sending ? 'Sending…' : 'Send'}
+            </button>
+          </div>
+        </div>
       </div>
-    </div>
+    </>
   )
 }

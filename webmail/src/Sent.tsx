@@ -40,11 +40,13 @@ function Details({
   summary,
   sentBy,
   onChanged,
+  onBack,
 }: {
   backend: Mailbox
   summary: OutboxSummary
   sentBy: string | null // which member sent it, in a mailbox others share
   onChanged: () => void
+  onBack: () => void // to the list, at phone width
 }) {
   const [message, setMessage] = useState<OutboxMessage | null>(null)
   const [error, setError] = useState('')
@@ -86,6 +88,9 @@ function Details({
   return (
     <article className="reader">
       <div className="toolbar">
+        <button className="back" onClick={onBack}>
+          <Icon name="back" /> Back
+        </button>
         {canResend && (
           <button className="primary" onClick={resend}>
             Send again
@@ -169,10 +174,13 @@ export function Sent({
   backend,
   principal,
   shared,
+  refresh,
 }: {
   backend: Mailbox
   principal: string // the reader's own
   shared: boolean // the mailbox has other members
+  // Changes after a send: the list reloads, also while older mail is shown
+  refresh: number
 }) {
   const [items, setItems] = useState<OutboxSummary[]>([])
   const [cursor, setCursor] = useState<[] | [bigint]>([])
@@ -203,7 +211,7 @@ export function Sent({
       if (!olderShown.current) load()
     }, REFRESH_MS)
     return () => window.clearInterval(timer)
-  }, [load])
+  }, [load, refresh])
 
   const older = async () => {
     const request = ++latestLoad.current
@@ -221,7 +229,7 @@ export function Sent({
   const selected = items.find((m) => m.id === selectedId) ?? null
 
   return (
-    <div className="split">
+    <div className={selected ? 'split reading' : 'split'}>
       <section className="list" aria-label="Sent mail">
         {error && (
           <p className="error" role="alert">
@@ -277,6 +285,7 @@ export function Sent({
             setSelectedId(null)
             load()
           }}
+          onBack={() => setSelectedId(null)}
         />
       ) : (
         <div className="reader empty">Select a message to see its status.</div>

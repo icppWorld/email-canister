@@ -377,9 +377,14 @@ li.message-row:has(.pick:checked),
 li.message-row:has(.message[aria-current='true']) {
   background: var(--selected);
 }
-.pick {
+.pick-area {
   flex: none;
-  margin: 12px 0 0 12px;
+  display: flex;
+  padding: 12px 0 0 12px;
+  cursor: pointer;
+}
+.pick {
+  margin: 0;
 }
 button.star {
   flex: none;
@@ -601,6 +606,68 @@ button.star.on .icon {
   min-height: 200px;
   resize: vertical;
 }
+/* The compose window: a title bar over its fields, at the bottom right */
+.dialog.compose {
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+}
+.compose-bar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 8px 6px 14px;
+  background: var(--surface-muted);
+  border-bottom: 1px solid var(--border);
+}
+.compose-bar h2 {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 1rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.compose-bar button {
+  padding: 6px;
+}
+.compose-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px;
+}
+.compose-body[hidden] {
+  display: none;
+}
+.dialog.compose.minimised {
+  width: min(300px, calc(100vw - 32px));
+}
+.dialog.compose.minimised .compose-bar {
+  border-bottom: 0;
+}
+.dialog.compose.full {
+  inset: 4vh 4vw;
+  width: auto;
+  max-height: none;
+}
+.dialog.compose.full textarea {
+  flex: 1;
+}
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 2;
+  background: rgb(0 0 0 / 40%);
+}
+/* Back to the list: only at phone width, where the reader takes its place */
+button.back {
+  display: none;
+}
 .admin {
   padding: 16px 20px;
   height: 100%;
@@ -695,13 +762,39 @@ th {
   nav .hint {
     display: none;
   }
+  /* The list, or the open message in its place */
   .split {
-    grid-template-columns: 1fr;
-    grid-template-rows: minmax(200px, 40%) 1fr;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+  }
+  .split.reading > .list,
+  .split:not(.reading) > .reader {
+    display: none;
   }
   .list {
     border-right: 0;
-    border-bottom: 1px solid var(--border);
+  }
+  button.back {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  /* Compose fills the screen, or minimised, a bar along its foot */
+  .dialog.compose,
+  .dialog.compose.full {
+    inset: 0;
+    width: auto;
+    max-height: none;
+    border: 0;
+    border-radius: 0;
+  }
+  .dialog.compose.minimised {
+    top: auto;
+    width: auto;
+  }
+  .full-toggle,
+  .backdrop {
+    display: none;
   }
   /* Each row of the Admin panel's tables is a block of its own */
   .admin table,
@@ -770,4 +863,21 @@ button.small {
 }
 .admin button {
   white-space: nowrap;
+}
+
+/* Touch: the row's box and star have targets of at least 44px, drawn as before */
+@media (pointer: coarse) {
+  .pick-area {
+    min-width: 44px;
+    min-height: 44px;
+    justify-content: center;
+    padding: 12px 0 0;
+  }
+  button.star {
+    display: inline-flex;
+    justify-content: center;
+    min-width: 44px;
+    min-height: 44px;
+    padding: 9px 0 0;
+  }
 }
