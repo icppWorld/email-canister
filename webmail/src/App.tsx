@@ -4,6 +4,7 @@ import type { Identity } from '@icp-sdk/core/agent'
 import { createBackend, errorText, mailbox, type Backend, type Me } from './api'
 import { createSession, type Session } from './auth'
 import { AdminPanel } from './AdminPanel'
+import { BlockedSenders } from './Blocked'
 import { formatBytes } from './format'
 import { Icon } from './Icon'
 import { Compose, type Draft } from './Compose'
@@ -11,8 +12,15 @@ import { Download } from './Download'
 import { Inbox } from './Inbox'
 import { Sent } from './Sent'
 import { deployment } from './settings'
+import { ToastBar, type Toast } from './Toast'
 
-type View = 'inbox' | 'sent' | 'admin'
+// A mailbox's folders and pages, each with an address of its own
+const PAGES = ['inbox', 'sent', 'spam', 'trash', 'blocked'] as const
+type Page = (typeof PAGES)[number]
+type View = Page | 'admin'
+
+// How long a note about what was just done stays shown
+const TOAST_MS = 8_000
 
 // How often the person's mailboxes, with their unread counts and usage, are
 // fetched again
@@ -20,13 +28,14 @@ const MAILBOXES_REFRESH_MS = 30_000
 
 // The mailbox and folder the address names, as #team or #team/sent, so a view
 // can be bookmarked or shared
-function route(): { local: string | null; view: 'inbox' | 'sent' } {
+function route(): { local: string | null; view: Page } {
   const [local, folder] = window.location.hash.slice(1).split('/')
-  return { local: local || null, view: folder === 'sent' ? 'sent' : 'inbox' }
+  const view = PAGES.find((page) => page === folder) ?? 'inbox'
+  return { local: local || null, view }
 }
 
-function hashOf(local: string, view: 'inbox' | 'sent'): string {
-  return `#${local}${view === 'sent' ? '/sent' : ''}`
+function hashOf(local: string, view: Page): string {
+  return `#${local}${view === 'inbox' ? '' : `/${view}`}`
 }
 
 // The mailbox a person last chose, kept in this browser only
@@ -137,6 +146,7 @@ export function App() {
   const [refreshing, setRefreshing] = useState(false)
   const onLoaded = useCallback(() => setRefreshing(false), [])
   const [draft, setDraft] = useState<Draft | null>(null)
+  const [toast, setToast] = useState<Toast | null>(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
   // Whose sign-in ended while the page was open, so only they get the draft back
@@ -184,6 +194,7 @@ export function App() {
     latestBackend.current = null
     setBackend(null)
     setMe(null)
+    setToast(null)
   }
 
   const reloadMailboxes = useCallback(async () => {
@@ -206,6 +217,25 @@ export function App() {
     const timer = window.setInterval(reloadMailboxes, MAILBOXES_REFRESH_MS)
     return () => window.clearInterval(timer)
   }, [backend, reloadMailboxes])
+
+  useEffect(() => {
+    if (!toast) return
+    const timer = window.setTimeout(() => setToast(null), TOAST_MS)
+    return () => window.clearTimeout(timer)
+  }, [toast])
+
+  // A toast's action, such as Undo; the list and the counts load again after
+  const runToast = async (run: () => Promise<void> | void) => {
+    setToast(null)
+    try {
+      await run()
+    } catch (e) {
+      setToast({ text: errorText(e) })
+    } finally {
+      setRefresh((count) => count + 1)
+      reloadMailboxes()
+    }
+  }
 
   // The address follows the mailbox and folder shown
   useEffect(() => {
@@ -346,9 +376,22 @@ export function App() {
           <Icon name="refresh" />
         </button>
       </div>
-      <button aria-current={current === 'sent'} onClick={() => setView('sent')}>
-        Sent
-      </button>
+      {(
+        [
+          ['sent', 'Sent'],
+          ['spam', 'Spam'],
+          ['trash', 'Trash'],
+          ['blocked', 'Blocked senders'],
+        ] as const
+      ).map(([page, label]) => (
+        <button
+          key={page}
+          aria-current={current === page}
+          onClick={() => setView(page)}
+        >
+          {label}
+        </button>
+      ))}
     </div>
   )
 
@@ -437,20 +480,24 @@ export function App() {
         )}
       </nav>
       <div className="content">
-        {current === 'inbox' && box && shown && (
-          <Inbox
-            key={shown.local}
-            backend={box}
-            principal={principal}
-            shared={shared}
-            onReply={(reply) =>
-              setDraft((open) => open ?? { ...reply, from: shown.local })
-            }
-            onCounts={reloadMailboxes}
-            refresh={refresh}
-            onLoaded={onLoaded}
-          />
-        )}
+        {(current === 'inbox' || current === 'spam' || current === 'trash') &&
+          box &&
+          shown && (
+            <Inbox
+              key={`${shown.local}/${current}`}
+              backend={box}
+              principal={principal}
+              shared={shared}
+              folder={current}
+              notify={setToast}
+              onReply={(reply) =>
+                setDraft((open) => open ?? { ...reply, from: shown.local })
+              }
+              onCounts={reloadMailboxes}
+              refresh={refresh}
+              onLoaded={onLoaded}
+            />
+          )}
         {current === 'sent' && box && (
           <Sent
             key={local}
@@ -458,6 +505,9 @@ export function App() {
             principal={principal}
             shared={shared}
           />
+        )}
+        {current === 'blocked' && box && (
+          <BlockedSenders key={local} backend={box} principal={principal} />
         )}
         {current === 'admin' && <AdminPanel backend={backend} />}
       </div>
@@ -472,13 +522,27 @@ export function App() {
             // A send that ends after this draft was closed, as over a new
             // sign-in, leaves the draft open now alone
             if (sendingDraft.current?.clientId !== clientId) return
-            // Its Sent folder shows it, in the mailbox it was sent from
-            setSelected(from)
+            // The folder shown stays; the note leads to the Sent folder of the
+            // mailbox it was sent from
             setDraft(null)
-            setView('sent')
+            setToast({
+              text: 'Message sent',
+              action: {
+                label: 'View in Sent',
+                run: () => {
+                  setSelected(from)
+                  setView('sent')
+                },
+              },
+            })
           }}
         />
       )}
+      <ToastBar
+        toast={toast}
+        onAction={runToast}
+        onClose={() => setToast(null)}
+      />
     </div>
   )
 }

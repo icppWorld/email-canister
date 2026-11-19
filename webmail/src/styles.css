@@ -329,35 +329,105 @@ nav button.mailbox {
   margin: 0;
   padding: 0;
 }
+.list-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
 .search {
   display: flex;
   gap: 6px;
   padding: 8px;
-  position: sticky;
-  top: 0;
-  background: var(--surface);
+}
+.bulk {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px 8px 12px;
+}
+.bulk button {
+  padding: 2px 10px;
+  min-height: 28px;
 }
 .list > .hint,
 .list > .error {
   padding: 12px;
 }
+.list li.row {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  border-bottom: 1px solid var(--border);
+}
+.list li.row:hover {
+  background: var(--surface-muted);
+}
+.list li.row:has(.message[aria-current='true']) {
+  background: var(--selected);
+}
+.pick {
+  flex: none;
+  margin: 12px 0 0 12px;
+}
+button.star {
+  flex: none;
+  min-height: 0;
+  min-width: 0;
+  padding: 9px 2px 0 6px;
+  border: 0;
+  background: transparent;
+  color: var(--ink-muted);
+}
+button.star.on {
+  color: var(--warning);
+}
+button.star.on .icon {
+  fill: currentColor;
+}
 .message {
+  flex: 1;
+  min-width: 0;
   display: grid;
   grid-template-columns: 1fr auto;
   gap: 1px 8px;
-  width: 100%;
   min-height: 0;
   text-align: left;
   font-weight: 400;
   border: 0;
-  border-bottom: 1px solid var(--border);
   border-radius: 0;
   background: transparent;
-  padding: 9px 12px;
+  padding: 9px 12px 9px 4px;
 }
-.message[aria-current='true'],
-.message[aria-current='true']:hover:not(:disabled) {
-  background: var(--selected);
+.message:hover:not(:disabled) {
+  background: transparent;
+}
+/* Shown on hover only, where there is a pointer: the boxes and the reader
+   do the same on any screen */
+.row-actions {
+  display: none;
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  gap: 2px;
+  padding: 2px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+@media (hover: hover) {
+  .list li.row:hover .row-actions {
+    display: flex;
+  }
+}
+.row-actions button {
+  min-height: 0;
+  min-width: 0;
+  padding: 4px;
+  border: 0;
+  background: transparent;
 }
 .message span {
   overflow: hidden;
@@ -388,6 +458,59 @@ nav button.mailbox {
 }
 .more {
   margin: 10px;
+}
+.toast {
+  position: fixed;
+  left: 16px;
+  bottom: 16px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100vw - 32px);
+  padding: 6px 6px 6px 14px;
+  background: var(--ink);
+  color: var(--surface);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-dialog);
+}
+.toast:empty {
+  display: none;
+}
+.toast button {
+  min-height: 0;
+  padding: 4px 8px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-weight: 600;
+}
+.toast button:hover:not(:disabled) {
+  background: transparent;
+  text-decoration: underline;
+}
+.blocked {
+  height: 100%;
+  overflow-y: auto;
+  padding: 12px 18px;
+}
+.blocked ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.blocked li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+.blocked .address {
+  flex: 1 1 200px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
 }
 .reader {
   display: flex;
@@ -570,6 +693,7 @@ th {
   }
   .folders {
     flex-direction: row;
+    flex-wrap: wrap;
     padding: 0;
   }
   .usage,

@@ -6,6 +6,8 @@ import {
   FLAG_FLAGGED,
   FLAG_SEEN,
   FOLDER_INBOX,
+  FOLDER_SPAM,
+  FOLDER_TRASH,
   MESSAGE_QUARANTINED,
   MESSAGE_QUEUED,
   type Mailbox,
@@ -14,12 +16,30 @@ import {
 } from './api'
 import type { Draft } from './Compose'
 import { formatTime, memberName } from './format'
-import { Icon } from './Icon'
+import { Icon, type IconName } from './Icon'
 import { MessageBody } from './MessageBody'
 import { deliveredVia, parseMail, saveFile, type ParsedMail } from './mime'
+import type { Toast } from './Toast'
 
 const PAGE_SIZE = 50n
 const REFRESH_MS = 20_000
+// The most messages the canister lists, flags, moves or deletes in one call
+const BATCH = 100n
+
+export type Folder = 'inbox' | 'trash' | 'spam'
+
+const FOLDERS: Record<Folder, { number: bigint; name: string }> = {
+  inbox: { number: FOLDER_INBOX, name: 'the Inbox' },
+  trash: { number: FOLDER_TRASH, name: 'Trash' },
+  spam: { number: FOLDER_SPAM, name: 'Spam' },
+}
+
+// What can be done to a message, by the folder it is in
+type Action = {
+  label: string
+  icon: IconName
+  run: (uids: bigint[]) => Promise<unknown>
+}
 
 function when(summary: Summary): string {
   const ms =
@@ -48,7 +68,8 @@ function Reader({
   principal,
   shared,
   summary,
-  onDeleted,
+  actions,
+  onBlock,
   onReply,
   onFlags,
   onCounts,
@@ -58,7 +79,9 @@ function Reader({
   shared: boolean // the mailbox has other members, or had
   onCounts: () => void // the mailbox's unread count may have changed
   summary: Summary
-  onDeleted: () => void
+  actions: Action[] // the folder's, for this message
+  // Blocks the address and files the message in Spam; absent in Trash
+  onBlock?: (address: string) => Promise<void>
   onReply: (draft: Omit<Draft, 'from'>) => void // from the mailbox shown
   // The flags set and cleared, applied to the latest state: another change
   // may have landed while this one was under way
@@ -160,15 +183,28 @@ function Reader({
     }
   }, [raw, plain])
 
-  const remove = async () => {
-    if (!window.confirm('Delete this message permanently?')) return
+  // A refusal stays beside the message
+  const act = async (run: () => Promise<unknown>) => {
     try {
-      await backend.mail_delete([summary.uid])
-      if ((summary.flags & FLAG_SEEN) === 0n) onCounts()
-      onDeleted()
+      await run()
     } catch (e) {
       setActionError(errorText(e))
     }
+  }
+
+  // The From address once the message is read, else the envelope's; none
+  // while it loads, so a quick click cannot block the wrong one
+  const sender = mail
+    ? mail.fromAddress || summary.envelope_from
+    : rawText
+      ? summary.envelope_from
+      : ''
+  const block = () => {
+    if (!onBlock || !sender) return
+    const asked =
+      `Block ${sender}? New mail from this address goes to Spam, for ` +
+      'everyone in this mailbox, and this message moves there now.'
+    if (window.confirm(asked)) act(() => onBlock(sender))
   }
 
   const toggleFlag = async () => {
@@ -207,9 +243,20 @@ function Reader({
         <button onClick={toggleFlag}>
           {summary.flags & FLAG_FLAGGED ? 'Unflag' : 'Flag'}
         </button>
-        <button className="danger" onClick={remove}>
-          Delete
-        </button>
+        {actions.map((action) => (
+          <button
+            key={action.label}
+            className={action.icon === 'trash' ? 'danger' : undefined}
+            onClick={() => act(() => action.run([summary.uid]))}
+          >
+            {action.label}
+          </button>
+        ))}
+        {onBlock && (
+          <button onClick={block} disabled={!sender}>
+            Block sender
+          </button>
+        )}
         {(shared ||
           seenBy.some((seen) => seen.principal.toText() !== principal)) && (
           <details className="seen-by">
@@ -306,6 +353,8 @@ export function Inbox({
   backend,
   principal,
   shared,
+  folder,
+  notify,
   onReply,
   onCounts,
   refresh,
@@ -314,20 +363,26 @@ export function Inbox({
   backend: Mailbox
   principal: string
   shared: boolean
+  folder: Folder
+  notify: (toast: Toast) => void
   onCounts: () => void
   onReply: (draft: Omit<Draft, 'from'>) => void
   refresh: number
   onLoaded: () => void
 }) {
+  const here = FOLDERS[folder].number
   const [items, setItems] = useState<Summary[]>([])
   const [cursor, setCursor] = useState<[] | [bigint]>([])
   const [selected, setSelected] = useState<Summary | null>(null)
+  // The messages ticked for an action on all of them
+  const [checked, setChecked] = useState<ReadonlySet<bigint>>(new Set())
   const [query, setQuery] = useState('')
   const [activeQuery, setActiveQuery] = useState('')
   const [error, setError] = useState('')
   // Replies can arrive out of order, and only the newest may be shown
   const latestLoad = useRef(0)
   const olderShown = useRef(false)
+  const allBox = useRef<HTMLInputElement>(null)
 
   const load = useCallback(
     async (from: [] | [bigint], append: boolean, search: string) => {
@@ -336,12 +391,12 @@ export function Inbox({
         const page = search
           ? await backend.mail_search({
               query: search,
-              folder: FOLDER_INBOX,
+              folder: here,
               cursor: from,
               limit: PAGE_SIZE,
             })
           : await backend.mail_list({
-              folder: FOLDER_INBOX,
+              folder: here,
               cursor: from,
               limit: PAGE_SIZE,
             })
@@ -350,13 +405,20 @@ export function Inbox({
         setItems((previous) =>
           append ? [...previous, ...page.items] : page.items
         )
+        // A message that left the list since cannot stay ticked
+        const listed = new Set(page.items.map((m) => m.uid))
+        if (!append) {
+          setChecked(
+            (ticked) => new Set([...ticked].filter((uid) => listed.has(uid)))
+          )
+        }
         setCursor(page.cursor)
         setError('')
       } catch (e) {
         if (request === latestLoad.current) setError(errorText(e))
       }
     },
-    [backend]
+    [backend, here]
   )
 
   useEffect(() => {
@@ -369,83 +431,337 @@ export function Inbox({
     return () => window.clearInterval(timer)
   }, [load, activeQuery, refresh, onLoaded])
 
-  const updateFlags = (uid: bigint, set: bigint, clear: bigint) => {
+  const updateFlags = (uids: bigint[], set: bigint, clear: bigint) => {
+    const changed = new Set(uids)
     const apply = (m: Summary) =>
-      m.uid === uid ? { ...m, flags: (m.flags | set) & ~clear } : m
+      changed.has(m.uid) ? { ...m, flags: (m.flags | set) & ~clear } : m
     setItems((previous) => previous.map(apply))
     setSelected((previous) => previous && apply(previous))
   }
 
+  // Takes messages that moved or were deleted off the list and the reader
+  const drop = (uids: bigint[]) => {
+    const gone = new Set(uids)
+    setItems((previous) => previous.filter((m) => !gone.has(m.uid)))
+    setChecked((ticked) => new Set([...ticked].filter((uid) => !gone.has(uid))))
+    setSelected((previous) =>
+      previous && gone.has(previous.uid) ? null : previous
+    )
+  }
+
+  const anyUnread = (uids: bigint[]) =>
+    items.some((m) => uids.includes(m.uid) && (m.flags & FLAG_SEEN) === 0n)
+
+  const counted = (uids: bigint[]) =>
+    uids.length === 1 ? 'Message' : `${uids.length} messages`
+
+  // Out of this folder, with an Undo that brings the messages back
+  const move = async (uids: bigint[], to: Folder) => {
+    await backend.mail_move(uids, FOLDERS[to].number)
+    if (anyUnread(uids)) onCounts()
+    drop(uids)
+    notify({
+      text: `${counted(uids)} moved to ${FOLDERS[to].name}`,
+      action: {
+        label: 'Undo',
+        run: async () => {
+          await backend.mail_move(uids, here)
+          onCounts()
+        },
+      },
+    })
+  }
+
+  // For good, once confirmed
+  const deleteForever = async (uids: bigint[]) => {
+    const what = uids.length === 1 ? 'this message' : `${uids.length} messages`
+    if (!window.confirm(`Delete ${what} forever?`)) return
+    await backend.mail_delete(uids)
+    if (anyUnread(uids)) onCounts()
+    drop(uids)
+  }
+
+  const flag = async (uids: bigint[], set: bigint, clear: bigint) => {
+    await backend.mail_set_flags(uids, set, clear)
+    updateFlags(uids, set, clear)
+    if ((set | clear) & FLAG_SEEN) onCounts()
+  }
+
+  // Every message in Trash or Spam, page by page
+  const empty = async () => {
+    if (
+      !window.confirm(
+        `Delete every message in ${FOLDERS[folder].name} forever?`
+      )
+    )
+      return
+    for (;;) {
+      const page = await backend.mail_list({
+        folder: here,
+        cursor: [],
+        limit: BATCH,
+      })
+      if (page.items.length === 0) break
+      // None of them could go: stop rather than ask again forever
+      if ((await backend.mail_delete(page.items.map((m) => m.uid))) === 0n)
+        break
+    }
+    setSelected(null)
+    await load([], false, activeQuery)
+  }
+
+  // A refusal in the list shows above it
+  const act = async (run: () => Promise<unknown>) => {
+    try {
+      await run()
+    } catch (e) {
+      setError(errorText(e))
+    }
+  }
+
+  const forever: Action = {
+    label: 'Delete forever',
+    icon: 'trash',
+    run: deleteForever,
+  }
+  const restore: Action = {
+    label: folder === 'spam' ? 'Not spam' : 'Restore',
+    icon: folder === 'spam' ? 'inbox' : 'undo',
+    run: (uids) => move(uids, 'inbox'),
+  }
+  const actions: Action[] =
+    folder === 'inbox'
+      ? [
+          {
+            label: 'Delete',
+            icon: 'trash',
+            run: (uids) => move(uids, 'trash'),
+          },
+          { label: 'Spam', icon: 'spam', run: (uids) => move(uids, 'spam') },
+        ]
+      : [restore, forever]
+
+  const block = async (summary: Summary, address: string) => {
+    await backend.mail_block(address)
+    const filed = folder !== 'spam'
+    if (filed) {
+      await backend.mail_move([summary.uid], FOLDER_SPAM)
+      if ((summary.flags & FLAG_SEEN) === 0n) onCounts()
+      drop([summary.uid])
+    }
+    notify({
+      text: `Blocked ${address}`,
+      action: {
+        label: 'Undo',
+        run: async () => {
+          await backend.mail_unblock(address)
+          if (filed) {
+            await backend.mail_move([summary.uid], here)
+            onCounts()
+          }
+        },
+      },
+    })
+  }
+
+  const tick = (uid: bigint, on: boolean) =>
+    setChecked((ticked) => {
+      const next = new Set(ticked)
+      if (on) next.add(uid)
+      else next.delete(uid)
+      return next
+    })
+  const ticked = items.filter((m) => checked.has(m.uid)).map((m) => m.uid)
+  const allTicked = items.length > 0 && ticked.length === items.length
+  useEffect(() => {
+    if (allBox.current)
+      allBox.current.indeterminate = ticked.length > 0 && !allTicked
+  })
+
   return (
     <div className="split">
       <section className="list" aria-label="Messages">
-        <form
-          className="search"
-          role="search"
-          onSubmit={(e) => {
-            e.preventDefault()
-            setSelected(null)
-            setActiveQuery(query.trim())
-          }}
-        >
-          <input
-            aria-label="Search mail"
-            placeholder="Search mail"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
-          {activeQuery && (
-            <button
-              type="button"
-              onClick={() => {
-                setQuery('')
-                setActiveQuery('')
-              }}
-            >
-              Clear
-            </button>
+        <div className="list-head">
+          <form
+            className="search"
+            role="search"
+            onSubmit={(e) => {
+              e.preventDefault()
+              setSelected(null)
+              setActiveQuery(query.trim())
+            }}
+          >
+            <input
+              aria-label="Search mail"
+              placeholder={
+                folder === 'inbox'
+                  ? 'Search mail'
+                  : `Search ${FOLDERS[folder].name}`
+              }
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+            {activeQuery && (
+              <button
+                type="button"
+                onClick={() => {
+                  setQuery('')
+                  setActiveQuery('')
+                }}
+              >
+                Clear
+              </button>
+            )}
+          </form>
+          {items.length > 0 && (
+            <div className="bulk" role="toolbar" aria-label="Selected messages">
+              <input
+                ref={allBox}
+                type="checkbox"
+                aria-label="Select all"
+                checked={allTicked}
+                onChange={(e) =>
+                  setChecked(
+                    new Set(e.target.checked ? items.map((m) => m.uid) : [])
+                  )
+                }
+              />
+              {ticked.length > 0 ? (
+                <>
+                  <span className="hint">{ticked.length} selected</span>
+                  {actions.map((action) => (
+                    <button
+                      key={action.label}
+                      onClick={() => act(() => action.run(ticked))}
+                    >
+                      {action.label}
+                    </button>
+                  ))}
+                  {folder === 'inbox' && (
+                    <>
+                      <button
+                        onClick={() => act(() => flag(ticked, FLAG_SEEN, 0n))}
+                      >
+                        Mark read
+                      </button>
+                      <button
+                        onClick={() => act(() => flag(ticked, 0n, FLAG_SEEN))}
+                      >
+                        Mark unread
+                      </button>
+                    </>
+                  )}
+                </>
+              ) : (
+                folder !== 'inbox' &&
+                !activeQuery && (
+                  <button onClick={() => act(empty)}>
+                    Empty {FOLDERS[folder].name}
+                  </button>
+                )
+              )}
+            </div>
           )}
-        </form>
+        </div>
         {error && (
           <p className="error" role="alert">
             {error}
           </p>
         )}
         {items.length === 0 && !error && (
-          <p className="hint">{activeQuery ? 'No matches.' : 'No mail yet.'}</p>
+          <p className="hint">
+            {activeQuery
+              ? 'No matches.'
+              : folder === 'inbox'
+                ? 'No mail yet.'
+                : `Nothing in ${FOLDERS[folder].name}.`}
+          </p>
         )}
         <ul>
-          {items.map((m) => (
-            <li key={m.uid.toString()}>
-              <button
-                className={
-                  (m.flags & FLAG_SEEN) === 0n ? 'message unread' : 'message'
-                }
-                aria-current={selected?.uid === m.uid}
-                onClick={() => setSelected(m)}
-              >
-                <span className="who">
-                  {m.flags & FLAG_FLAGGED ? (
-                    <Icon name="star" label="Flagged" />
-                  ) : null}
-                  {senderOf(m)}
+          {items.map((m) => {
+            const title =
+              m.state === MESSAGE_QUEUED
+                ? 'Arriving…'
+                : m.subject || '(no subject)'
+            const flagged = (m.flags & FLAG_FLAGGED) !== 0n
+            const unread = (m.flags & FLAG_SEEN) === 0n
+            const rowActions: Action[] =
+              folder === 'inbox'
+                ? [
+                    actions[0],
+                    unread
+                      ? {
+                          label: 'Mark read',
+                          icon: 'mailOpen',
+                          run: (uids) => flag(uids, FLAG_SEEN, 0n),
+                        }
+                      : {
+                          label: 'Mark unread',
+                          icon: 'mail',
+                          run: (uids) => flag(uids, 0n, FLAG_SEEN),
+                        },
+                  ]
+                : actions
+            return (
+              <li key={m.uid.toString()} className="row">
+                <input
+                  type="checkbox"
+                  className="pick"
+                  aria-label={`Select ${title}`}
+                  checked={checked.has(m.uid)}
+                  onChange={(e) => tick(m.uid, e.target.checked)}
+                />
+                <button
+                  className={flagged ? 'star on' : 'star'}
+                  aria-label={flagged ? `Unstar ${title}` : `Star ${title}`}
+                  aria-pressed={flagged}
+                  title={flagged ? 'Starred' : 'Not starred'}
+                  onClick={() =>
+                    act(() =>
+                      flag(
+                        [m.uid],
+                        flagged ? 0n : FLAG_FLAGGED,
+                        flagged ? FLAG_FLAGGED : 0n
+                      )
+                    )
+                  }
+                >
+                  <Icon name="star" />
+                </button>
+                <button
+                  className={unread ? 'message unread' : 'message'}
+                  aria-current={selected?.uid === m.uid}
+                  onClick={() => setSelected(m)}
+                >
+                  <span className="who">{senderOf(m)}</span>
+                  <span className="date">{when(m)}</span>
+                  <span className="subject">
+                    {title}
+                    {m.attachments > 0n ? (
+                      <Icon name="paperclip" label="Has attachments" />
+                    ) : null}
+                    {m.state === MESSAGE_QUARANTINED
+                      ? ' (could not be processed)'
+                      : ''}
+                  </span>
+                  <span className="preview">{m.preview}</span>
+                </button>
+                {/* On hover, for a pointer; the boxes and the reader do the same */}
+                <span className="row-actions">
+                  {rowActions.map((action) => (
+                    <button
+                      key={action.label}
+                      aria-label={`${action.label}: ${title}`}
+                      title={action.label}
+                      onClick={() => act(() => action.run([m.uid]))}
+                    >
+                      <Icon name={action.icon} />
+                    </button>
+                  ))}
                 </span>
-                <span className="date">{when(m)}</span>
-                <span className="subject">
-                  {m.state === MESSAGE_QUEUED
-                    ? 'Arriving…'
-                    : m.subject || '(no subject)'}
-                  {m.attachments > 0n ? (
-                    <Icon name="paperclip" label="Has attachments" />
-                  ) : null}
-                  {m.state === MESSAGE_QUARANTINED
-                    ? ' (could not be processed)'
-                    : ''}
-                </span>
-                <span className="preview">{m.preview}</span>
-              </button>
-            </li>
-          ))}
+              </li>
+            )
+          })}
         </ul>
         {cursor.length > 0 && (
           <button
@@ -464,12 +780,14 @@ export function Inbox({
           key={selected.uid.toString()}
           backend={backend}
           summary={selected}
-          onDeleted={() => {
-            setSelected(null)
-            load([], false, activeQuery)
-          }}
+          actions={actions}
+          onBlock={
+            folder === 'trash'
+              ? undefined
+              : (address) => block(selected, address)
+          }
           onReply={onReply}
-          onFlags={(set, clear) => updateFlags(selected.uid, set, clear)}
+          onFlags={(set, clear) => updateFlags([selected.uid], set, clear)}
         />
       ) : (
         <div className="reader empty">Select a message to read it.</div>
