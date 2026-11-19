@@ -6,6 +6,7 @@
 
 #include "db.h"
 #include "ic_api.h"
+#include "mail_store.h"
 
 namespace {
 
@@ -181,6 +182,20 @@ std::map<int64_t, std::vector<Member>> all_members() {
     found[select.column_integer(0)].push_back(std::move(member));
   }
   return found;
+}
+
+bool valid_address(const std::string &address) {
+  const size_t k_max_address = 254;
+  if (address.empty() || address.size() > k_max_address ||
+      has_control_character(address)) {
+    return false;
+  }
+  const size_t at = address.find('@');
+  if (at == std::string::npos || at == 0 || at + 1 == address.size() ||
+      address.find('@', at + 1) != std::string::npos) {
+    return false;
+  }
+  return address.find_first_of(" <>()[],;:\"\\") == std::string::npos;
 }
 
 bool has_control_character(const std::string &s) {
@@ -449,15 +464,21 @@ check_file(const Entry &entry, const std::optional<std::string> &table) {
   };
   // A file newer than this release is not damage: nothing uses it until a
   // release that knows its version runs
-  differs("the schema version", db::file_version(file), entry.schema);
+  const int64_t version = db::file_version(file);
+  differs("the schema version", version, entry.schema);
   db::Stmt registry(db::control(),
                     "SELECT " COUNTERS " FROM mailboxes WHERE id = ?");
   db::Stmt counters(file, "SELECT " COUNTERS " FROM counters WHERE id = 1");
-  db::Stmt actual(file, "SELECT (SELECT count(*) FROM messages), "
-                        "(SELECT coalesce(max(uid), 0) FROM messages), "
-                        "(SELECT coalesce(max(modseq), 0) FROM messages), "
-                        "(SELECT coalesce(max(id), 0) FROM outbox), "
-                        "(SELECT count(*) FROM messages WHERE flags & 1 = 0)");
+  // A file waiting for the version that added the folders has all its mail
+  // in the Inbox
+  const std::string totals =
+      std::string("SELECT (SELECT count(*) FROM messages), "
+                  "(SELECT coalesce(max(uid), 0) FROM messages), "
+                  "(SELECT coalesce(max(modseq), 0) FROM messages), "
+                  "(SELECT coalesce(max(id), 0) FROM outbox), "
+                  "(SELECT count(*) FROM messages WHERE ") +
+      (version < db::k_folders_version ? "flags & 1 = 0" : COUNTS_UNSEEN) + ")";
+  db::Stmt actual(file, totals.c_str());
   if (!registry || !registry.integer(1, entry.id).row())
     IC_API::trap("cannot read the registry");
   if (!counters || !counters.row()) {

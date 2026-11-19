@@ -682,6 +682,7 @@ async function uidOf(
     .poll(async () => {
       const { items } = await user.mail_search(local, {
         query,
+        folder: 0n,
         cursor: [],
         limit: 1n,
       })
@@ -2042,10 +2043,10 @@ test('an opened message shows the flags another member set meanwhile', async ({
   await page.locator('button.message', { hasText: 'Quiet egret' }).click()
   await expect(unread).toHaveCount(0)
   // Unread when the list loads, then read again by the other member
-  await other.mail_set_flags('team', uid, 0n, FLAG_SEEN)
+  await other.mail_set_flags('team', [uid], 0n, FLAG_SEEN)
   await search('egret')
   await expect(unread).toHaveCount(1)
-  await other.mail_set_flags('team', uid, FLAG_SEEN | FLAG_FLAGGED, 0n)
+  await other.mail_set_flags('team', [uid], FLAG_SEEN | FLAG_FLAGGED, 0n)
   // Nothing to write, as this member opened it before
   const writes = watch(page, 'mail_set_flags')
   await unread.click()
@@ -2103,7 +2104,7 @@ test('opening a message another member marked unread reads it again', async ({
   await message('Stale ibis').click()
   await expect.poll(seen).toBe(true)
   // Unread again, while this page's list still shows it read
-  await other.mail_set_flags('team', uid, 0n, FLAG_SEEN)
+  await other.mail_set_flags('team', [uid], 0n, FLAG_SEEN)
   await message('Other ibis').click()
   await message('Stale ibis').click()
   await expect.poll(seen).toBe(true)
@@ -2143,6 +2144,7 @@ test('a flag set while the message is being marked read stays set', async ({
     .poll(async () => {
       const { items } = await alice.mail_search('alice', {
         query: 'Raced plover',
+        folder: 0n,
         cursor: [],
         limit: 1n,
       })
@@ -2385,7 +2387,7 @@ test('a late reply does not undo a flag set and cleared while the message loads'
   const row = page.locator('button.message', { hasText: 'Late plover' })
   await expect(row).toBeVisible()
   // Flagged by the other member after the list loaded
-  await gail.mail_set_flags('shore', uid, FLAG_FLAGGED, 0n)
+  await gail.mail_set_flags('shore', [uid], FLAG_FLAGGED, 0n)
   // The message's reply holds that flag, and arrives after both clicks
   const reply = await hold(page, 'mail_get', { late: true })
   await row.click()
@@ -2405,6 +2407,7 @@ test('a late reply does not undo a flag set and cleared while the message loads'
   ).toBeVisible()
   const { items } = await gail.mail_search('shore', {
     query: 'Late plover',
+    folder: 0n,
     cursor: [],
     limit: 1n,
   })
@@ -2613,7 +2616,7 @@ test('who opened and who sent stay shown after the others leave the mailbox', as
   deliver({ subject: 'Rail note', body: '<p>For both</p>', to: 'rail' })
   const gail = await asUser(GAIL, env.url, env.backend)
   const uid = await uidOf(gail, 'rail', 'Rail note')
-  await gail.mail_set_flags('rail', uid, FLAG_SEEN, 0n)
+  await gail.mail_set_flags('rail', [uid], FLAG_SEEN, 0n)
   await gail.mail_send('rail', {
     client_id: crypto.randomUUID(),
     to: ['friend@example.org'],

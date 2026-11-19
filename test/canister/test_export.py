@@ -143,8 +143,11 @@ def test__a_download_is_the_mailbox_file(tmp_path: Path) -> None:
 def test__nothing_changes_the_file_while_it_is_downloaded() -> None:
     size, started, _ = freeze(USER_A)
     for method, argument in [
-        ("mail_set_flags", "(1 : nat64, 1 : nat64, 0 : nat64)"),
+        ("mail_set_flags", "(vec { 1 : nat64 }, 1 : nat64, 0 : nat64)"),
         ("mail_delete", "(vec { 1 : nat64 })"),
+        ("mail_move", "(vec { 1 : nat64 }, 1 : nat64)"),
+        ("mail_block", '("x@example.com")'),
+        ("mail_unblock", '("x@example.com")'),
         (
             "mail_send",
             '(record { client_id = "c"; to = vec { "x@y.example" }; cc = vec {}; '
@@ -165,7 +168,10 @@ def test__nothing_changes_the_file_while_it_is_downloaded() -> None:
     thaw(USER_A, started)
     wait_for("alice", "otter")
     assert "downloading:" not in mail(
-        "mail_set_flags", MAILBOX[USER_A], "(1 : nat64, 1 : nat64, 0 : nat64)", USER_A
+        "mail_set_flags",
+        MAILBOX[USER_A],
+        "(vec { 1 : nat64 }, 1 : nat64, 0 : nat64)",
+        USER_A,
     )
 
 

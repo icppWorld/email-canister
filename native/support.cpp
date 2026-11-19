@@ -142,4 +142,23 @@ void add_mailbox(const std::string &test, const std::string &principal,
        CONTROLLER);
 }
 
+size_t count(const std::string &text, const std::string &part) {
+  size_t n = 0;
+  for (size_t at = text.find(part); at != std::string::npos;
+       at = text.find(part, at + part.size())) {
+    ++n;
+  }
+  return n;
+}
+
+std::string me_of(const std::string &test, const std::string &caller,
+                  const std::string &local) {
+  const std::string me = CALL(test, mail_me, "()", caller);
+  const size_t at = me.find("local = \"" + local + "\"");
+  check(test, at != std::string::npos, "no " + local + " in: " + me);
+  // Its whole record: didc orders the fields by their hashes
+  const size_t start = me.rfind("record {", at);
+  return me.substr(start, me.find('}', at) - start);
+}
+
 } // namespace native

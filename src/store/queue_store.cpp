@@ -2,6 +2,8 @@
 
 #include "allowlist.h"
 #include "db.h"
+#include "ic_api.h"
+#include "mail_store.h"
 
 namespace {
 
@@ -17,26 +19,34 @@ struct QueueRow {
   int64_t raw_bytes{0};
 };
 
-// Puts a message into its file, with a uid and modseq from the registry
-bool store_in_file(sqlite3 *file_db, const QueueRow &row) {
+// Puts a message into its file, with a uid and modseq from the registry: in
+// Spam when its envelope sender is blocked, else in the Inbox
+bool store_in_file(sqlite3 *file_db, const QueueRow &row, int64_t now_ns) {
+  const std::optional<bool> spam =
+      store::is_blocked(file_db, row.envelope_from);
+  if (!spam) return false;
+  const int64_t folder = *spam ? store::Spam : store::Inbox;
   int64_t uid = 0;
   int64_t modseq = 0;
   {
     db::Stmt counters(db::control(),
                       "UPDATE mailboxes SET next_uid = next_uid + 1, "
                       "modseq = modseq + 1, message_count = message_count + 1, "
-                      "unseen = unseen + 1, unparsed = unparsed + 1 "
+                      "unseen = unseen + ?, unparsed = unparsed + 1 "
                       "WHERE id = ? "
                       "RETURNING next_uid - 1, modseq");
-    if (!counters || !counters.integer(1, row.mailbox).row()) return false;
+    if (!counters || !counters.integer(1, store::counts_unseen(0, folder))
+                          .integer(2, row.mailbox)
+                          .row())
+      return false;
     uid = counters.column_integer(0);
     modseq = counters.column_integer(1);
     if (!counters.done()) return false;
   }
   db::Stmt insert(file_db,
                   "INSERT INTO messages(uid, state, modseq, received_ns, "
-                  "envelope_from, rfc_message_id, dedupe_key, raw_bytes) "
-                  "VALUES(?,0,?,?,?,?,?,?)");
+                  "envelope_from, rfc_message_id, dedupe_key, raw_bytes, "
+                  "folder, folder_ns) VALUES(?,0,?,?,?,?,?,?,?,?)");
   if (!insert || !insert.integer(1, uid)
                       .integer(2, modseq)
                       .integer(3, row.received_ns)
@@ -44,6 +54,8 @@ bool store_in_file(sqlite3 *file_db, const QueueRow &row) {
                       .text(5, row.rfc_message_id)
                       .text(6, row.dedupe_key)
                       .integer(7, row.raw_bytes)
+                      .integer(8, folder)
+                      .integer(9, *spam ? now_ns : 0)
                       .done()) {
     return false;
   }
@@ -266,6 +278,7 @@ bool move(int64_t queue_id, int64_t dedupe_since_ns) {
   }
   MailboxWrite write(row.mailbox);
   if (!write) return false;
+  const auto now = static_cast<int64_t>(IC_API::time());
 
   bool ok = false;
   {
@@ -276,9 +289,12 @@ bool move(int64_t queue_id, int64_t dedupe_since_ns) {
     if (ok && seen.column_integer(0) != 0) {
       ok = release_quota(row.mailbox, row.raw_bytes);
     } else if (ok) {
-      ok = store_in_file(write.file(), row);
+      ok = store_in_file(write.file(), row, now);
     }
   }
+  // New mail clears out a little old mail from Trash and Spam
+  ok = ok &&
+       store::delete_expired(store::Mailbox{row.mailbox, write.file()}, now);
   db::Stmt prune(db::control(),
                  "DELETE FROM dedupe WHERE id IN (SELECT id FROM dedupe "
                  "WHERE at_ns < ? ORDER BY at_ns LIMIT ?)");
