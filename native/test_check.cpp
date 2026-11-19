@@ -53,7 +53,7 @@ void upgrade_every_file(const std::string &test) {
     upgrade_round(test);
 }
 
-const std::string k_list = "(record { folder = 0; cursor = null; limit = 10 })";
+const std::string k_list = list_args("10");
 
 } // namespace
 

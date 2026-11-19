@@ -64,11 +64,11 @@ void require_batch(const std::vector<uint64_t> &uids) {
   if (uids.size() > k_max_batch) IC_API::trap("too many messages at once");
 }
 
-// The address in lower case; traps when it is not one
+// The address in lower case, as SQLite's lower() makes it; traps when it is
+// not one
 std::string address_arg(const std::string &address) {
-  const std::string lower = store::blockable_address(address);
-  if (lower.empty()) IC_API::trap("not an email address");
-  return lower;
+  if (!store::valid_address(address)) IC_API::trap("not an email address");
+  return lower(address);
 }
 
 std::optional<int64_t> to_cursor(const std::optional<uint64_t> &cursor) {

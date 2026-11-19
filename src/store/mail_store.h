@@ -53,9 +53,15 @@ IngestStats ingest_stats();
 // Message flags, which the mailbox owner can set
 enum MessageFlag : int64_t { Seen = 1, Flagged = 2 };
 
-// Where a message is. The unseen count is the Inbox's alone.
+// Where a message is
 enum Folder : int64_t { Inbox = 0, Trash = 1, Spam = 2 };
 const int64_t k_last_folder = Spam;
+
+// The unseen count is of the unread mail in the Inbox
+inline int64_t counts_unseen(int64_t flags, int64_t folder) {
+  return folder == Inbox && (flags & Seen) == 0 ? 1 : 0;
+}
+#define COUNTS_UNSEEN "flags & 1 = 0 AND folder = 0"
 
 struct Summary {
   int64_t uid{0};
@@ -115,11 +121,9 @@ bool delete_expired(const Mailbox &box, int64_t now_ns);
 Page search(const Mailbox &box, int64_t folder, const std::string &query,
             std::optional<int64_t> cursor, int64_t limit);
 
-// Senders whose mail goes to Spam, by envelope sender or From address
-const size_t k_max_address_bytes = 254;
+// Senders whose mail goes to Spam, by envelope sender or From address. The
+// addresses are in lower case.
 const int64_t k_max_blocked = 1000;
-// The address in lower case, or "" when it is not one
-std::string blockable_address(const std::string &address);
 enum class Block { Done, Full, Failed };
 Block block(const Mailbox &box, const std::string &address,
             const std::string &principal, int64_t now_ns);

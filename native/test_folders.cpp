@@ -11,25 +11,13 @@ using namespace native;
 
 namespace {
 
-std::string folder(int number, int limit = 50) {
-  return "(record { folder = " + std::to_string(number) +
-         "; cursor = null; limit = " + std::to_string(limit) + " })";
-}
-
-std::string uids(int first, int count) {
-  std::string out = "vec {";
-  for (int uid = first; uid < first + count; ++uid)
-    out += " " + std::to_string(uid) + ";";
-  return out + " }";
-}
-
 std::string move(const std::string &test, const std::string &list, int to) {
   return CALL(test, mail_move,
               "(\"fox\", " + list + ", " + std::to_string(to) + ")", USER_A);
 }
 
 std::string listed(const std::string &test, int number) {
-  return CALL(test, mail_list, in("fox", folder(number)), USER_A);
+  return CALL(test, mail_list, in("fox", list_args("50", number)), USER_A);
 }
 
 std::string fox(const std::string &test) { return me_of(test, USER_A, "fox"); }
@@ -112,15 +100,15 @@ void test_folders(MockIC &) {
     expect(test, CALL(test, admin_check, "(\"fox\", null)", CONTROLLER),
            "result = \"ok\"");
   }
-  TRAPS("a list names a folder there is", mail_list, in("fox", folder(3)),
-        USER_A, "no such folder");
+  TRAPS("a list names a folder there is", mail_list,
+        in("fox", list_args("50", 3)), USER_A, "no such folder");
   TRAPS("a move names a folder there is", mail_move, "(\"fox\", vec { 1 }, 3)",
         USER_A, "no such folder");
   TRAPS("201 messages are too many to move at once", mail_move,
-        "(\"fox\", " + uids(1, 201) + ", 1)", USER_A,
+        "(\"fox\", " + uid_vec(1, 201) + ", 1)", USER_A,
         "too many messages at once");
   TRAPS("201 messages are too many to flag at once", mail_set_flags,
-        "(\"fox\", " + uids(1, 201) + ", 2, 0)", USER_A,
+        "(\"fox\", " + uid_vec(1, 201) + ", 2, 0)", USER_A,
         "too many messages at once");
   TRAPS("only a member moves mail", mail_move, "(\"fox\", vec { 1 }, 1)",
         USER_B, "no such mailbox for this principal");
@@ -138,7 +126,7 @@ void test_folders(MockIC &) {
   CALL("seed fox's mailbox again", dev_seed, "(\"fox\", 5, 25)", CONTROLLER);
   {
     const std::string test = "Trash empties itself after 30 days, 20 at a time";
-    expect(test, move(test, uids(5, 25), 1), "(25 : nat64)");
+    expect(test, move(test, uid_vec(5, 25), 1), "(25 : nat64)");
     expect(test, fox(test), "message_count = 28 : ");
     later_by_days(29);
     expect(test, move(test, "vec {}", 1), "(0 : nat64)");
@@ -166,7 +154,8 @@ void test_folders(MockIC &) {
   }
   for (const std::string &address :
        {"", "nope", "@example.com", "spammer@", "a b@example.com",
-        "<a@example.com>", std::string(250, 'a') + "@x.io"}) {
+        "a@b@example.com", "<a@example.com>",
+        std::string(250, 'a') + "@x.io"}) {
     TRAPS("not an address: " + address.substr(0, 20), mail_block,
           "(\"fox\", \"" + address + "\")", USER_A, "not an email address");
   }

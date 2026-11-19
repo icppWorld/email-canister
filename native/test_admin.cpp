@@ -167,22 +167,17 @@ void test_admin(MockIC &mock_ic) {
     expect(test, bob, "local = \"bob\"");
     expect(test, bob, "local = \"team\"");
     expect(test, bob, "members = 2");
-    CALL(test, mail_list,
-         in("team", "(record { folder = 0; cursor = null; limit = 1 })"),
-         USER_B);
+    CALL(test, mail_list, in("team", list_args("1")), USER_B);
   }
   {
     // A removed member loses the mailbox at once; the others keep it
     const std::string test = "a removed member";
     CALL(test, admin_remove_member, "(\"team\", principal \"" + USER_B + "\")",
          CONTROLLER);
-    TRAPS("a removed member is refused", mail_list,
-          in("team", "(record { folder = 0; cursor = null; limit = 1 })"),
+    TRAPS("a removed member is refused", mail_list, in("team", list_args("1")),
           USER_B, "no such mailbox for this principal");
     expect_not(test, CALL(test, mail_me, "()", USER_B), "\"team\"");
-    CALL(test, mail_list,
-         in("team", "(record { folder = 0; cursor = null; limit = 1 })"),
-         USER_A);
+    CALL(test, mail_list, in("team", list_args("1")), USER_A);
     CALL(test, admin_add_member,
          "(\"team\", principal \"" + USER_B + "\", null)", CONTROLLER);
   }

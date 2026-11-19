@@ -72,6 +72,22 @@ inline std::string in(const std::string &local, const std::string &args) {
   return "(\"" + local + "\"" + (args == "()" ? ")" : ", " + args.substr(1));
 }
 
+// mail_list's argument: the newest `limit` messages in `folder` before
+// `cursor`, Candid text
+inline std::string list_args(const std::string &limit, int folder = 0,
+                             const std::string &cursor = "null") {
+  return "(record { folder = " + std::to_string(folder) +
+         "; cursor = " + cursor + "; limit = " + limit + " })";
+}
+
+// The uids first, first + 1, ... as a Candid vec
+inline std::string uid_vec(int first, int count) {
+  std::string out = "vec {";
+  for (int uid = first; uid < first + count; ++uid)
+    out += " " + std::to_string(uid) + ";";
+  return out + " }";
+}
+
 // The caller's MailboxInfo of `local`, from mail_me
 std::string me_of(const std::string &test, const std::string &caller,
                   const std::string &local);

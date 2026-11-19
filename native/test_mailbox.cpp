@@ -9,14 +9,6 @@ using namespace native;
 
 namespace {
 
-std::string uids(int first, int count) {
-  std::string out = "(vec {";
-  for (int uid = first; uid < first + count; ++uid) {
-    out += " " + std::to_string(uid) + ";";
-  }
-  return out + " })";
-}
-
 // Every method of a mailbox's members, with a valid argument after the mailbox
 struct OwnerCall {
   Method fn;
@@ -25,8 +17,7 @@ struct OwnerCall {
 };
 
 const OwnerCall k_owner_calls[] = {
-    {mail_list, "mail_list",
-     "(record { folder = 0; cursor = null; limit = 10 })"},
+    {mail_list, "mail_list", list_args("10")},
     {mail_get, "mail_get", "(1)"},
     {mail_search, "mail_search",
      "(record { \"query\" = \"hello\"; folder = 0; cursor = null; limit = 10 })"},
@@ -85,25 +76,18 @@ void test_mailbox(MockIC &) {
   CALL("seed alice's mailbox", dev_seed, "(\"alice\", 1, 150)", CONTROLLER);
   for (const std::string &limit : {"0", "100", "1000"}) {
     const std::string test = "a page with limit " + limit + " has 100 items";
-    const std::string page = CALL(
-        test, mail_list,
-        in("alice",
-           "(record { folder = 0; cursor = null; limit = " + limit + " })"),
-        USER_A);
+    const std::string page =
+        CALL(test, mail_list, in("alice", list_args(limit)), USER_A);
     check(test, count(page, "uid = ") == 100, "not 100 items in: " + page);
     expect(test, page, "cursor = opt");
   }
   {
     const std::string test = "the last page has no cursor";
     const std::string page =
-        CALL(test, mail_list,
-             in("alice", "(record { folder = 0; cursor = null; limit = 100 })"),
-             USER_A);
+        CALL(test, mail_list, in("alice", list_args("100")), USER_A);
     const std::string cursor = field(page, "cursor");
     const std::string last =
-        CALL(test, mail_list,
-             in("alice", "(record { folder = 0; cursor = opt " + cursor +
-                             "; limit = 100 })"),
+        CALL(test, mail_list, in("alice", list_args("100", 0, "opt " + cursor)),
              USER_A);
     check(test, count(last, "uid = ") == 50, "not 50 items in: " + last);
     expect(test, last, "cursor = null");
@@ -135,10 +119,13 @@ void test_mailbox(MockIC &) {
   }
 
   TRAPS("201 messages are too many to delete at once", mail_delete,
-        in("alice", uids(1, 201)), USER_A, "too many messages at once");
+        in("alice", "(" + uid_vec(1, 201) + ")"), USER_A,
+        "too many messages at once");
   {
     const std::string test = "200 messages are deleted at once";
-    expect(test, CALL(test, mail_delete, in("alice", uids(1, 200)), USER_A),
+    expect(test,
+           CALL(test, mail_delete, in("alice", "(" + uid_vec(1, 200) + ")"),
+                USER_A),
            "(150 : nat64)");
     expect(test, CALL(test, mail_me, "()", USER_A), "message_count = 0");
   }
@@ -196,10 +183,7 @@ void test_mailbox(MockIC &) {
   {
     // Local parts are stored in lower case, as the admin calls take them
     const std::string test = "a mailbox is named in any case";
-    expect(test,
-           CALL(test, mail_list,
-                in("TeAm", "(record { folder = 0; cursor = null; limit = 1 })"),
-                USER_A),
+    expect(test, CALL(test, mail_list, in("TeAm", list_args("1")), USER_A),
            "uid = ");
   }
   {
@@ -208,16 +192,11 @@ void test_mailbox(MockIC &) {
     CALL(test, mail_set_flags, "(\"team\", vec { 3 }, 2, 0)", USER_A);
     CALL(test, mail_set_flags, "(\"team\", vec { 3 }, 1, 0)", USER_B);
     const std::string page =
-        CALL(test, mail_list,
-             in("team", "(record { folder = 0; cursor = null; limit = 1 })"),
-             USER_A);
+        CALL(test, mail_list, in("team", list_args("1")), USER_A);
     expect(test, page, "uid = 3");
     expect(test, page, "flags = 3");
     CALL(test, mail_set_flags, "(\"team\", vec { 3 }, 0, 1)", USER_A);
-    expect(test,
-           CALL(test, mail_list,
-                in("team", "(record { folder = 0; cursor = null; limit = 1 })"),
-                USER_B),
+    expect(test, CALL(test, mail_list, in("team", list_args("1")), USER_B),
            "flags = 2");
   }
   {

@@ -168,7 +168,7 @@ static void read_fields(const struct mailimf_fields *fields, MimeSummary *out) {
             clist_content(clist_begin(list->mb_list));
         out->sender = format_sender(first);
         out->sender_address =
-            copy_text(first->mb_addr_spec ? first->mb_addr_spec : "");
+            first->mb_addr_spec ? copy_text(first->mb_addr_spec) : NULL;
       }
       break;
     }

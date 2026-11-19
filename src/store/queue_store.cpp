@@ -25,6 +25,7 @@ bool store_in_file(sqlite3 *file_db, const QueueRow &row, int64_t now_ns) {
   const std::optional<bool> spam =
       store::is_blocked(file_db, row.envelope_from);
   if (!spam) return false;
+  const int64_t folder = *spam ? store::Spam : store::Inbox;
   int64_t uid = 0;
   int64_t modseq = 0;
   {
@@ -34,8 +35,9 @@ bool store_in_file(sqlite3 *file_db, const QueueRow &row, int64_t now_ns) {
                       "unseen = unseen + ?, unparsed = unparsed + 1 "
                       "WHERE id = ? "
                       "RETURNING next_uid - 1, modseq");
-    if (!counters ||
-        !counters.integer(1, *spam ? 0 : 1).integer(2, row.mailbox).row())
+    if (!counters || !counters.integer(1, store::counts_unseen(0, folder))
+                          .integer(2, row.mailbox)
+                          .row())
       return false;
     uid = counters.column_integer(0);
     modseq = counters.column_integer(1);
@@ -52,7 +54,7 @@ bool store_in_file(sqlite3 *file_db, const QueueRow &row, int64_t now_ns) {
                       .text(5, row.rfc_message_id)
                       .text(6, row.dedupe_key)
                       .integer(7, row.raw_bytes)
-                      .integer(8, *spam ? store::Spam : store::Inbox)
+                      .integer(8, folder)
                       .integer(9, *spam ? now_ns : 0)
                       .done()) {
     return false;

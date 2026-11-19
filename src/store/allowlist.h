@@ -25,7 +25,7 @@ struct Entry {
   int64_t quota_bytes{0};
   int64_t used_bytes{0};
   int64_t message_count{0};
-  int64_t unseen{0}; // messages without the seen flag
+  int64_t unseen{0}; // unread messages in the Inbox
   int64_t members{0};
   int64_t uidvalidity{0};
   bool purging{false};
@@ -80,6 +80,8 @@ std::map<int64_t, std::vector<Member>> all_members();
 
 // A name or a header holds none of these
 bool has_control_character(const std::string &s);
+// One address, without a display name or angle brackets
+bool valid_address(const std::string &address);
 
 // The name an admin gave a principal; an empty name removes it. Returns why
 // it was refused, or an empty string.

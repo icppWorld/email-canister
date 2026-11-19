@@ -32,7 +32,7 @@ CREATE TABLE mailboxes(
   quota_bytes INTEGER NOT NULL,
   used_bytes INTEGER NOT NULL DEFAULT 0, -- the file's mail and outbox, and the queue's
   message_count INTEGER NOT NULL DEFAULT 0,
-  unseen INTEGER NOT NULL DEFAULT 0, -- messages without the seen flag
+  unseen INTEGER NOT NULL DEFAULT 0, -- unread messages in the Inbox
   uidvalidity INTEGER NOT NULL,
   next_uid INTEGER NOT NULL DEFAULT 1,
   modseq INTEGER NOT NULL DEFAULT 0,
@@ -219,6 +219,7 @@ std::vector<std::string> g_steps = {
 ALTER TABLE messages ADD COLUMN folder INTEGER NOT NULL DEFAULT 0; -- 0 Inbox, 1 Trash, 2 Spam
 ALTER TABLE messages ADD COLUMN folder_ns INTEGER NOT NULL DEFAULT 0; -- when it left the Inbox
 CREATE INDEX messages_filed ON messages(folder, uid) WHERE folder != 0;
+CREATE INDEX messages_expiring ON messages(folder_ns) WHERE folder != 0;
 
 -- Mail from these addresses goes to Spam
 CREATE TABLE blocked(
