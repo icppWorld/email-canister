@@ -1889,7 +1889,8 @@ test('the Admin panel gives the focus back when an action ends', async ({
   const domain = page.getByLabel('Domain')
   await expect(domain).toHaveValue(DOMAIN)
   await domain.press('Enter')
-  await expect(page.getByRole('status')).toHaveCount(0)
+  // Only the empty note bar is left: the action has ended
+  await expect(page.getByRole('status').filter({ hasText: /./ })).toHaveCount(0)
   await expect(domain).toBeFocused()
   await context.close()
 })
@@ -2746,6 +2747,10 @@ test('Delete moves mail to Trash, where Undo, Restore and Delete forever work', 
   deliver({ subject: 'Trashed shoveler', body: '<p>A shoveler.</p>' })
   await waitDrained()
   const { context, page } = await signedIn(browser, USER_A)
+  // With no note shown, its live region is still there to announce the next
+  await expect(
+    page.getByRole('status').and(page.getByTestId('toast'))
+  ).toHaveCount(1)
   await openMail(page, 'shoveler')
   await page.getByRole('button', { name: 'Delete', exact: true }).click()
   await expect(messageRow(page, 'Trashed shoveler')).toHaveCount(0)
@@ -3060,5 +3065,25 @@ test('a move that ends after a new sign-in leaves no note', async ({
     .toBe(1)
   await page.waitForTimeout(1_000)
   await expect(page.getByTestId('toast')).toBeEmpty()
+  await context.close()
+})
+
+test('a search under way when a message opens still shows what it found', async ({
+  browser,
+}) => {
+  deliver({ subject: 'Patient bittern', body: '<p>A bittern.</p>' })
+  await waitDrained()
+  const { context, page } = await signedIn(browser, USER_A)
+  const first = page.locator('button.message').first()
+  await expect(first).toBeVisible()
+  // The search's reply comes after the message on screen has opened
+  const searching = await hold(page, 'mail_search', { late: true })
+  await search(page, 'bittern')
+  await searching.seen
+  await first.click()
+  await expect(page.getByTestId('subject')).toBeVisible()
+  searching.release()
+  await expect(page.locator('button.message')).toHaveCount(1)
+  await expect(messageRow(page, 'Patient bittern')).toHaveCount(1)
   await context.close()
 })

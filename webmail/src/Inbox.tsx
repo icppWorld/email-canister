@@ -440,6 +440,8 @@ export function Inbox({
   const [error, setError] = useState('')
   // Replies can arrive out of order, and only the newest may be shown
   const latestLoad = useRef(0)
+  // Flags set and mail moved here, which a reply read before them would undo
+  const changes = useRef(0)
   const olderShown = useRef(false)
   const allBox = useRef<HTMLInputElement>(null)
   const touched = useRef(new Map<bigint, bigint>())
@@ -447,19 +449,23 @@ export function Inbox({
   const load = useCallback(
     async (from: [] | [bigint], append: boolean, search: string) => {
       const request = ++latestLoad.current
-      try {
-        const page = search
-          ? await backend.mail_search({
+      const readPage = () =>
+        search
+          ? backend.mail_search({
               query: search,
               folder: here,
               cursor: from,
               limit: PAGE_SIZE,
             })
-          : await backend.mail_list({
-              folder: here,
-              cursor: from,
-              limit: PAGE_SIZE,
-            })
+          : backend.mail_list({ folder: here, cursor: from, limit: PAGE_SIZE })
+      try {
+        let read = changes.current
+        let page = await readPage()
+        // Read before a change made here: read again, so the change stays
+        while (request === latestLoad.current && read !== changes.current) {
+          read = changes.current
+          page = await readPage()
+        }
         if (request !== latestLoad.current) return
         olderShown.current = append
         setItems((previous) =>
@@ -486,7 +492,8 @@ export function Inbox({
 
   // A list load under way began before this change: its reply must not undo it
   const updateFlags = (uids: bigint[], set: bigint, clear: bigint) => {
-    latestLoad.current++
+    if (uids.length === 0 || (set | clear) === 0n) return
+    changes.current++
     const changed = new Set(uids)
     const apply = (m: Summary) =>
       changed.has(m.uid) ? { ...m, flags: (m.flags | set) & ~clear } : m
@@ -496,7 +503,8 @@ export function Inbox({
 
   // Takes messages that moved or were deleted off the list and the reader
   const drop = (uids: bigint[]) => {
-    latestLoad.current++
+    if (uids.length === 0) return
+    changes.current++
     const gone = new Set(uids)
     setItems((previous) => previous.filter((m) => !gone.has(m.uid)))
     setChecked((ticked) => new Set([...ticked].filter((uid) => !gone.has(uid))))

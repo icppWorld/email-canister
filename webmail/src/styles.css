@@ -478,8 +478,11 @@ button.star.on .icon {
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-dialog);
 }
+/* Empty, it stays in the accessibility tree, so a new note is announced */
 .toast:empty {
-  display: none;
+  padding: 0;
+  opacity: 0;
+  pointer-events: none;
 }
 .toast button {
   padding: 4px 8px;
