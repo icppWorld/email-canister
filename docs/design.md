@@ -124,6 +124,7 @@ Local replica, with limits of 40B instructions per update and 5B per query.
 - Node operators can read canister memory, and the mail gateway's operator can read outbound mail.
 - Messages over about 2 MB are refused.
 - A whole-file `admin_check` fits in one call for a mailbox file up to about 2.6 GB, and a check of the search index alone up to about 0.8 GB. The quota counts message bytes, and a file of small mail is about 1.4 times those, so a mailbox of small mail filled to the default 2 GiB quota is a file of about 3 GB, which one call cannot check. Mail with large attachments fills the quota with a file barely larger than its bytes.
+- Mail deleted for good leaves the listing and the search at once, but its bytes can stay in the mailbox file's free pages, and its words in the search index's segments, until they are reused or merged. A member who downloads the file can recover it. A purge removes the whole file.
 - A downloaded mailbox file opens with any SQLite 3. Its search index, `fts`, uses FTS5's `contentless_delete=1`, so querying it needs SQLite 3.43 or newer.
 - An empty mailbox file takes 72 KiB, and the file system adds its own overhead: the prototype measured 112 KiB of stable memory per mailbox. Delivering to several recipients costs several times as many instructions as in v0.1.x, because a message is written to the queue and then into each mailbox in a call of its own; the table above has the measured costs.
 - The relay does not support `In-Reply-To`, `References`, `Reply-To`, custom headers, a text part, or delivery status.

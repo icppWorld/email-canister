@@ -39,6 +39,7 @@ email-canister grows in small releases, driven by running it for real mailboxes.
 
 - Low-cycles mode that pauses sending, and alerts before the freezing threshold.
 - Snapshot and restore drills.
+- Mail deleted for good overwritten in the mailbox file (`secure_delete`), and the search index merged after a delete, so a download cannot recover it.
 - A paged rebuild of a mailbox's search index.
 - A scheduled check that a domain's MX records still match the gateway's hosts.
 - A consistency check of a mailbox file too large for one call: a whole-file check covers about 2.6 GB, the search index's own check about 0.8 GB.
