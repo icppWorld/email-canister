@@ -595,8 +595,8 @@ void dev_search_cost() {
   args.append(CandidTypeText{&local});
   args.append(CandidTypeText{&query});
   ic_api.from_wire(args);
-  store::search(require_test_mailbox(local), store::Inbox, query,
-                std::nullopt, 50);
+  store::search(require_test_mailbox(local), store::Inbox, query, std::nullopt,
+                50);
   ic_api.to_wire(CandidTypeNat64{IC_API::performance_counter()});
 }
 

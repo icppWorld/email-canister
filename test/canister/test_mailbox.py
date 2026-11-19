@@ -608,7 +608,9 @@ def test__list_pages_are_stable_and_newest_first() -> None:
             break
     assert seen == sorted(seen, reverse=True)
     assert len(seen) == len(set(seen))
-    assert len(seen) == number(entry_line("bob"), "message_count")
+    # The count covers every folder: an earlier test left mail in Spam
+    filed = sum(len(uids(page(USER_B, folder=folder))) for folder in (1, 2))
+    assert len(seen) + filed == number(entry_line("bob"), "message_count")
 
 
 @pytest.mark.parametrize(
