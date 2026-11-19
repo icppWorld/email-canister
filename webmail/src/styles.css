@@ -75,6 +75,11 @@ textarea {
   padding: 6px 8px;
   width: 100%;
 }
+input[type='checkbox'] {
+  width: auto;
+  min-height: 0;
+  padding: 0;
+}
 :focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
@@ -368,6 +373,7 @@ li.message-row {
 li.message-row:hover {
   background: var(--surface-muted);
 }
+li.message-row:has(.pick:checked),
 li.message-row:has(.message[aria-current='true']) {
   background: var(--selected);
 }
@@ -419,6 +425,9 @@ button.star.on .icon {
 @media (hover: hover) {
   li.message-row:hover .row-actions {
     display: flex;
+  }
+  li.message-row:hover .date {
+    visibility: hidden;
   }
 }
 .row-actions button {

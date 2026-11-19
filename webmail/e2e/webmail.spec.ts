@@ -2795,10 +2795,26 @@ test('ticked messages are read, unread, starred and deleted together, and Trash 
   const { context, page } = await signedIn(browser, USER_A)
   await search(page, 'pratincole')
   await expect(messageRow(page, 'Ticked pratincole')).toHaveCount(3)
+  // The boxes are boxes: the list fits its column, with no sideways scroll
+  const list = page.getByRole('region', { name: 'Messages' })
+  expect(
+    await list.evaluate((el) => el.scrollWidth - el.clientWidth)
+  ).toBeLessThanOrEqual(0)
+  expect(
+    (await page.getByLabel('Select Ticked pratincole 1').boundingBox())!.width
+  ).toBeLessThan(32)
   const bulk = page.getByRole('toolbar', { name: 'Selected messages' })
 
+  // A ticked row stands out from the rest
+  const row = page.locator('li.message-row', {
+    has: page.getByLabel('Select Ticked pratincole 2'),
+  })
+  const background = () =>
+    row.evaluate((el) => getComputedStyle(el).backgroundColor)
+  const unticked = await background()
   await bulk.getByLabel('Select all').check()
   await expect(bulk).toContainText('3 selected')
+  expect(await background()).not.toBe(unticked)
   await bulk.getByRole('button', { name: 'Mark read' }).click()
   await expect(page.locator('button.message.unread')).toHaveCount(0)
   await bulk.getByRole('button', { name: 'Mark unread' }).click()
