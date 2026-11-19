@@ -1,0 +1,182 @@
+type Header = record { name : text; value : text };
+type Message = record { headers : vec Header; body : blob };
+type Address = record { user : text; domain : text };
+type Envelope = record { from : Address; to : vec Address };
+type SmtpRequest = record {
+    message : opt Message;
+    envelope : opt Envelope;
+    gateway_flags : opt vec text;
+    message_id : opt text;
+};
+type SmtpRequestError = record { code : nat64; message : text };
+type SmtpResponse = variant { Ok : record {}; Err : SmtpRequestError };
+
+// quarantined: messages in the mailboxes that could not be parsed;
+// quarantined_moves: messages in the queue that could not be moved into one
+type IngestStats = record {
+    queued : nat64;
+    indexed : nat64;
+    quarantined : nat64;
+    quarantined_moves : nat64;
+};
+type StorageTotals = record {
+    mailboxes : nat64;
+    messages : nat64;
+    used_bytes : nat64;
+    database_bytes : nat64; // control.db and the mailbox files
+    stable_memory_bytes : nat64; // all of stable memory, most of it reserved by the file system
+};
+// first_member: added in the same call, so a refused one leaves no mailbox
+type NewMailbox = record {
+  local : text;
+  quota_bytes : opt nat64;
+  first_member : opt principal;
+};
+// name: what an admin calls the principal, shown to the members of a mailbox
+type Member = record { "principal" : principal; name : opt text };
+// vacant: purged, so the address is free to create again
+type Entry = record {
+    local : text;
+    members : vec Member;
+    vacant : bool;
+    disabled : bool;
+    quota_bytes : nat64;
+    used_bytes : nat64;
+    message_count : nat64;
+    needs_repair : opt text; // why the mailbox is held, until a check finds it fine
+    uidvalidity : nat64; // changes when the address is created again
+};
+
+// A mailbox the caller is a member of. members: how many share it.
+type MailboxInfo = record {
+    local : text;
+    address : text;
+    members : nat64;
+    message_count : nat64;
+    unseen : nat64;
+    used_bytes : nat64;
+    quota_bytes : nat64;
+    uidvalidity : nat64;
+};
+type Me = record {
+    "principal" : principal;
+    name : opt text;
+    is_controller : bool;
+    mailboxes : vec MailboxInfo; // enabled, by address
+};
+// state: 0 queued, 1 indexed, 2 quarantined. flags: 1 seen, 2 flagged.
+type Summary = record {
+    uid : nat64;
+    state : nat64;
+    flags : nat64;
+    modseq : nat64;
+    received_ns : nat64;
+    sent_at : nat64;
+    envelope_from : text;
+    subject : text;
+    sender : text;
+    attachments : nat64;
+    preview : text;
+    raw_bytes : nat64;
+};
+type ListRequest = record { cursor : opt nat64; limit : nat64 };
+type SearchRequest = record { "query" : text; cursor : opt nat64; limit : nat64 };
+// An absent cursor means there is nothing more
+type Page = record { items : vec Summary; cursor : opt nat64 };
+// Who opened a message, and when each first did
+type SeenBy = record { "principal" : principal; name : opt text; at_ns : nat64 };
+type FullMessage = record { summary : Summary; raw : blob; seen_by : vec SeenBy };
+
+type Attachment = record { filename : text; content : blob };
+type SendRequest = record {
+    client_id : text;
+    to : vec text;
+    cc : vec text;
+    bcc : vec text;
+    subject : text;
+    html_body : text;
+    attachments : vec Attachment;
+};
+// state: 0 queued, 1 sending, 2 accepted for delivery, 3 rejected, 4 unknown
+type OutboxSummary = record {
+    id : nat64;
+    state : nat64;
+    attempts : nat64;
+    created_ns : nat64;
+    to : vec text;
+    cc : vec text;
+    bcc : vec text;
+    subject : text;
+    attachments : nat64;
+    bytes : nat64;
+    last_error : text;
+    sent_by : principal; // the member who sent it
+    sent_by_name : opt text;
+};
+type OutboxPage = record { items : vec OutboxSummary; cursor : opt nat64 };
+type OutboxMessage = record {
+    summary : OutboxSummary;
+    html_body : text;
+    attachments : vec Attachment;
+};
+// A download of a mailbox file. While it lasts, nothing writes to the file:
+// new mail waits in the queue, and every member's changes answer
+// "downloading:". Only the member who started it reads its chunks, renews or
+// ends it. started_ns names the download; until_ns is when it lapses.
+type ExportInfo = record { size : nat64; started_ns : nat64; until_ns : nat64 };
+type ExportChunkRequest = record { offset : nat64; length : nat64 };
+type ExportChunk = record { data : blob; size : nat64; started_ns : nat64 };
+type Settings = record { domain : text; bridge : opt principal };
+
+service : () -> {
+    "smtp_request_validate" : (SmtpRequest) -> (SmtpResponse) query;
+    "smtp_request" : (SmtpRequest) -> (SmtpResponse);
+
+    // Called only by the canister itself
+    "outbox_pump" : () -> ();
+    "ingest_pump" : () -> ();
+    "ingest_move" : (nat64) -> ();
+    "ingest_process" : (nat64, nat64) -> ();
+    "ingest_merge" : (nat64) -> ();
+    "ingest_upgrade_file" : (nat64) -> ();
+
+    // Controllers only
+    "admin_set_domain" : (text) -> ();
+    "admin_set_bridge" : (principal) -> ();
+    "admin_settings" : () -> (Settings) query;
+    "admin_create_mailbox" : (NewMailbox) -> ();
+    // The third argument, the mailbox's uidvalidity as listed, refuses the
+    // call if the address was created again since
+    "admin_add_member" : (text, principal, opt nat64) -> ();
+    "admin_remove_member" : (text, principal) -> ();
+    "admin_set_name" : (principal, text) -> (); // "" removes the name
+    "admin_set_disabled" : (text, bool) -> ();
+    "admin_set_quota" : (text, nat64) -> ();
+    "admin_purge" : (text) -> (record { remaining : nat64 }); // bytes
+    "admin_retry_moves" : (text) -> (nat64);
+    // quick_check of one table, or of the whole file, and the counters
+    "admin_check" : (text, opt text) -> (record { result : text; instructions : nat64 });
+    "admin_list_entries" : () -> (vec Entry) query;
+    "admin_ingest_stats" : () -> (IngestStats) query;
+    "admin_storage_totals" : () -> (StorageTotals) query;
+
+    // Open to everyone
+    "mail_me" : () -> (Me) query;
+
+    // A mailbox the caller is a member of, named by its local part first
+    "mail_list" : (text, ListRequest) -> (Page) query;
+    "mail_get" : (text, nat64) -> (FullMessage) query;
+    "mail_search" : (text, SearchRequest) -> (Page) query;
+    // uid, the flags to set, the flags to clear. Setting seen records who
+    // opened the message.
+    "mail_set_flags" : (text, nat64, nat64, nat64) -> ();
+    "mail_delete" : (text, vec nat64) -> (nat64);
+    "mail_send" : (text, SendRequest) -> (nat64);
+    "mail_outbox_list" : (text, ListRequest) -> (OutboxPage) query;
+    "mail_outbox_get" : (text, nat64) -> (OutboxMessage) query;
+    "mail_outbox_resend" : (text, nat64) -> ();
+    "mail_outbox_delete" : (text, nat64) -> ();
+    "mail_export_freeze" : (text, opt nat64) -> (ExportInfo); // the started_ns it renews
+    "mail_export_thaw" : (text, nat64) -> (); // the download's started_ns
+    "mail_export_chunk" : (text, ExportChunkRequest) -> (ExportChunk) query;
+}

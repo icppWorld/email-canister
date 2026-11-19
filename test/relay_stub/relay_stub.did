@@ -1,0 +1,33 @@
+type RelayAttachment = record { filename : text; base64 : text };
+type RelayRequest = record {
+    outboxId : text;
+    fromUsername : text;
+    to : vec text;
+    cc : vec text;
+    bcc : vec text;
+    subject : text;
+    htmlBody : text;
+    attachments : vec RelayAttachment;
+};
+type RelayStatus = variant { sending : int; sent; rejected : text; unknown : text };
+type Stats = record {
+    calls : nat64;
+    sends : nat64;
+    max_sends_per_key : nat64;
+    last_from : text;
+    last_key : text;
+    last_to : vec text;
+    last_subject : text;
+    last_attachment : text;
+};
+
+service : () -> {
+    "relaySend" : (RelayRequest) -> (RelayStatus);
+    "stub_commit" : () -> ();
+    // sent, rejected, unknown, sending, trap, drop or garbage
+    "stub_set_mode" : (text) -> ();
+    // Ends every message left in sending with this outcome: sent or unknown
+    "stub_finish" : (text) -> ();
+    "stub_reset" : () -> ();
+    "stub_stats" : () -> (Stats) query;
+}

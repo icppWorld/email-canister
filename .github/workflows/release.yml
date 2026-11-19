@@ -1,0 +1,98 @@
+name: release
+
+# Started by hand once version.txt and docs/release-notes/v<version>.md are on main:
+#   gh workflow run release.yml -f tag=v0.1.0
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "The release tag, v followed by version.txt, e.g. v0.1.0 or v0.2.0rc1"
+        required: true
+
+# Read-only by default; only the job that publishes can write
+permissions:
+  contents: read
+
+# One release at a time; a second dispatch waits instead of racing the first
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: the tag matches version.txt, with release notes
+        env:
+          TAG: ${{ github.event.inputs.tag }}
+        run: |
+          test "$TAG" = "v$(cat version.txt)" || { echo "tag $TAG does not match version.txt $(cat version.txt)"; exit 1; }
+          test -f "docs/release-notes/$TAG.md" || { echo "docs/release-notes/$TAG.md is missing"; exit 1; }
+          test "$GITHUB_REF" = "refs/heads/main" || { echo "release from main only"; exit 1; }
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null; then
+            echo "$TAG already exists: raise version.txt for a new release"; exit 1
+          fi
+      - name: CI passed on this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          conclusion=$(gh run list --workflow cicd.yml --branch main --event push --commit "$GITHUB_SHA" --status completed \
+            --limit 1 --json conclusion --jq '.[0].conclusion')
+          test "$conclusion" = "success" || { echo "cicd on $GITHUB_SHA: ${conclusion:-not run}"; exit 1; }
+
+  release:
+    needs: check
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: build the toolchain image
+        run: docker builder prune --all --force && make docker-build-base
+      - name: build the wasm and the webmail
+        run: make docker-build
+      - name: pack the release
+        env:
+          NEUTRAL_DENYLIST_TEXT: ${{ secrets.NEUTRAL_DENYLIST_TEXT }}
+        run: make release-zip
+      - name: describe the release
+        env:
+          TAG: ${{ github.event.inputs.tag }}
+        run: |
+          git tag "$TAG" "$GITHUB_SHA"
+          wasm=$(cat out/email-canister.wasm.sha256)
+          webmail=$(cat out/webmail/dist.sha256)
+          echo "WASM_SHA256=$wasm" >>"$GITHUB_ENV"
+          {
+            cat "docs/release-notes/$TAG.md"
+            echo
+            scripts/make-release-desc.sh "$TAG"
+            echo
+            echo "## Reproducible build"
+            echo
+            echo "| | sha256 |"
+            echo "|---|---|"
+            echo "| \`email-canister.wasm\` | \`$wasm\` |"
+            echo "| webmail \`dist\` (hash of \`dist.sha256sums\`) | \`$webmail\` |"
+            echo
+            echo "Rebuild from commit \`$GITHUB_SHA\` with \`make docker-build-base docker-build\`, then compare"
+            echo "\`out/email-canister.wasm.sha256\`. Check a running canister with"
+            echo "\`make docker-verify-wasm VERIFY_CANISTER=<canister id>\`."
+          } >out/release-body.md
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          tag_name: ${{ github.event.inputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: "${{ github.event.inputs.tag }} — wasm ${{ env.WASM_SHA256 }}"
+          body_path: out/release-body.md
+          prerelease: ${{ contains(github.event.inputs.tag, 'rc') }}
+          files: |
+            out/email-canister_${{ github.event.inputs.tag }}.zip
+            out/email-canister.wasm
+            out/email-canister.wasm.sha256

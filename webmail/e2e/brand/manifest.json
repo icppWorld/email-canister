@@ -1,0 +1,10 @@
+{
+  "source": "webmail/e2e/brand, written by hand for the tests",
+  "version": "1",
+  "files": {
+    "tokens.json": "ab8def1c4eb993dc7d8853a79a8c5bcf064f3fb2130177ebeaaf1d0dfb99a1be",
+    "logo-light.svg": "ae6c5065262b4d29e21e63986ab2ba506d5eaa4e033f2599f46987fc70dce932",
+    "logo-dark.svg": "4f72c515fc8798fedeca32288e6069d2cc8d8c0cdbb0cc36e1cb4587a083cd6a",
+    "icon.svg": "fc5852e4168135b431bf96143d3735b2c8efb57e11a61e89d320e07cd1a74ae9"
+  }
+}

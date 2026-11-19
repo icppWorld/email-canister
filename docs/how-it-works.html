@@ -1,0 +1,784 @@
+<title>How email-canister works</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,500;8..60,650&family=Public+Sans:ital,wght@0,400;0,600;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: one reading column with a sticky contents rail on wide screens; figures may run wider than the text. */
+:root {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --ink: #18202b;
+  --muted: #586373;
+  --line: #c9d0da;
+  --accent: #2c5aa0;
+  --accent-soft: #e3ebf7;
+  --warn: #9a5b00;
+  --warn-soft: #fbf0dd;
+  --bad: #a3322b;
+  --good: #2f7a4a;
+  --font-display: "Source Serif 4", Georgia, "Times New Roman", serif;
+  --font-body: "Public Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #11151b; --surface: #19202a; --ink: #e4e8ee; --muted: #9aa5b4; --line: #364152;
+    --accent: #8db2ec; --accent-soft: #1d2a3e; --warn: #e3ab55; --warn-soft: #2e2516;
+    --bad: #ec8a83; --good: #7cc796; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #11151b; --surface: #19202a; --ink: #e4e8ee; --muted: #9aa5b4; --line: #364152;
+  --accent: #8db2ec; --accent-soft: #1d2a3e; --warn: #e3ab55; --warn-soft: #2e2516;
+  --bad: #ec8a83; --good: #7cc796; color-scheme: dark;
+}
+
+body {
+  background: var(--bg); color: var(--ink);
+  font: 16px/1.6 var(--font-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.page { max-width: 1120px; margin: 0 auto; padding-block: 48px 96px; display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 56px; }
+@media (max-width: 860px) { .page { grid-template-columns: minmax(0, 1fr); gap: 24px; padding-block: 28px 64px; } .rail { display: none; } }
+.rail nav { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 32px); display: grid; gap: 6px; font-size: 13.5px; }
+.rail .label { font: 600 11px/1 var(--font-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+.rail a { color: var(--muted); text-decoration: none; padding: 2px 0; }
+.rail a:hover, .rail a:focus-visible { color: var(--accent); }
+main { min-width: 0; display: grid; gap: 64px; }
+main > section { display: grid; gap: 18px; min-width: 0; }
+.prose { max-width: 68ch; display: grid; gap: 14px; }
+.prose p, .prose ul, .prose ol { margin: 0; }
+.prose ul, .prose ol { padding-left: 1.2em; display: grid; gap: 6px; }
+
+h1, h2, h3 { font-family: var(--font-display); font-weight: 650; text-wrap: balance; margin: 0; line-height: 1.2; }
+h1 { font-size: clamp(2.1rem, 4.5vw, 3rem); letter-spacing: -.01em; }
+h2 { font-size: 1.75rem; }
+h3 { font-size: 1.2rem; font-weight: 500; }
+.eyebrow { font: 600 11.5px/1 var(--font-mono); letter-spacing: .1em; text-transform: uppercase; color: var(--accent); }
+.lede { font-size: 1.15rem; color: var(--muted); max-width: 62ch; margin: 0; }
+code { font-family: var(--font-mono); font-size: .86em; background: var(--accent-soft); padding: .08em .35em; border-radius: 3px; overflow-wrap: anywhere; }
+a { color: var(--accent); }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+header { display: grid; gap: 16px; }
+.meta { display: flex; flex-wrap: wrap; gap: 8px 20px; font: 12.5px/1.4 var(--font-mono); color: var(--muted); }
+
+figure { margin: 0; display: grid; gap: 10px; min-width: 0; }
+.diagram { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 20px 16px; }
+.diagram svg { display: block; width: 100%; height: auto; min-width: 640px; color: var(--ink); font-family: var(--font-body); }
+figcaption { font-size: 14px; color: var(--muted); max-width: 68ch; }
+
+/* SVG parts, coloured from the page tokens so both themes work */
+.box { fill: var(--surface); stroke: var(--line); stroke-width: 1.5; }
+.box-key { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.5; }
+.box-warn { fill: var(--warn-soft); stroke: var(--warn); stroke-width: 1.5; }
+.zone { fill: none; stroke: var(--line); stroke-width: 1.2; stroke-dasharray: 5 4; }
+.edge { fill: none; stroke: var(--ink); stroke-width: 1.4; }
+.edge-key { fill: none; stroke: var(--accent); stroke-width: 1.8; }
+.edge-dash { fill: none; stroke: var(--muted); stroke-width: 1.3; stroke-dasharray: 5 4; }
+.edge-bad { fill: none; stroke: var(--bad); stroke-width: 1.5; stroke-dasharray: 4 4; }
+.head { fill: var(--ink); } .head-key { fill: var(--accent); } .head-dash { fill: var(--muted); } .head-bad { fill: var(--bad); }
+.t { fill: var(--ink); font-size: 13px; }
+.t-b { fill: var(--ink); font-size: 13.5px; font-weight: 600; }
+.t-s { fill: var(--muted); font-size: 11.5px; }
+.t-m { fill: var(--muted); font-size: 11.5px; font-family: var(--font-mono); }
+.t-k { fill: var(--accent); font-size: 11.5px; font-family: var(--font-mono); }
+.t-bad { fill: var(--bad); font-size: 11.5px; font-weight: 600; }
+.t-good { fill: var(--good); font-size: 11.5px; font-weight: 600; }
+
+.components { display: grid; gap: 0; border-top: 1px solid var(--line); }
+.component { display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 8px 32px; padding-block: 22px; border-bottom: 1px solid var(--line); }
+@media (max-width: 700px) { .component { grid-template-columns: minmax(0, 1fr); } }
+.component h3 { font-size: 1.1rem; }
+.component .what { font: 12px/1.4 var(--font-mono); color: var(--muted); margin-top: 6px; }
+.component dl { margin: 0; display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 8px 16px; max-width: 72ch; }
+@media (max-width: 480px) { .component dl { grid-template-columns: minmax(0, 1fr); gap: 2px; } .component dd { margin-bottom: 8px; } }
+.component dt { font: 600 11px/1.9 var(--font-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.component dd { margin: 0; }
+
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 14.5px; }
+th, td { text-align: left; vertical-align: top; padding: 11px 14px; border-bottom: 1px solid var(--line); }
+tr:last-child td { border-bottom: 0; }
+th { font: 600 11px/1.3 var(--font-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); background: var(--bg); }
+td.num { font-variant-numeric: tabular-nums; font-family: var(--font-mono); font-size: 13px; white-space: nowrap; }
+.risks td:first-child { font-weight: 600; min-width: 190px; }
+.risks td:nth-child(2) { min-width: 220px; }
+.risks td:last-child { min-width: 260px; }
+.where td:first-child { font-weight: 600; min-width: 150px; }
+.where td { min-width: 150px; }
+.sev { display: inline-block; font: 600 10.5px/1 var(--font-mono); letter-spacing: .06em; text-transform: uppercase; padding: 4px 6px; border-radius: 3px; margin-bottom: 6px; }
+.sev-high { color: var(--bad); border: 1px solid var(--bad); }
+.sev-med { color: var(--warn); border: 1px solid var(--warn); }
+.sev-low { color: var(--muted); border: 1px solid var(--line); }
+.note { border-left: 3px solid var(--warn); background: var(--warn-soft); padding: 12px 16px; max-width: 68ch; font-size: 15px; }
+.note p { margin: 0; }
+footer { color: var(--muted); font-size: 13.5px; border-top: 1px solid var(--line); padding-top: 20px; max-width: 68ch; }
+@media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
+</style>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head" d="M0,0 L10,5 L0,10 z"/></marker>
+    <marker id="ak" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-key" d="M0,0 L10,5 L0,10 z"/></marker>
+    <marker id="ad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-dash" d="M0,0 L10,5 L0,10 z"/></marker>
+    <marker id="ab" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-bad" d="M0,0 L10,5 L0,10 z"/></marker>
+  </defs>
+</svg>
+
+<div class="page">
+  <aside class="rail">
+    <nav aria-label="Contents">
+      <span class="label">Contents</span>
+      <a href="#overview">The whole system</a>
+      <a href="#where">What lives where</a>
+      <a href="#inbound">Receiving mail</a>
+      <a href="#storage">Storage</a>
+      <a href="#outbound">Sending mail</a>
+      <a href="#access">Who can see what</a>
+      <a href="#components">The components</a>
+      <a href="#release">Releases and deploying</a>
+      <a href="#limits">Measured limits</a>
+      <a href="#risks">Risks</a>
+    </nav>
+  </aside>
+
+  <main>
+    <header>
+      <span class="eyebrow">email-canister · v0.2.0</span>
+      <h1>How email-canister works</h1>
+      <p class="lede">email-canister is a product: a repository whose versioned releases hold the code a domain needs to run its own mail on the Internet Computer. A deployment serves one domain with two canisters you control, a C++ backend that receives, stores, indexes and sends mail, and a webmail that users sign in to with Internet Identity, plus a small domain canister for a domain registered elsewhere. The domain also needs a Caffeine app, which is not part of a release: it serves the domain's website, and sends mail through the release's bridge code added to its backend. This page explains each part, where it lives, how mail moves through them, and what you take on by relying on it.</p>
+      <div class="meta"><span>Covers release v0.2.0</span><span>Source: docs/design.md, docs/setup-guide.md, bridge/README.md, webmail/brand/README.md, scripts/make-release-zip.sh</span></div>
+    </header>
+
+    <section id="overview">
+      <span class="eyebrow">Overview</span>
+      <h2>The whole system</h2>
+      <div class="prose">
+        <p>A deployment serves one domain. The diagram groups its parts by where they live: the canisters an email-canister release installs, your domain's Caffeine app, and the services other people run. Mail comes in at the top left through the DFINITY SMTP gateway, and goes out at the top right through Caffeine's mail gateway.</p>
+      </div>
+      <figure>
+        <div class="diagram">
+          <svg viewBox="0 0 900 470" role="img" aria-label="Three groups. The email-canister release installs canisters you control: the C++ backend canister, the webmail asset canister and, for a domain registered elsewhere, a domain asset canister that serves the bare domain's well-known handoff file and redirects browsers to www. Your domain's Caffeine app has a website, which serves the domain, or only its www name for a domain registered elsewhere, and a Motoko backend canister that contains the relay bridge copied from the release. Run by others: the sender, the DFINITY SMTP gateway, Caffeine's mail gateway, the recipient and Internet Identity. Inbound mail goes from the sender through the SMTP gateway into the backend canister; the gateway reads the handoff file from the bare domain, served by the Caffeine app or by the domain canister. The user's browser loads the webmail and calls the backend directly. The backend calls relaySend in the Caffeine app's backend, which sends through the mail gateway to the recipient.">
+            <text class="t-m" x="20" y="24">RUN BY OTHERS</text>
+
+            <rect class="box" x="20" y="40" width="140" height="52" rx="5"/>
+            <text class="t-b" x="90" y="63" text-anchor="middle">Sender</text>
+            <text class="t-s" x="90" y="80" text-anchor="middle">any mail server</text>
+
+            <rect class="box" x="200" y="40" width="170" height="52" rx="5"/>
+            <text class="t-b" x="285" y="63" text-anchor="middle">SMTP gateway</text>
+            <text class="t-s" x="285" y="80" text-anchor="middle">run by DFINITY</text>
+
+            <rect class="box" x="500" y="40" width="180" height="52" rx="5"/>
+            <text class="t-b" x="590" y="63" text-anchor="middle">Mail gateway</text>
+            <text class="t-s" x="590" y="80" text-anchor="middle">run by Caffeine, signs DKIM</text>
+
+            <rect class="box" x="740" y="40" width="140" height="52" rx="5"/>
+            <text class="t-b" x="810" y="63" text-anchor="middle">Recipient</text>
+            <text class="t-s" x="810" y="80" text-anchor="middle">any mailbox</text>
+
+            <!-- the canisters an email-canister release installs -->
+            <rect class="zone" x="10" y="132" width="432" height="238" rx="6"/>
+            <text class="t-m" x="24" y="152">EMAIL-CANISTER RELEASE</text>
+
+            <rect class="box-key" x="30" y="166" width="200" height="190" rx="5"/>
+            <text class="t-b" x="130" y="190" text-anchor="middle">Backend canister</text>
+            <text class="t-s" x="130" y="207" text-anchor="middle">C++20 · email-canister.wasm</text>
+            <line class="edge-dash" x1="46" y1="218" x2="214" y2="218"/>
+            <text class="t" x="46" y="242">SMTP handlers</text>
+            <text class="t" x="46" y="262">ingest timer</text>
+            <text class="t" x="46" y="282">mailbox API</text>
+            <text class="t" x="46" y="302">outbox timer</text>
+            <text class="t" x="46" y="322">admin API</text>
+            <text class="t-s" x="46" y="344">a SQLite file per mailbox</text>
+
+            <rect class="box-key" x="250" y="166" width="176" height="76" rx="5"/>
+            <text class="t-b" x="338" y="188" text-anchor="middle">Webmail canister</text>
+            <text class="t-s" x="338" y="204" text-anchor="middle">asset canister</text>
+            <text class="t-s" x="338" y="219" text-anchor="middle">TypeScript · webmail/dist</text>
+            <text class="t-s" x="338" y="234" text-anchor="middle">configured by brand.mjs</text>
+
+            <rect class="box-key" x="250" y="250" width="176" height="60" rx="5"/>
+            <text class="t-b" x="338" y="270" text-anchor="middle">Domain canister</text>
+            <text class="t-s" x="338" y="286" text-anchor="middle">bare domain: /.well-known +</text>
+            <text class="t-s" x="338" y="301" text-anchor="middle">redirect to www</text>
+
+            <!-- your domain's Caffeine app -->
+            <rect class="zone" x="460" y="132" width="420" height="238" rx="6"/>
+            <text class="t-m" x="474" y="152">YOUR DOMAIN'S CAFFEINE APP</text>
+
+            <rect class="box" x="480" y="166" width="390" height="70" rx="5"/>
+            <text class="t-b" x="675" y="188" text-anchor="middle">Website</text>
+            <text class="t-s" x="675" y="206" text-anchor="middle">serves your domain, or only www for one registered elsewhere</text>
+            <text class="t-s" x="675" y="222" text-anchor="middle">the app's frontend, built by Caffeine</text>
+
+            <rect class="box" x="480" y="250" width="390" height="106" rx="5"/>
+            <text class="t-b" x="675" y="272" text-anchor="middle">App backend canister</text>
+            <text class="t-s" x="675" y="289" text-anchor="middle">Motoko, built and deployed by Caffeine</text>
+            <rect class="box-key" x="500" y="302" width="350" height="42" rx="4"/>
+            <text class="t-b" x="675" y="320" text-anchor="middle">Relay bridge · relaySend</text>
+            <text class="t-s" x="675" y="336" text-anchor="middle">the release's bridge/ files, relayCaller set</text>
+
+            <!-- the user's side -->
+            <rect class="box" x="30" y="400" width="200" height="52" rx="5"/>
+            <text class="t-b" x="130" y="423" text-anchor="middle">User's browser</text>
+            <text class="t-s" x="130" y="440" text-anchor="middle">runs the webmail's JavaScript</text>
+
+            <rect class="box" x="480" y="400" width="200" height="52" rx="5"/>
+            <text class="t-b" x="580" y="423" text-anchor="middle">Internet Identity</text>
+            <text class="t-s" x="580" y="440" text-anchor="middle">run by DFINITY, passkeys</text>
+
+            <!-- inbound -->
+            <path class="edge" d="M160,66 H196" marker-end="url(#a)"/>
+            <text class="t-m" x="178" y="58" text-anchor="middle">SMTP</text>
+            <path class="edge-key" d="M210,92 V162" marker-end="url(#ak)"/>
+            <text class="t-k" x="218" y="122">smtp_request</text>
+            <path class="edge-dash" d="M330,92 V128 H820 V162" marker-end="url(#ad)"/>
+            <path class="edge-dash" d="M436,128 V280 H430" marker-end="url(#ad)"/>
+            <text class="t-s" x="446" y="122">reads /.well-known from the bare domain</text>
+
+            <!-- users -->
+            <path class="edge" d="M210,400 V380 H240 V204 H246" marker-end="url(#a)"/>
+            <text class="t-s" x="248" y="394">loads the app</text>
+            <path class="edge-key" d="M130,400 V360" marker-end="url(#ak)"/>
+            <text class="t-k" x="124" y="384" text-anchor="end">Candid calls</text>
+            <path class="edge-dash" d="M480,426 H234" marker-end="url(#ad)"/>
+            <text class="t-s" x="330" y="420">delegation</text>
+
+            <!-- outbound -->
+            <path class="edge-key" d="M230,323 H496" marker-end="url(#ak)"/>
+            <text class="t-k" x="366" y="338">relaySend</text>
+            <path class="edge" d="M850,323 H892 V112 H590 V96" marker-end="url(#a)"/>
+            <text class="t-m" x="750" y="106">HTTPS</text>
+            <path class="edge" d="M680,66 H736" marker-end="url(#a)"/>
+            <text class="t-m" x="708" y="58" text-anchor="middle">SMTP</text>
+          </svg>
+        </div>
+        <figcaption>In this diagram, blue boxes hold code from an email-canister release. The left dashed area is the canisters the release installs, which you control. The domain canister is needed only for a domain registered elsewhere, where Caffeine serves only <code>www</code>. The right one is your domain's Caffeine app, which Caffeine builds and deploys: it serves the website and runs the relay bridge inside its own backend canister. The boxes outside both areas are run by others, except the user's browser. The SMTP gateway finds your backend through the domain's MX records, which point at the gateway, and the file <code>/.well-known/ic-smtp-canister-id</code> on the bare domain, which the Caffeine app or the domain canister serves.</figcaption>
+      </figure>
+      <div class="prose">
+        <p>Why a new program rather than a port of an existing mail server: Postfix, Dovecot and their peers depend on processes, threads, sockets and blocking I/O. A canister has none of these. It handles one message at a time, has no sockets, and every call has an instruction limit. email-canister is a small message-driven C++20 program that links two portable libraries: libetpan for MIME parsing and SQLite with FTS5 for storage and search.</p>
+      </div>
+    </section>
+
+    <section id="where">
+      <span class="eyebrow">Locations</span>
+      <h2>What lives where</h2>
+      <div class="prose">
+        <p>"email-canister" names the product: the repository and its releases. No single canister is the whole of it. Each part of a deployment runs somewhere different, is written in its own language, and comes from its own place.</p>
+      </div>
+      <div class="table-wrap">
+        <table class="where">
+          <thead><tr><th>Part</th><th>Runs in</th><th>Language</th><th>Code comes from</th><th>Deployed by</th></tr></thead>
+          <tbody>
+            <tr><td>Backend canister</td><td>Its own canister on the Internet Computer</td><td>C++20, compiled to wasm</td><td>The release: <code>build/email-canister.wasm</code></td><td>You, from the deployment repository, installed as it is and pinned by sha256</td></tr>
+            <tr><td>Webmail</td><td>An asset canister serves it; its JavaScript runs in the user's browser</td><td>TypeScript, prebuilt with Vite</td><td>The release: <code>webmail/dist</code></td><td>You, after the brand script has configured it</td></tr>
+            <tr><td>Brand script</td><td>Your machine, at deploy time; never on chain</td><td>JavaScript for Node.js 20 or later</td><td>The release: <code>webmail/brand.mjs</code></td><td>Run by you, from the deployment repository</td></tr>
+            <tr><td>Relay bridge</td><td>The backend canister of your Caffeine app; it is not a canister of its own</td><td>Motoko</td><td>The release: three files in <code>bridge/</code>, with <code>relayCaller</code> set to your backend, wired into the app as <code>bridge/README.md</code> describes</td><td>Caffeine, as part of your app</td></tr>
+            <tr><td>Domain canister</td><td>An asset canister of its own, on the bare domain; only for a domain registered elsewhere</td><td>Static files</td><td>The release: <code>domain/domain.mjs</code> writes them on your machine</td><td>You, from the deployment repository</td></tr>
+            <tr><td>Website and <code>/.well-known</code> file</td><td>Whatever serves the bare domain: your Caffeine app's frontend for a domain bought through Caffeine, or else the domain canister</td><td>Whatever that site is built with</td><td>That site; the file names your backend canister, and <code>domain.mjs</code> and the brand script write it</td><td>Caffeine for the app; you for the domain canister</td></tr>
+            <tr><td>SMTP gateway</td><td>DFINITY's infrastructure</td><td>A service, not your code</td><td>DFINITY</td><td>DFINITY</td></tr>
+            <tr><td>Mail gateway</td><td>Caffeine's infrastructure</td><td>A service, not your code</td><td>Caffeine</td><td>Caffeine</td></tr>
+            <tr><td>Internet Identity</td><td>Its own canisters on the Internet Computer</td><td>A service, not your code</td><td>DFINITY</td><td>DFINITY</td></tr>
+            <tr><td>Release zip</td><td>The releases page of the email-canister repository</td><td>None: it holds the backend wasm, the webmail with its brand script, the domain script, the bridge files, scripts and docs</td><td>A commit on <code>main</code>, built in a Docker image pinned by digest</td><td>The release workflow</td></tr>
+            <tr><td>Deployment repository</td><td>A repository of your own, one per domain</td><td>Shell scripts, a Makefile and configuration</td><td>You: the release version, canister ids, sign-in origin and brand</td><td>You</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="prose">
+        <p>A rule of thumb: a deployment compiles nothing from the release, except the bridge code, which Caffeine compiles as part of your app.</p>
+      </div>
+    </section>
+
+    <section id="inbound">
+      <span class="eyebrow">Inbound</span>
+      <h2>Receiving mail</h2>
+      <div class="prose">
+        <p>The gateway calls <code>smtp_request</code> once per message. That call must answer quickly and must never trap: a trap looks like a temporary failure, and the sending server retries for days. So the call only checks the recipients, removes duplicates and queues the raw message once, for all its recipients. Moving it into each mailbox, parsing and indexing happen later, in separate calls that are allowed to fail.</p>
+      </div>
+      <figure>
+        <div class="diagram">
+          <svg viewBox="0 0 900 300" role="img" aria-label="Inside the gateway's call, the backend checks the recipients, deduplicates, and queues the message once in control.db, without awaiting. Later a timer makes one call to the canister itself per step: it moves the message into each recipient's mailbox file, parses MIME and indexes it. A message that fails three times is quarantined; a failed parse stays viewable.">
+            <rect class="zone" x="10" y="30" width="560" height="110" rx="6"/>
+            <text class="t-m" x="24" y="52">IN THE GATEWAY'S CALL · one message, never awaits, never traps</text>
+
+            <rect class="box" x="24" y="66" width="120" height="56" rx="5"/>
+            <text class="t-b" x="84" y="90" text-anchor="middle">Check</text>
+            <text class="t-s" x="84" y="107" text-anchor="middle">recipients, quota</text>
+            <rect class="box" x="164" y="66" width="120" height="56" rx="5"/>
+            <text class="t-b" x="224" y="90" text-anchor="middle">Deduplicate</text>
+            <text class="t-s" x="224" y="107" text-anchor="middle">mailbox+sender+ID</text>
+            <rect class="box" x="304" y="66" width="120" height="56" rx="5"/>
+            <text class="t-b" x="364" y="90" text-anchor="middle">Queue once</text>
+            <text class="t-s" x="364" y="107" text-anchor="middle">in control.db</text>
+            <rect class="box-key" x="444" y="66" width="112" height="56" rx="5"/>
+            <text class="t-b" x="500" y="90" text-anchor="middle">Queued</text>
+            <text class="t-s" x="500" y="107" text-anchor="middle">reply 250</text>
+            <path class="edge" d="M144,94 H160" marker-end="url(#a)"/>
+            <path class="edge" d="M284,94 H300" marker-end="url(#a)"/>
+            <path class="edge" d="M424,94 H440" marker-end="url(#a)"/>
+
+            <rect class="box" x="604" y="40" width="130" height="40" rx="5"/>
+            <text class="t" x="669" y="65" text-anchor="middle">550 unknown user</text>
+            <rect class="box" x="604" y="92" width="130" height="40" rx="5"/>
+            <text class="t" x="669" y="117" text-anchor="middle">451 try later</text>
+            <path class="edge-dash" d="M84,66 V24 H669 V36" marker-end="url(#ad)"/>
+            <text class="t-s" x="360" y="18">no such mailbox</text>
+            <path class="edge-dash" d="M570,112 H600" marker-end="url(#ad)"/>
+            <text class="t-s" x="742" y="108">malformed, full, backlog</text>
+
+            <rect class="zone" x="10" y="170" width="880" height="110" rx="6"/>
+            <text class="t-m" x="24" y="192">LATER, FROM A TIMER · one call to itself per step, which may trap and roll back</text>
+            <rect class="box" x="124" y="206" width="120" height="56" rx="5"/>
+            <text class="t-b" x="184" y="230" text-anchor="middle">Move</text>
+            <text class="t-s" x="184" y="247" text-anchor="middle">into mailbox file</text>
+            <rect class="box" x="264" y="206" width="120" height="56" rx="5"/>
+            <text class="t-b" x="324" y="230" text-anchor="middle">Parse MIME</text>
+            <text class="t-s" x="324" y="247" text-anchor="middle">libetpan, charsets</text>
+            <rect class="box" x="404" y="206" width="110" height="56" rx="5"/>
+            <text class="t-b" x="459" y="230" text-anchor="middle">Index</text>
+            <text class="t-s" x="459" y="247" text-anchor="middle">FTS5 full text</text>
+            <rect class="box-key" x="534" y="206" width="100" height="56" rx="5"/>
+            <text class="t-b" x="584" y="230" text-anchor="middle">Indexed</text>
+            <text class="t-s" x="584" y="247" text-anchor="middle">in the inbox</text>
+            <rect class="box-warn" x="680" y="206" width="190" height="56" rx="5"/>
+            <text class="t-b" x="775" y="230" text-anchor="middle">Quarantined</text>
+            <text class="t-s" x="775" y="247" text-anchor="middle">a failed parse stays viewable</text>
+            <path class="edge-key" d="M500,122 V150 H100 V234 H120" marker-end="url(#ak)"/>
+            <text class="t-k" x="106" y="166">timer picks oldest</text>
+            <path class="edge" d="M244,234 H260" marker-end="url(#a)"/>
+            <path class="edge" d="M384,234 H400" marker-end="url(#a)"/>
+            <path class="edge" d="M514,234 H530" marker-end="url(#a)"/>
+            <path class="edge-bad" d="M634,234 H676" marker-end="url(#ab)"/>
+            <text class="t-bad" x="640" y="226">3rd</text>
+            <text class="t-bad" x="636" y="254">failure</text>
+          </svg>
+        </div>
+        <figcaption>The gateway's call does only cheap, safe work and answers 250. Moving and parsing run later in calls the canister makes to itself, so a message that crashes the parser rolls back on its own and is retried, then quarantined. An admin can queue a message whose move failed again.</figcaption>
+      </figure>
+      <div class="prose">
+        <ul>
+          <li>The gateway finds the backend by reading <code>/.well-known/ic-smtp-canister-id</code> from the bare domain. For a domain bought through Caffeine, your Caffeine app serves it. For a domain registered elsewhere, Caffeine serves only <code>www</code> and rewrites its site's list of domains at every deploy, so a domain canister of your own serves the bare domain instead. The brand script writes the same file into the webmail too.</li>
+          <li>Only the SMTP gateway or a controller may call the SMTP methods; anyone else gets 530.</li>
+          <li>The duplicate key is the mailbox, the sender and the <code>Message-ID</code>, or a hash of the content when there is none. The gateway may deliver the same message twice; the inbox shows it once.</li>
+          <li>A mailbox with 100 messages waiting in the queue answers 451, and the sending server retries later. So does every mailbox while 1,000 deliveries wait in all that the canister can work on now, a message counting once per recipient; mail waiting for a mailbox that is being downloaded or held for repair counts only toward that mailbox's 100.</li>
+          <li>The gateway delivers headers and body separately, so the <code>Content-Type</code> header with the MIME boundary is stored with the body.</li>
+          <li>The gateway refuses mail that fails SPF, or whose DKIM signatures all fail. It does not check that the signing domain matches <code>From</code> (DMARC), and passes no result to the canister. The webmail shows the delivering domain, as "via example.com", when it differs from the <code>From</code> domain, and "via an unnamed domain" when the envelope sender is empty.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="storage">
+      <span class="eyebrow">Storage</span>
+      <h2>One SQLite database per mailbox</h2>
+      <div class="prose">
+        <p>Each mailbox has its own SQLite database, a file in a small file system on the canister's stable memory. Beside them, <code>control.db</code> holds the settings, the registry of mailboxes with their members, the queue of incoming mail and the work still to do. Stable memory survives upgrades, so the mail does too. A search, a check, a download and a purge each touch only one mailbox's file, so their cost grows with that mailbox, not with the whole canister. Bodies are rows in the database rather than one file per message: one file per message was measured at about 36 KB of overhead each, which turned an 85 MB database into 1.44 GB of memory.</p>
+      </div>
+      <figure>
+        <div class="diagram">
+          <svg viewBox="0 0 900 230" role="img" aria-label="Stable memory holds a custom virtual file system with control.db and one SQLite file per mailbox. control.db holds the registry of mailboxes and the queue of incoming mail. Each mailbox file holds its messages, bodies, full-text index and outbox.">
+            <rect class="zone" x="10" y="10" width="880" height="210" rx="6"/>
+            <text class="t-m" x="26" y="32">STABLE MEMORY · kept across upgrades, up to hundreds of GiB per canister</text>
+            <rect class="zone" x="28" y="44" width="844" height="160" rx="6"/>
+            <text class="t-m" x="44" y="66">CUSTOM VFS · sqlite_vfs.c, journal in memory, no WAL, one connection per file</text>
+            <rect class="box-key" x="46" y="78" width="300" height="110" rx="5"/>
+            <text class="t-b" x="62" y="100">control.db</text>
+            <rect class="box" x="62" y="114" width="134" height="58" rx="4"/>
+            <text class="t-b" x="129" y="137" text-anchor="middle">registry</text>
+            <text class="t-s" x="129" y="155" text-anchor="middle">mailboxes, work</text>
+            <rect class="box" x="204" y="114" width="126" height="58" rx="4"/>
+            <text class="t-b" x="267" y="137" text-anchor="middle">queue</text>
+            <text class="t-s" x="267" y="155" text-anchor="middle">incoming mail</text>
+            <rect class="box-key" x="366" y="78" width="488" height="110" rx="5"/>
+            <text class="t-b" x="382" y="100">One file per mailbox · m/&lt;id / 100&gt;/&lt;id&gt;/mail.db</text>
+            <rect class="box" x="382" y="114" width="108" height="58" rx="4"/>
+            <text class="t-b" x="436" y="137" text-anchor="middle">messages</text>
+            <text class="t-s" x="436" y="155" text-anchor="middle">UID, flags</text>
+            <rect class="box" x="498" y="114" width="108" height="58" rx="4"/>
+            <text class="t-b" x="552" y="137" text-anchor="middle">bodies</text>
+            <text class="t-s" x="552" y="155" text-anchor="middle">raw MIME</text>
+            <rect class="box" x="614" y="114" width="108" height="58" rx="4"/>
+            <text class="t-b" x="668" y="137" text-anchor="middle">search index</text>
+            <text class="t-s" x="668" y="155" text-anchor="middle">FTS5, in steps</text>
+            <rect class="box" x="730" y="114" width="108" height="58" rx="4"/>
+            <text class="t-b" x="784" y="137" text-anchor="middle">outbox</text>
+            <text class="t-s" x="784" y="155" text-anchor="middle">states, keys</text>
+          </svg>
+        </div>
+        <figcaption>Every layer sits inside the one canister. There is no separate database server and no file system other than stable memory. Up to 32 mailbox files stay open at once, each with a 1 MiB page cache.</figcaption>
+      </figure>
+      <div class="prose">
+        <ul>
+          <li>Each call either commits all of its changes or none of them: a trap rolls back the canister's memory, every database included. A call that writes a mailbox file commits it, then <code>control.db</code>, and traps if the second commit fails, which rolls back both.</li>
+          <li>No transaction is held across an await, because other calls may run while one waits.</li>
+          <li>Index maintenance runs in budgeted steps of at most 2000 pages, per mailbox.</li>
+          <li>An admin can check a mailbox with <code>admin_check</code>: SQLite's <code>quick_check</code> of its file, and the file's counters against the registry. One call checks a file up to about 2.6 GB. A file that fails is held for repair: nothing uses it, its new mail waits in the queue, and its members can still download it.</li>
+          <li>Any member can download the mailbox's file from the webmail. While the download runs, new mail waits in the queue and every member's changes are refused, so the copy is consistent. The file opens with any SQLite 3; querying its search index needs SQLite 3.43 or newer.</li>
+          <li>A purge truncates the file by up to 1 GiB per call, then deletes it; its first call removes the members. The registry keeps the mailbox's counters, so a mailbox created again at the address never meets an old UID or bridge key.</li>
+          <li>Each mailbox file has a schema version. After an upgrade that changes it, the ingest timer upgrades each file before it puts new mail in.</li>
+          <li>Every mailbox has a <code>uidvalidity</code> and every message a stable, increasing UID and a change counter, ready for syncing and a later IMAP bridge.</li>
+          <li>Mail is stored as plain text. See <a href="#risks">Risks</a>.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="outbound">
+      <span class="eyebrow">Outbound</span>
+      <h2>Sending mail</h2>
+      <div class="prose">
+        <p>The backend cannot send mail itself: the key to Caffeine's mail gateway is held by a Caffeine app. When Caffeine deploys the app, it sets two environment variables on the app's backend canister, <code>INTEGRATIONS_GATEWAY_URL</code> and <code>INTEGRATIONS_GATEWAY_API_KEY</code>; each send is an HTTPS outcall to that URL with the key, which bills the send to the Caffeine project. So each domain copies the release's <code>bridge/</code> files into the backend canister of a Caffeine app on the same domain. They add one method, <code>relaySend</code>, which accepts calls only from your backend. That method is the relay bridge: code inside the app's backend canister, not a canister of its own.</p>
+        <p>The hard part is a call whose answer is lost. The backend cannot tell whether the bridge sent the message. Sending it again could deliver it twice. The outbox solves this with a key per attempt: the bridge remembers the result for each key, and passes the key on to the gateway as its idempotency key. A key names when the canister was installed, the mailbox, the message and the attempt, so no other message ever gets it, even after a reinstall.</p>
+      </div>
+      <figure>
+        <div class="diagram">
+          <svg viewBox="0 0 900 295" role="img" aria-label="An outbox message moves from Queued to Sending. While Sending it is retried with the same key, and the bridge repeats a Sent, Rejected or Unknown outcome it kept. It ends as Sent, Rejected, or Unknown when no result arrives before the deadline. Only a member can start a new attempt with a new key.">
+            <rect class="box" x="20" y="96" width="130" height="64" rx="32"/>
+            <text class="t-b" x="85" y="124" text-anchor="middle">Queued</text>
+            <text class="t-s" x="85" y="141" text-anchor="middle">user pressed Send</text>
+
+            <rect class="box-key" x="250" y="96" width="150" height="64" rx="32"/>
+            <text class="t-b" x="325" y="124" text-anchor="middle">Sending</text>
+            <text class="t-s" x="325" y="141" text-anchor="middle">may have reached bridge</text>
+
+            <rect class="box" x="560" y="14" width="180" height="56" rx="28"/>
+            <text class="t-good" x="650" y="38" text-anchor="middle">SENT</text>
+            <text class="t-s" x="650" y="55" text-anchor="middle">accepted for delivery</text>
+            <rect class="box" x="560" y="100" width="180" height="56" rx="28"/>
+            <text class="t-bad" x="650" y="124" text-anchor="middle">REJECTED</text>
+            <text class="t-s" x="650" y="141" text-anchor="middle">gateway refused it</text>
+            <rect class="box-warn" x="560" y="186" width="180" height="56" rx="28"/>
+            <text class="t-b" x="650" y="210" text-anchor="middle">UNKNOWN</text>
+            <text class="t-s" x="650" y="227" text-anchor="middle">no result by the deadline</text>
+
+            <path class="edge" d="M150,128 H246" marker-end="url(#a)"/>
+            <text class="t-s" x="198" y="120" text-anchor="middle">outbox timer</text>
+            <text class="t-k" x="198" y="150" text-anchor="middle">key = id + attempt</text>
+
+            <path class="edge-key" d="M300,96 C290,50 360,50 350,92" marker-end="url(#ak)"/>
+            <text class="t-k" x="325" y="40" text-anchor="middle">retry, same key</text>
+
+            <path class="edge" d="M400,118 C470,118 480,42 556,42" marker-end="url(#a)"/>
+            <text class="t-m" x="455" y="66">#sent</text>
+            <path class="edge" d="M400,128 H556" marker-end="url(#a)"/>
+            <text class="t-m" x="455" y="122">#rejected</text>
+            <path class="edge" d="M400,140 C470,140 480,214 556,214" marker-end="url(#a)"/>
+            <text class="t-m" x="420" y="196">#unknown or</text>
+            <text class="t-m" x="420" y="210">deadline passed</text>
+
+            <path class="edge-dash" d="M740,214 C860,214 860,262 600,262 H85 V164" marker-end="url(#ad)"/>
+            <path class="edge-dash" d="M740,128 C830,128 842,190 842,238"/>
+            <text class="t-s" x="250" y="282">from REJECTED or UNKNOWN, only a member can resend: a new attempt, a new key</text>
+          </svg>
+        </div>
+        <figcaption>A retried call reuses its key. The bridge keeps a Sent, Rejected or Unknown outcome under it and repeats it, and within the gateway's 10-minute replay window it posts again with the same key, which the gateway answers without sending twice. So one attempt sends at most once. An outcome still lost after the window becomes UNKNOWN, and the user decides whether to send again.</figcaption>
+      </figure>
+      <div class="prose">
+        <ul>
+          <li>The sender address is always the address of the mailbox the member sends from, never one from the request. Each sent message records which member sent it.</li>
+          <li>For 7 days from the first send, a retry never goes out twice from two mailboxes: a send's id is kept per sender, and a retry from another of their mailboxes is refused.</li>
+          <li>SENT means the mail gateway accepted the message. Bounces never reach the canister, so the webmail says "accepted for delivery", never "delivered".</li>
+          <li>Measured on mainnet: outbound mail passed DKIM, SPF and DMARC at a large mail provider, a repeated key returned the stored result and only one copy arrived, and a 1,400,000-byte attachment arrived intact.</li>
+          <li>The gateway sends HTML only, adds an open-tracking pixel, and replaces the <code>Message-ID</code>, so replies may not thread in the recipient's mail program.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="access">
+      <span class="eyebrow">Access model</span>
+      <h2>Who can see what</h2>
+      <div class="prose">
+        <p>Every call to the backend carries the caller's principal. Internet Identity gives each user a principal that is specific to the webmail's sign-in origin. The backend checks that principal on every method; the webmail hiding a button is never the protection.</p>
+      </div>
+      <figure>
+        <div class="diagram">
+          <svg viewBox="0 0 900 290" role="img" aria-label="Controllers can call admin methods, which return no message content. A member can reach only the mailboxes they are a member of. The SMTP gateway can call only the SMTP methods. Within this model, a controller reaches a mailbox only by adding themselves as a member, and the relay bridge accepts only the backend.">
+            <rect class="box" x="20" y="24" width="170" height="56" rx="5"/>
+            <text class="t-b" x="105" y="48" text-anchor="middle">Controller</text>
+            <text class="t-s" x="105" y="65" text-anchor="middle">administrator</text>
+            <rect class="box" x="20" y="116" width="170" height="56" rx="5"/>
+            <text class="t-b" x="105" y="140" text-anchor="middle">Member</text>
+            <text class="t-s" x="105" y="157" text-anchor="middle">of one or more mailboxes</text>
+            <rect class="box" x="20" y="208" width="170" height="56" rx="5"/>
+            <text class="t-b" x="105" y="232" text-anchor="middle">SMTP gateway</text>
+            <text class="t-s" x="105" y="249" text-anchor="middle">fixed principal</text>
+
+            <rect class="box-key" x="330" y="14" width="540" height="262" rx="6"/>
+            <text class="t-m" x="346" y="36">BACKEND CANISTER</text>
+            <rect class="box" x="346" y="46" width="230" height="56" rx="5"/>
+            <text class="t-b" x="461" y="70" text-anchor="middle">Admin methods</text>
+            <text class="t-s" x="461" y="87" text-anchor="middle">mailboxes, members, quotas</text>
+            <rect class="box" x="346" y="124" width="230" height="56" rx="5"/>
+            <text class="t-b" x="461" y="148" text-anchor="middle">Mailbox methods</text>
+            <text class="t-s" x="461" y="165" text-anchor="middle">list, read, search, send, delete</text>
+            <rect class="box" x="346" y="208" width="230" height="56" rx="5"/>
+            <text class="t-b" x="461" y="232" text-anchor="middle">SMTP methods</text>
+            <text class="t-s" x="461" y="249" text-anchor="middle">smtp_request and checks</text>
+
+            <rect class="box" x="640" y="78" width="210" height="44" rx="5"/>
+            <text class="t" x="745" y="105" text-anchor="middle">Your mailboxes</text>
+            <rect class="box" x="640" y="134" width="210" height="44" rx="5"/>
+            <text class="t" x="745" y="161" text-anchor="middle">Other mailboxes</text>
+
+            <path class="edge" d="M190,52 H342" marker-end="url(#a)"/>
+            <text class="t-s" x="266" y="44" text-anchor="middle">is_controller</text>
+            <path class="edge" d="M190,144 H342" marker-end="url(#a)"/>
+            <text class="t-s" x="266" y="136" text-anchor="middle">a member</text>
+            <path class="edge" d="M190,236 H342" marker-end="url(#a)"/>
+            <text class="t-s" x="266" y="228" text-anchor="middle">gateway or controller</text>
+
+            <path class="edge-key" d="M576,146 C610,146 606,100 636,100" marker-end="url(#ak)"/>
+            <text class="t-k" x="588" y="118">caller's own</text>
+            <path class="edge-bad" d="M576,74 C620,74 610,156 636,156" marker-end="url(#ab)"/>
+            <text class="t-bad" x="600" y="70">no content</text>
+          </svg>
+        </div>
+        <figcaption>The only path into a mailbox is being one of its members. Admin methods create mailboxes and manage members and quotas, but return no subjects, senders or bodies.</figcaption>
+      </figure>
+      <div class="prose">
+        <ul>
+          <li>A mailbox can have up to 100 members, all equal, and a person can be a member of several mailboxes. They share its read state, and the reader shows who opened each message.</li>
+          <li>Access is granted only by naming it. Creating a mailbox never adds anyone to an existing one, and Add member names the mailbox and asks for confirmation. A controller can add anyone, their own principal included, so choose controllers as carefully as whoever runs your mail server.</li>
+          <li>Onboarding: the user signs in and sees a "not activated" screen with their principal; an admin creates a mailbox with them as its first member, or adds them to an existing one; the next load shows their mailboxes.</li>
+          <li>The relay bridge accepts <code>relaySend</code> only from your backend's principal, set as one constant in the bridge code. Until it is set, every call is refused.</li>
+          <li>Mail HTML is shown in a <code>sandbox=""</code> iframe with its own strict content security policy, and remote content is blocked, because a script in a message could otherwise take over the session.</li>
+        </ul>
+      </div>
+      <div class="note"><p>What this model does not cover: a controller can install new code that reads everything, and the operators of the nodes running the canister can read its memory. Choose your controllers as carefully as you would choose who runs your mail server.</p></div>
+    </section>
+
+    <section id="components">
+      <span class="eyebrow">Components</span>
+      <h2>The components</h2>
+      <div class="components">
+        <div class="component">
+          <div><h3>Backend canister</h3><div class="what">build/email-canister.wasm</div></div>
+          <dl>
+            <dt>Runs in</dt><dd>Its own canister, one per domain.</dd>
+            <dt>Code</dt><dd>C++20 compiled to wasm, from the repository's <code>src/</code>. It links libetpan for MIME parsing and SQLite with FTS5. The release ships the compiled wasm.</dd>
+            <dt>Does</dt><dd>Receives mail from the SMTP gateway, stores and indexes it in one SQLite file per mailbox, serves the mailbox API and each member's download of a mailbox to the webmail, sends through the relay bridge, and enforces every access rule.</dd>
+            <dt>Interfaces</dt><dd>Candid, described in <code>email-canister.did</code>: SMTP methods, <code>mail_*</code> methods for the mailboxes a user is a member of, <code>admin_*</code> methods for controllers, and timers that call <code>ingest_*</code> methods and <code>outbox_pump</code> on itself.</dd>
+            <dt>Limits</dt><dd>One domain per canister. 40B instructions per update call and 5B per query bound every operation; see <a href="#limits">Measured limits</a>. Stop the canister before upgrading; timers are re-armed afterwards from <code>control.db</code>. A canister that runs v0.1.x cannot be upgraded to v0.2.0: it is reinstalled, which erases its mail.</dd>
+          </dl>
+        </div>
+        <div class="component">
+          <div><h3>Webmail</h3><div class="what">webmail/dist</div></div>
+          <dl>
+            <dt>Runs in</dt><dd>An asset canister serves the files, and the app runs in the user's browser.</dd>
+            <dt>Code</dt><dd>TypeScript, built with Vite into static files in the repository's <code>webmail/</code>. The release ships the built <code>dist</code>, the same bytes for every deployment.</dd>
+            <dt>Does</dt><dd>The mail client users see: a list of their mailboxes, inbox, reading, search, compose with attachments, outbox status, a download of a mailbox, and an Admin screen where controllers create mailboxes and manage members and names. It signs in with Internet Identity and calls the backend directly from the browser.</dd>
+            <dt>Interfaces</dt><dd>A static app in an asset canister. Its settings (backend id, network, sign-in origin, brand) sit in one JSON block in <code>index.html</code>, so every deployment serves the same JavaScript.</dd>
+            <dt>Limits</dt><dd>Sign-ins last up to 7 days. The sign-in origin cannot change once users exist: each user would get a new principal and lose their mailbox. The webmail can also answer on up to 10 custom domains, such as <code>mail.example.com</code>, with the same principals: the brand script lists them in the origin's <code>/.well-known/ii-alternative-origins</code>, which Internet Identity reads.</dd>
+          </dl>
+        </div>
+        <div class="component">
+          <div><h3>Brand script</h3><div class="what">webmail/brand.mjs</div></div>
+          <dl>
+            <dt>Runs in</dt><dd>Your machine, when you prepare a deploy. It never runs on chain.</dd>
+            <dt>Code</dt><dd>One JavaScript module for Node.js, shipped in the release next to the webmail.</dd>
+            <dt>Does</dt><dd>Turns the generic webmail into one deployment's site: writes the settings block, the title, icons, <code>brand.css</code> with fonts and colours, and <code>.well-known/ic-smtp-canister-id</code>.</dd>
+            <dt>Interfaces</dt><dd><code>node brand.mjs --dist … --out … --backend … --origin … [--network ic|local] [--brand folder]</code>. Plain Node.js 20 or later, no dependencies.</dd>
+            <dt>Limits</dt><dd>Refuses unknown roles, missing tokens, unsafe paths and values, and files that do not match the brand manifest's sha256. Warns about low colour contrast. Without a brand, the webmail is greyscale and called "Mail".</dd>
+          </dl>
+        </div>
+        <div class="component">
+          <div><h3>Domain canister</h3><div class="what">domain/domain.mjs</div></div>
+          <dl>
+            <dt>Runs in</dt><dd>An asset canister of your own, on the bare domain. Only a domain registered elsewhere needs it.</dd>
+            <dt>Code</dt><dd>Static files that <code>domain.mjs</code>, a JavaScript module for Node.js in the release, writes on your machine.</dd>
+            <dt>Does</dt><dd>Serves <code>/.well-known/ic-smtp-canister-id</code> for the SMTP gateway and <code>/.well-known/ic-domains</code> for the IC's custom-domain service, and sends browsers on every other path to <code>https://www.&lt;domain&gt;</code>, keeping the path, query and fragment; without JavaScript, to the website's home page.</dd>
+            <dt>Interfaces</dt><dd><code>node domain.mjs --out … --backend … --domain … [--redirect https://…]</code>. The bare domain's DNS points at the IC and its <code>_canister-id</code> record names this canister.</dd>
+            <dt>Limits</dt><dd>Exists because Caffeine connects a domain registered elsewhere only as <code>www</code>, whose CNAME a bare domain cannot hold, and rewrites its site's <code>/.well-known/ic-domains</code> at every deploy. Its controllers can redirect your visitors and your mail, so they belong in your trust model too.</dd>
+          </dl>
+        </div>
+        <div class="component">
+          <div><h3>Relay bridge</h3><div class="what">bridge/</div></div>
+          <dl>
+            <dt>Runs in</dt><dd>The backend canister of your domain's Caffeine app. It is not a canister of its own.</dd>
+            <dt>Code</dt><dd>Three Motoko files, <code>lib/relay.mo</code>, <code>mixins/relay-api.mo</code> and <code>types/relay.mo</code>, copied unchanged except for one constant, <code>relayCaller</code>, set to your backend's id. <code>bridge/README.md</code> lists the rest: a mail dependency in <code>mops.toml</code>, and a results map and an <code>include</code> in the actor. Caffeine compiles them with the rest of the app.</dd>
+            <dt>Does</dt><dd>Adds one method, <code>relaySend</code>, which hands each message to Caffeine's mail gateway and remembers the outcome per key.</dd>
+            <dt>Interfaces</dt><dd>Called only by your backend. Answers <code>#sent</code>, <code>#rejected</code>, <code>#unknown</code>, or <code>#sending</code> while a call is in progress.</dd>
+            <dt>Limits</dt><dd>HTML only. No <code>In-Reply-To</code>, <code>References</code>, <code>Reply-To</code>, custom headers, text part or delivery status. Keeps each result for 7 days. A request near 2 MB costs about 16 billion cycles, which a Caffeine engine pays.</dd>
+          </dl>
+        </div>
+        <div class="component">
+          <div><h3>Your domain's Caffeine app</h3><div class="what">not part of the release</div></div>
+          <dl>
+            <dt>Runs in</dt><dd>Its own canisters, a frontend and a Motoko backend, built and deployed by Caffeine. They are not part of an email-canister release.</dd>
+            <dt>Code</dt><dd>Your app's own code, plus the bridge code from the release.</dd>
+            <dt>Does</dt><dd>Serves the domain's website. For a domain bought through Caffeine it serves the bare domain, including <code>/.well-known/ic-smtp-canister-id</code>, which tells the SMTP gateway where your backend is; for one registered elsewhere it serves only <code>www</code>, and the domain canister serves the bare domain. Holds the mail gateway's key and runs the relay bridge.</dd>
+            <dt>Limits</dt><dd>Email sending must be enabled for the domain in the Caffeine project. Outside a Caffeine engine, its backend pays about 16 billion cycles to post a message near 2 MB. Whoever can change these canisters can change the bridge and the <code>/.well-known</code> file, so they belong in your trust model alongside the backend's controllers.</dd>
+          </dl>
+        </div>
+        <div class="component">
+          <div><h3>Release</h3><div class="what">email-canister_vX.Y.Z.zip</div></div>
+          <dl>
+            <dt>Runs in</dt><dd>Nothing: it is a zip on the releases page of the email-canister repository.</dd>
+            <dt>Does</dt><dd>Packages everything a deployment needs: the wasm with its sha256 and Candid file, the generic webmail and brand script, the domain script, the bridge, the deploy scripts and the docs, with build provenance.</dd>
+            <dt>Interfaces</dt><dd>Published on GitHub by a manual workflow that runs only on <code>main</code>, with release notes, after CI has passed on that commit.</dd>
+            <dt>Limits</dt><dd>The wasm is built in a Docker image pinned by digest, so anyone can rebuild a release's commit and compare the hash. The webmail's hash is recorded in the provenance.</dd>
+          </dl>
+        </div>
+        <div class="component">
+          <div><h3>Deployment repository</h3><div class="what">one per domain</div></div>
+          <dl>
+            <dt>Runs in</dt><dd>Your machine, where you run its commands. It is a repository of your own, separate from email-canister.</dd>
+            <dt>Does</dt><dd>Holds one domain's choices: which release, the canister ids, the sign-in origin and the brand. It builds nothing.</dd>
+            <dt>Interfaces</dt><dd><code>icp.yaml</code> installs the release wasm pinned to its sha256; the brand script writes <code>build/webmail</code>; <code>configure.sh</code> sets the domain and bridge; <code>check.sh</code> verifies the live deployment.</dd>
+            <dt>Limits</dt><dd>Upgrading means vendoring a new release and updating the pins, then redeploying what the release's upgrade notes say changed. A backend upgrade stops the backend, takes a snapshot, upgrades and starts it.</dd>
+          </dl>
+        </div>
+      </div>
+    </section>
+
+    <section id="release">
+      <span class="eyebrow">Releases</span>
+      <h2>From a commit to a running domain</h2>
+      <figure>
+        <div class="diagram">
+          <svg viewBox="0 0 900 330" role="img" aria-label="A commit on main is built by the release workflow in a pinned Docker image into a release zip, with the wasm hash in its title. Each folder of the zip goes somewhere else: build goes to the backend canister, installed as it is and pinned by sha256; webmail goes through the brand script on your machine into the webmail canister; bridge goes into your Caffeine app's backend, copied with relayCaller set; scripts run from the deployment repository. Anyone can rebuild the commit and get the same sha256, and compare it with the module hash the Internet Computer reports for the running backend.">
+            <text class="t-m" x="20" y="20">EMAIL-CANISTER REPOSITORY</text>
+            <text class="t-m" x="590" y="20">WHERE EACH PART GOES</text>
+
+            <rect class="box" x="20" y="36" width="140" height="60" rx="5"/>
+            <text class="t-b" x="90" y="60" text-anchor="middle">Commit on main</text>
+            <text class="t-s" x="90" y="78" text-anchor="middle">notes, green CI</text>
+            <rect class="box" x="200" y="36" width="150" height="60" rx="5"/>
+            <text class="t-b" x="275" y="60" text-anchor="middle">Release workflow</text>
+            <text class="t-s" x="275" y="78" text-anchor="middle">pinned Docker image</text>
+
+            <rect class="box-key" x="390" y="36" width="170" height="256" rx="5"/>
+            <text class="t-b" x="475" y="60" text-anchor="middle">Release zip</text>
+            <text class="t-s" x="475" y="77" text-anchor="middle">hash in the title</text>
+            <rect class="box" x="402" y="96" width="146" height="34" rx="4"/>
+            <text class="t-m" x="412" y="110">build/</text>
+            <text class="t-s" x="412" y="124">wasm, .did</text>
+            <rect class="box" x="402" y="140" width="146" height="34" rx="4"/>
+            <text class="t-m" x="412" y="154">webmail/</text>
+            <text class="t-s" x="412" y="168">dist, brand.mjs</text>
+            <rect class="box" x="402" y="184" width="146" height="34" rx="4"/>
+            <text class="t-m" x="412" y="198">bridge/</text>
+            <text class="t-s" x="412" y="212">3 .mo files</text>
+            <rect class="box" x="402" y="228" width="146" height="34" rx="4"/>
+            <text class="t-m" x="412" y="242">scripts/</text>
+            <text class="t-s" x="412" y="256">configure, check</text>
+            <text class="t-s" x="412" y="281">docs/ for reading</text>
+
+            <rect class="box-key" x="730" y="93" width="150" height="40" rx="5"/>
+            <text class="t-b" x="805" y="111" text-anchor="middle">Backend canister</text>
+            <text class="t-s" x="805" y="126" text-anchor="middle">pinned by sha256</text>
+            <rect class="box" x="590" y="139" width="100" height="38" rx="5"/>
+            <text class="t-b" x="640" y="156" text-anchor="middle">brand.mjs</text>
+            <text class="t-s" x="640" y="171" text-anchor="middle">your machine</text>
+            <rect class="box-key" x="730" y="137" width="150" height="40" rx="5"/>
+            <text class="t-b" x="805" y="155" text-anchor="middle">Webmail canister</text>
+            <text class="t-s" x="805" y="170" text-anchor="middle">build/webmail</text>
+            <rect class="box" x="730" y="181" width="150" height="40" rx="5"/>
+            <text class="t-b" x="805" y="199" text-anchor="middle">Caffeine app</text>
+            <text class="t-s" x="805" y="214" text-anchor="middle">its backend canister</text>
+            <rect class="box" x="730" y="225" width="150" height="40" rx="5"/>
+            <text class="t-b" x="805" y="243" text-anchor="middle">Deployment repo</text>
+            <text class="t-s" x="805" y="258" text-anchor="middle">runs them</text>
+
+            <rect class="box" x="180" y="210" width="150" height="60" rx="5"/>
+            <text class="t-b" x="255" y="234" text-anchor="middle">Anyone</text>
+            <text class="t-s" x="255" y="252" text-anchor="middle">rebuilds the commit</text>
+
+            <path class="edge" d="M160,66 H196" marker-end="url(#a)"/>
+            <path class="edge" d="M350,66 H386" marker-end="url(#a)"/>
+            <path class="edge-key" d="M548,113 H726" marker-end="url(#ak)"/>
+            <text class="t-m" x="566" y="106">install as it is</text>
+            <path class="edge" d="M548,157 H586" marker-end="url(#a)"/>
+            <path class="edge-key" d="M690,157 H726" marker-end="url(#ak)"/>
+            <path class="edge" d="M548,201 H726" marker-end="url(#a)"/>
+            <text class="t-s" x="566" y="195">copy, set relayCaller</text>
+            <path class="edge" d="M548,245 H726" marker-end="url(#a)"/>
+            <text class="t-s" x="566" y="239">vendored with the release</text>
+            <path class="edge-dash" d="M330,240 H386" marker-end="url(#ad)"/>
+            <text class="t-s" x="358" y="232" text-anchor="middle">same</text>
+            <text class="t-s" x="358" y="256" text-anchor="middle">sha256</text>
+            <path class="edge-dash" d="M880,113 H892 V312 H255 V274" marker-end="url(#ad)"/>
+            <text class="t-s" x="480" y="306">compare with the module hash the IC reports</text>
+          </svg>
+        </div>
+        <figcaption>Each folder of a release goes somewhere else. The wasm is installed as it is, pinned by its sha256. The webmail is configured on your machine by the brand script, then uploaded. The bridge files are copied into your Caffeine app's backend and wired in, and Caffeine compiles them. The scripts run from your deployment repository. The wasm's hash can be checked three ways: against the release, against your own rebuild, and against the module hash the Internet Computer reports for the running backend.</figcaption>
+      </figure>
+      <div class="prose">
+        <p>The step-by-step guide is <code>docs/setup-guide.md</code> in the release. The order matters: create the canisters, fix the sign-in origin, deploy, set up the bridge, configure the domain and admins, and point MX records at the gateway last.</p>
+      </div>
+    </section>
+
+    <section id="limits">
+      <span class="eyebrow">Measurements</span>
+      <h2>Measured limits</h2>
+      <div class="prose"><p>Instruction counts on a local replica. The limits are 40B instructions per update call and 5B per query. The first table was measured on a 1.09 GB database of 100,000 messages. With one database per mailbox, the costs that grew with it now grow with one mailbox only.</p></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Operation</th><th>Instructions</th><th>Share of its limit</th></tr></thead>
+          <tbody>
+            <tr><td>Store a 2 KB message, one transaction</td><td class="num">6M – 64M</td><td class="num">≤ 0.2%</td></tr>
+            <tr><td>Store 100 KB text and 100 KB body</td><td class="num">73M – 943M</td><td class="num">≤ 2.4%</td></tr>
+            <tr><td>Store 100 KB text and a 2 MB body</td><td class="num">138M – 177M</td><td class="num">≤ 0.5%</td></tr>
+            <tr><td>List 50 messages (query)</td><td class="num">16M – 40M</td><td class="num">≤ 0.8%</td></tr>
+            <tr><td>Search, 50 rows (query)</td><td class="num">191M – 630M</td><td class="num">≤ 12.6%</td></tr>
+            <tr><td>Index merge, 2000 pages</td><td class="num">7.5B – 9.6B</td><td class="num">≤ 24%</td></tr>
+            <tr><td>Delete 500 messages</td><td class="num">130M</td><td class="num">0.3%</td></tr>
+            <tr><td>Parse a 1,996,800-byte message with a base64 attachment</td><td class="num">264M</td><td class="num">0.7%</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="prose"><p>One database per mailbox, measured by the v0.2.0 test suite:</p></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Operation</th><th>Instructions</th><th>Share of its limit</th></tr></thead>
+          <tbody>
+            <tr><td>Receive a 2 KB message for 10 recipients</td><td class="num">12.1M</td><td class="num">0.03%</td></tr>
+            <tr><td>Receive a 100 KB message</td><td class="num">22.1M</td><td class="num">0.06%</td></tr>
+            <tr><td>Move a 100 KB message into its mailbox</td><td class="num">16.9M</td><td class="num">0.04%</td></tr>
+            <tr><td>Check a mailbox file, per MB</td><td class="num">15.3M</td><td class="num">about 2.6 GB per call</td></tr>
+            <tr><td>Check a search index, per MB of file</td><td class="num">47.5M</td><td class="num">about 0.8 GB per call</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="prose">
+        <ul>
+          <li>Messages over about 2 MB, or about 1.4 MB of attachments, are refused by the SMTP gateway.</li>
+          <li>An empty mailbox file takes 72 KiB. With the file system's own overhead, the design's prototype measured 112 KiB of stable memory per mailbox.</li>
+          <li>Parsing: 5,000 generated messages, 10% malformed, parsed in wasm with results matching native; 100,000 native mutations under AddressSanitizer and UndefinedBehaviorSanitizer found no error. Nesting of 5,000 levels is rejected cleanly.</li>
+          <li>Charsets decoded: UTF-8, US-ASCII, ISO-8859-1 to -16, Windows-1250 to -1258, KOI8-R and -U, ISO-2022-JP, Shift_JIS, EUC-JP, GB2312, GBK, GB18030, Big5 and EUC-KR. Others fall back to ISO-8859-1.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="risks">
+      <span class="eyebrow">Before you rely on it</span>
+      <h2>Risks</h2>
+      <div class="prose"><p>Running your own mail on canisters moves risks around rather than removing them. These are the ones to accept knowingly, with what reduces each.</p></div>
+      <div class="table-wrap">
+        <table class="risks">
+          <thead><tr><th>Risk</th><th>What happens</th><th>What reduces it</th></tr></thead>
+          <tbody>
+            <tr><td><span class="sev sev-high">High</span><br>Running out of cycles</td><td>The canister freezes, stops receiving, and after its freezing threshold is deleted with all mail.</td><td>A long freezing threshold, a cycles alert or automatic top-up, and users who download their mailbox from the webmail regularly. Check the balance as routinely as a domain renewal.</td></tr>
+            <tr><td><span class="sev sev-high">High</span><br>The SMTP gateway is a proof of concept</td><td>DFINITY offers no service level agreement. If the gateway is down, senders retry for a few days, then bounce.</td><td>Download a copy of your mailbox from the webmail regularly. Watch the gateway's announcements, and know how you would move MX records to another provider.</td></tr>
+            <tr><td><span class="sev sev-high">High</span><br>Others can read the mail</td><td>Node operators can read canister memory, and the mail gateway's operator can read outbound mail. Mail is stored unencrypted.</td><td>Treat it like a hosted mail service, not end-to-end encryption. Use encrypted attachments for sensitive content. Encryption at rest is on the roadmap.</td></tr>
+            <tr><td><span class="sev sev-high">High</span><br>Controllers can change the code</td><td>A controller can install a wasm that reads every mailbox, regardless of the access model, or add their own principal as a member of any mailbox.</td><td>Keep the controller list short and known. Compare the running module hash with a release using <code>check.sh</code>.</td></tr>
+            <tr><td><span class="sev sev-med">Medium</span><br>The sign-in origin is permanent</td><td>Changing it gives every user a new principal, so nobody can reach their mailbox.</td><td>Fix the origin before the first user. Each user sets up Internet Identity recovery: losing the identity means losing access.</td></tr>
+            <tr><td><span class="sev sev-med">Medium</span><br>Limited spam filtering</td><td>Only the gateway's SPF and DKIM checks and allow and block rules apply. There is no content filtering.</td><td>Keep addresses off public pages where possible.</td></tr>
+            <tr><td><span class="sev sev-med">Medium</span><br>The sender is not verified</td><td>Without a DMARC check, a message can show any <code>From</code> address. The webmail names the delivering domain when it differs, but cannot tell a forgery from a mail service's own bounce domain.</td><td>Confirm unexpected requests, such as payments or password changes, another way.</td></tr>
+            <tr><td><span class="sev sev-med">Medium</span><br>MX records out of step with the gateway</td><td>If the gateway's hosts change and your MX records do not, mail stops arriving.</td><td><code>check.sh</code> compares your MX records with the gateway's.</td></tr>
+            <tr><td><span class="sev sev-med">Medium</span><br>Domain expiry</td><td>An expired domain stops all mail, and a new owner could receive it.</td><td>Auto-renew, with a payment method that will still work.</td></tr>
+            <tr><td><span class="sev sev-low">Low</span><br>No delivery status</td><td>Bounces do not reach the canister. A message can be accepted and still not arrive.</td><td>The webmail says "accepted for delivery", never "delivered". Confirm important mail with the recipient.</td></tr>
+            <tr><td><span class="sev sev-low">Low</span><br>Message size</td><td>Messages over about 2 MB are refused, inbound and outbound.</td><td>Share large files by link.</td></tr>
+            <tr><td><span class="sev sev-low">Low</span><br>Reply threading</td><td>The mail gateway replaces the <code>Message-ID</code> and supports no <code>In-Reply-To</code>, so replies may not thread for the recipient.</td><td>Keep subjects intact when replying. Tracked on the roadmap.</td></tr>
+            <tr><td><span class="sev sev-low">Low</span><br>A lost send outcome</td><td>A send can end as UNKNOWN when its outcome is lost.</td><td>It is never resent automatically, so it cannot arrive twice. The user checks and resends.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <footer>
+      <p>Updated for release v0.2.0. The source of truth is the repository: <code>docs/design.md</code> for the design and its measurements, <code>docs/setup-guide.md</code> for deploying, and <code>ROADMAP.md</code> for what comes next, including shared mailboxes, aliases and per-mailbox rate limits.</p>
+    </footer>
+  </main>
+</div>

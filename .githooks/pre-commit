@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Refuses a commit whose staged files, author or committer mention a name that
+# must stay out of this project. Enable once per clone:
+#   git config core.hooksPath .githooks
+set -euo pipefail
+check="$(git rev-parse --show-toplevel)/scripts/check-neutral.sh"
+ident=$(mktemp)
+trap 'rm -f "$ident"' EXIT
+{ git var GIT_AUTHOR_IDENT; git var GIT_COMMITTER_IDENT; } | sed 's/ [0-9]* [-+][0-9]*$//' >"$ident"
+"$check" --message "$ident" >/dev/null || { "$check" --message "$ident" | sed 's/^commit message/commit author or committer/'; exit 1; }
+exec "$check" --staged

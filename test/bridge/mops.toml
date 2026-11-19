@@ -1,0 +1,9 @@
+# The relay bridge's test build. The packages are those bridge/README.md asks
+# a Caffeine app for; moc and its arguments (build.sh) are a Caffeine app's.
+[toolchain]
+moc = "2.1.0"
+pocket-ic = "16.0.0"
+
+[dependencies]
+core = "2.6.2"
+caffeineai-email = "0.5.0"

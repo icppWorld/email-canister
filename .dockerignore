@@ -1,0 +1,13 @@
+.git
+.icp
+build
+build-library
+build-library-native
+build-native
+out
+**/node_modules
+webmail/dist
+webmail/test-results
+webmail/playwright-report
+**/._*
+**/.DS_Store

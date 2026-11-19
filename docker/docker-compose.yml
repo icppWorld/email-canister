@@ -1,0 +1,43 @@
+# The reproducible build. The toolchain versions are in docker/.env, which
+# compose reads because it sits next to this file.
+# SOURCE_COMMIT is set by the Makefile and only recorded in the provenance.
+
+services:
+  base:
+    build:
+      context: .
+      dockerfile: Dockerfile.base
+      args:
+        ICPP_VERSION: ${ICPP_VERSION:?set in docker/.env}
+        ICPP_BINARYEN_VERSION: ${ICPP_BINARYEN_VERSION:?set in docker/.env}
+    image: email-canister-build:icpp-${ICPP_VERSION}
+
+  wasm:
+    image: email-canister-wasm:latest
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        IMAGE: email-canister-build:icpp-${ICPP_VERSION}
+    environment:
+      SOURCE_COMMIT: ${SOURCE_COMMIT:-}
+    volumes:
+      - ../out:/app/email-canister/out
+    command: bash scripts/build_wasm_docker.sh
+
+  # The webmail needs no wasm toolchain: Node from an image pinned by digest,
+  # and the packages from package-lock.json
+  webmail:
+    image: node:22.20.0-bookworm-slim@sha256:b21fe589dfbe5cc39365d0544b9be3f1f33f55f3c86c87a76ff65a02f8f5848e
+    platform: linux/amd64
+    working_dir: /app/email-canister
+    environment:
+      LC_ALL: C
+      TZ: UTC
+      SOURCE_DATE_EPOCH: "0"
+      SOURCE_COMMIT: ${SOURCE_COMMIT:-}
+    volumes:
+      - ../webmail:/src/webmail:ro
+      - ../scripts/build_webmail_docker.sh:/src/build_webmail_docker.sh:ro
+      - ../out:/app/email-canister/out
+    command: bash /src/build_webmail_docker.sh

@@ -1,0 +1,31 @@
+type RelayStatus = 
+ variant {
+   rejected: text;
+   sending: int;
+   sent;
+   unknown: text;
+ };
+type RelayRequest = 
+ record {
+   attachments: vec RelayAttachment;
+   bcc: vec text;
+   cc: vec text;
+   fromUsername: text;
+   htmlBody: text;
+   outboxId: text;
+   subject: text;
+   to: vec text;
+ };
+type RelayAttachment = 
+ record {
+   base64: text;
+   filename: text;
+ };
+service : {
+  base64Check: ("text": text) -> (bool, nat64);
+  jsonString: ("text": text) -> (text, nat64);
+  keepResult: (outboxId: text, status: RelayStatus) -> ();
+  postFee: (bodyBytes: nat) -> (nat, opt nat);
+  relaySend: (request: RelayRequest) -> (RelayStatus);
+  resultKeys: () -> (vec text) query;
+}

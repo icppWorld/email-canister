@@ -1,0 +1,11 @@
+# A stand-in for the Caffeine bridge, for test/canister/test_outbox.py.
+[build-wasm]
+canister = "relay_stub"
+did_path = "relay_stub.did"
+cpp_paths = ["*.cpp"]
+cpp_include_dirs = []
+cpp_compile_flags = []
+cpp_link_flags = []
+c_paths = []
+c_include_dirs = []
+c_compile_flags = []

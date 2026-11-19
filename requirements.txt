@@ -1,0 +1,6 @@
+icpp-pro==7.1.0rc4
+pytest
+# The static checks (make check-static), at the versions the toolchain uses
+black==26.10.1
+pylint==4.0.9
+mypy==1.13.0

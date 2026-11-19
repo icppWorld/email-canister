@@ -1,0 +1,65 @@
+# The reproducible toolchain image for the backend wasm.
+#
+# The base image is pinned by digest and the toolchain by build arguments, and
+# the last step prints every version, so the build log records what produced
+# the wasm.
+#
+# --platform=linux/amd64 must stay: it makes an Apple Silicon Mac, an x86_64
+# Linux machine and the GitHub runner produce the same bytes. On Apple Silicon
+# it runs under emulation, which is slow.
+ARG PLATFORM=linux/amd64
+FROM --platform=${PLATFORM} python:3.11-slim-bookworm@sha256:528257d48c1da0dcecc2e725d1ae34498d60c965f1241e39cd6a85a8859bdf84
+
+# Determinism, image-wide so that `make docker-shell` sees the build's environment:
+#   LC_ALL/LANG    the link step's `*.o` glob sorts by the locale, so the locale decides link order
+#   PYTHONHASHSEED the toolchain expands source paths through a set, whose order is otherwise random
+ENV DEBIAN_FRONTEND=noninteractive \
+    LC_ALL=C \
+    LANG=C \
+    TZ=UTC \
+    SOURCE_DATE_EPOCH=0 \
+    PYTHONHASHSEED=0 \
+    PYTHONDONTWRITEBYTECODE=1
+
+# Not pinned to exact versions: apt reads the live Debian index, which drops a
+# superseded version as soon as a security update lands, so exact pins break
+# within weeks. None of these packages writes a byte of the wasm:
+#   curl, ca-certificates, git  fetch pinned tarballs
+#   build-essential             a C compiler for the Rust build scripts
+#   clang                       the toolchain checks that clang exists before building;
+#                               the wasm itself is compiled only by the pinned wasi-sdk
+#   make, xz-utils, zip         drive the build and unpack the wasi-sdk
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        git \
+        build-essential \
+        clang \
+        make \
+        xz-utils \
+        zip \
+    && rm -rf /var/lib/apt/lists/*
+
+# icpp-pro pins the rest of the toolchain: wasi-sdk, the Rust version, wasi2ic
+# and ic-wasi-polyfill are constants inside the package. icpp-binaryen refuses
+# to import unless its bundled Binaryen matches its own version.
+ARG ICPP_VERSION
+ARG ICPP_BINARYEN_VERSION
+RUN pip install --no-cache-dir \
+        icpp-pro==${ICPP_VERSION} \
+        icpp-binaryen==${ICPP_BINARYEN_VERSION} \
+    && python -c "from icpp_binaryen import BINARYEN_VERSION; print('Binaryen', BINARYEN_VERSION)"
+
+RUN icpp install-wasi-sdk && icpp install-rust
+
+# icpp calls its tools by absolute path. Fails unless exactly one wasi-sdk and
+# one Rust toolchain were installed.
+RUN set -e \
+ && clang=$(ls $HOME/.icpp/wasi-sdk/wasi-sdk-*/bin/clang) && test "$(echo "$clang" | wc -l)" -eq 1 \
+ && rustc=$(ls $HOME/.icpp/rust/*/bin/rustc) && test "$(echo "$rustc" | wc -l)" -eq 1 \
+ && echo "python   : $(python --version)" \
+ && echo "icpp-pro : $(icpp --version | tr '\n' ' ')" \
+ && echo "wasi-sdk : $($clang --version | head -1)" \
+ && echo "rustc    : $($rustc --version)"
+
+CMD ["/bin/bash"]

@@ -1,0 +1,39 @@
+{
+  "name": "email-canister-webmail",
+  "private": true,
+  "version": "0.2.0",
+  "type": "module",
+  "scripts": {
+    "build": "node node_modules/typescript/bin/tsc --noEmit && node node_modules/vite/bin/vite.js build",
+    "build:e2e": "node node_modules/vite/bin/vite.js build --mode e2e",
+    "dev": "node node_modules/vite/bin/vite.js",
+    "e2e": "node node_modules/@playwright/test/cli.js test",
+    "format": "node node_modules/prettier/bin/prettier.cjs --write .",
+    "format:check": "node node_modules/prettier/bin/prettier.cjs --check .",
+    "lint": "node node_modules/eslint/bin/eslint.js .",
+    "typecheck": "node node_modules/typescript/bin/tsc --noEmit && node node_modules/typescript/bin/tsc --noEmit -p tsconfig.e2e.json"
+  },
+  "dependencies": {
+    "@icp-sdk/auth": "^11.2.0",
+    "@icp-sdk/core": "^6.1.1",
+    "postal-mime": "^4.2.0",
+    "react": "19.1",
+    "react-dom": "19.1"
+  },
+  "devDependencies": {
+    "@eslint/compat": "2.1.1",
+    "@playwright/test": "^1.65.0",
+    "@types/node": "^22.20.5",
+    "@types/react": "19.1",
+    "@types/react-dom": "19.1",
+    "@vitejs/plugin-react": "^6.3.0",
+    "eslint": "10.13.0",
+    "eslint-config-prettier": "10.1.8",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "globals": "17.13.0",
+    "neostandard": "0.14.1",
+    "prettier": "3.6.2",
+    "typescript": "5.9",
+    "vite": "^8.3.7"
+  }
+}

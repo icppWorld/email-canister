@@ -1,0 +1,41 @@
+canisters:
+  - name: email-canister
+    build:
+      steps:
+        - type: pre-built
+          path: build/email-canister.wasm
+  - name: email-canister-test
+    build:
+      steps:
+        - type: pre-built
+          path: build/email-canister-test.wasm
+  - name: webmail
+    recipe:
+      type: "@dfinity/asset-canister@v2.3.0"
+      configuration:
+        version: 0.30.2
+        dir: build/webmail
+  # The normal webmail build, which signs in through the local Internet
+  # Identity, for webmail/e2e/signin.spec.ts
+  - name: webmail-real
+    recipe:
+      type: "@dfinity/asset-canister@v2.3.0"
+      configuration:
+        version: 0.30.2
+        dir: build/webmail-real
+  - name: relay_stub
+    build:
+      steps:
+        - type: pre-built
+          path: test/relay_stub/build/relay_stub.wasm
+networks:
+  - name: local
+    mode: managed
+    gateway:
+      port: 0
+    ii: true
+environments:
+  - name: local
+    network: local
+  - name: ic
+    network: ic

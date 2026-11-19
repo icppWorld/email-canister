@@ -1,0 +1,25 @@
+{
+  "name": "Test <Mail> & Co",
+  "label": "Test Mail",
+  "tagline": "A brand for the browser tests.",
+  "logo": {
+    "light": "logo-light.svg",
+    "dark": "logo-dark.svg",
+    "alt": "Test"
+  },
+  "icons": [
+    {
+      "file": "icon.svg",
+      "sizes": "any"
+    }
+  ],
+  "tokens": "tokens.json",
+  "roles": {
+    "action": "{action}",
+    "action-hover": "{action-hover}",
+    "on-action": "{on-action}",
+    "selected": "{tint}",
+    "radius-md": "{radius-md}",
+    "control-height": "36px"
+  }
+}

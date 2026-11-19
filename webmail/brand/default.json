@@ -1,0 +1,35 @@
+{
+  "name": "Mail",
+  "tagline": "Your email, in a canister you own.",
+  "families": {
+    "heading": "system-ui, -apple-system, \"Segoe UI\", sans-serif",
+    "body": "system-ui, -apple-system, \"Segoe UI\", sans-serif",
+    "mono": "ui-monospace, monospace"
+  },
+  "roles": {
+    "surface": { "light": "#ffffff", "dark": "#161616" },
+    "surface-muted": { "light": "#f4f4f4", "dark": "#1f1f1f" },
+    "surface-raised": { "light": "#ffffff", "dark": "#262626" },
+    "ink": { "light": "#1a1a1a", "dark": "#ededed" },
+    "ink-muted": { "light": "#5c5c5c", "dark": "#a8a8a8" },
+    "border": { "light": "#dddddd", "dark": "#3a3a3a" },
+    "border-strong": { "light": "#767676", "dark": "#8a8a8a" },
+    "action": { "light": "#262626", "dark": "#e6e6e6" },
+    "action-hover": { "light": "#000000", "dark": "#ffffff" },
+    "on-action": { "light": "#ffffff", "dark": "#161616" },
+    "selected": { "light": "#e6e6e6", "dark": "#333333" },
+    "focus-ring": { "light": "#1a1a1a", "dark": "#ededed" },
+    "danger": { "light": "#1a1a1a", "dark": "#ededed" },
+    "warning": { "light": "#1a1a1a", "dark": "#ededed" },
+    "warning-surface": { "light": "#f4f4f4", "dark": "#1f1f1f" },
+    "radius-sm": "4px",
+    "radius-md": "6px",
+    "radius-lg": "10px",
+    "shadow-dialog": {
+      "light": "0 10px 40px #00000040",
+      "dark": "0 10px 40px #000000a0"
+    },
+    "control-height": "32px",
+    "button-weight": "400"
+  }
+}

@@ -1,0 +1,7 @@
+# This file is also used by ESLint (eslint.config.mjs)
+package-lock.json
+dist
+node_modules
+test-results
+playwright-report
+e2e/env.json

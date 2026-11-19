@@ -1,0 +1,84 @@
+# The test build: adds the dev_* methods and a message that traps on purpose.
+[build-wasm]
+canister = "email-canister-test"
+did_path = "test/email-canister-test.did"
+cpp_compile_flags = ["-DEMAIL_CANISTER_TEST_HOOKS"]
+cpp_paths = ["src/api/*.cpp", "src/store/*.cpp", "src/ingest/*.cpp", "src/smtp/*.cpp", "src/outbox/*.cpp"]
+cpp_include_dirs = ["src/api", "src/store", "src/ingest", "src/smtp", "src/outbox", "vendor/sqlite3"]
+cpp_link_flags = ["-Wl,-z,stack-size=8388608"]
+c_paths = ["src/ingest/mime_extract.c"]
+c_include_dirs = [
+    "src/ingest",
+    "vendor/libetpan",
+    "vendor/libetpan/libetpan",
+    "shims",
+    "shims/libetpan",
+]
+c_compile_flags = ["-D_WASI_EMULATED_MMAN"]
+
+# The vendored code is built once into libraries, without LTO: bitcode in a
+# library would still cost its code generation in every link.
+#
+# Everyday build, of our own code only:
+#   icpp build-wasm --to-compile mine-no-lib [--config icpp-test.toml]
+# After a change in vendor/, shims/ or src/store/sqlite_vfs.c:
+#   icpp build-library <lib_name>
+#
+# icpp.toml and icpp-test.toml share build-library/, so these tables must stay
+# identical. test/test_build_config.py checks that.
+
+[[build-library]]
+lib_name = "sqlite3"
+c_paths = ["vendor/sqlite3/sqlite3.c", "src/store/sqlite_vfs.c"]
+c_include_dirs = ["vendor/sqlite3"]
+c_compile_flags_defaults = ["-O3", "-fno-exceptions", "-fvisibility=hidden", "-DNDEBUG", "-DICPP_VERBOSE=0"]
+c_compile_flags = [
+    "-DSQLITE_OS_OTHER=1",
+    "-DSQLITE_THREADSAFE=0",
+    "-DSQLITE_OMIT_WAL",
+    "-DSQLITE_ENABLE_FTS5",
+    "-DSQLITE_OMIT_LOAD_EXTENSION",
+    "-DSQLITE_DEFAULT_MEMSTATUS=0",
+    "-DSQLITE_TEMP_STORE=3",
+    "-DSQLITE_DQS=0",
+]
+
+[[build-library]]
+lib_name = "libetpan"
+c_paths = ["vendor/libetpan/libetpan/*.c", "shims/mailmime_helpers.c"]
+c_include_dirs = ["vendor/libetpan", "vendor/libetpan/libetpan", "shims", "shims/libetpan"]
+c_compile_flags_defaults = ["-O3", "-fno-exceptions", "-fvisibility=hidden", "-DNDEBUG", "-DICPP_VERBOSE=0"]
+c_compile_flags = ["-D_WASI_EMULATED_MMAN"]
+
+[[build-library]]
+lib_name = "charsets"
+c_paths = ["shims/charconv.c", "shims/charset_tables.c"]
+c_include_dirs = ["vendor/libetpan/libetpan", "shims", "shims/libetpan"]
+c_compile_flags_defaults = ["-O3", "-fno-exceptions", "-fvisibility=hidden", "-DNDEBUG", "-DICPP_VERBOSE=0"]
+
+# SQLite as the canister has it, for the native tests: the same flags, and the
+# same file system calls through sqlite_vfs.c. test/test_build_config.py checks
+# that the flags agree.
+[[build-library-native]]
+lib_name = "sqlite3"
+c_compile_flags = [
+    "-DSQLITE_OS_OTHER=1",
+    "-DSQLITE_THREADSAFE=0",
+    "-DSQLITE_OMIT_WAL",
+    "-DSQLITE_ENABLE_FTS5",
+    "-DSQLITE_OMIT_LOAD_EXTENSION",
+    "-DSQLITE_DEFAULT_MEMSTATUS=0",
+    "-DSQLITE_TEMP_STORE=3",
+    "-DSQLITE_DQS=0",
+]
+
+# A native executable on the Mock IC, for the tests in native/:
+#   make test-native
+[build-native]
+cpp_paths = ["native/*.cpp"]
+cpp_include_dirs = []
+cpp_compile_flags = ["-DEMAIL_CANISTER_TEST_HOOKS"]
+cpp_link_flags = []
+c_paths = []
+c_include_dirs = []
+c_compile_flags = []
