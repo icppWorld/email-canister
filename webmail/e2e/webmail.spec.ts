@@ -3461,6 +3461,12 @@ test('at phone width the list and the open message take turns, and compose fills
   await openMail(page, 'plover')
   await expect(page.getByTestId('subject')).toHaveText('Phone plover')
   await expect(list).toBeHidden()
+  // Its actions wrap rather than run off the side
+  expect(
+    await page
+      .locator('article.reader')
+      .evaluate((reader) => reader.scrollWidth <= reader.clientWidth)
+  ).toBe(true)
   await page.getByRole('button', { name: 'Back' }).click()
   await expect(list).toBeVisible()
   await expect(page.getByTestId('subject')).toHaveCount(0)

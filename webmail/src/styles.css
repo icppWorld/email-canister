@@ -533,6 +533,10 @@ button.star.on .icon {
 .toolbar h2 {
   margin: 0 auto 0 0;
 }
+/* A narrow reader puts its actions on more than one line */
+.reader > .toolbar {
+  flex-wrap: wrap;
+}
 .headers {
   display: grid;
   grid-template-columns: auto 1fr;
