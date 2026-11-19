@@ -461,23 +461,23 @@ for (const [colorScheme, word, body] of [
   [
     'dark',
     'robin',
-    '<div dir="ltr">robin</div><div class="gmail_quote"><blockquote class="gmail_quote" ' +
+    '<div dir="ltr">robin</div><div class="quote"><blockquote class="quote" ' +
       'style="margin:0px 0px 0px 0.8ex;border-left:1px solid rgb(204,204,204);padding-left:1ex">quoted</blockquote></div>' +
-      '<div dir="ltr" class="gmail_signature" data-smartmail="gmail_signature">Robin</div>',
+      '<div dir="ltr" class="signature" data-mail="signature">Robin</div>',
   ],
-  // A reply from Gmail: the quote holds the composer's mail and its pixel,
+  // A reply from a webmail service: the quote holds the composer's mail and its pixel,
   // and a <br clear="all"> comes before the signature
   [
     'dark',
     'turnstone',
-    '<div dir="ltr">turnstone</div><br><div class="gmail_quote gmail_quote_container">' +
-      '<div dir="ltr" class="gmail_attr">On Wed, Nov 18, 2026 at 9:01\u202fPM &lt;<a href="mailto:team@example.com">' +
-      'team@example.com</a>&gt; wrote:<br></div><blockquote class="gmail_quote" ' +
+    '<div dir="ltr">turnstone</div><br><div class="quote quote_container">' +
+      '<div dir="ltr" class="attr">On Wed, Nov 18, 2026 at 9:01\u202fPM &lt;<a href="mailto:team@example.com">' +
+      'team@example.com</a>&gt; wrote:<br></div><blockquote class="quote" ' +
       'style="margin:0px 0px 0px 0.8ex;border-left:1px solid rgb(204,204,204);padding-left:1ex">' +
       '<div style="white-space:pre-wrap">quoted</div>\n<img alt="" src="https://a1b2c3d4.r.us-east-1.awstrack.me/I0/' +
       '0100000000000000-00000000-0000-0000-0000-000000000000-000000/AAAAAAAAAAAAAAAAAAAAAAAAAAA=473" ' +
       'style="display: none; width: 1px; height: 1px;">\n</blockquote></div><div><br clear="all"></div><div><br></div>' +
-      '<span class="gmail_signature_prefix">-- </span><br><div dir="ltr" class="gmail_signature"><div dir="ltr">' +
+      '<span class="signature_prefix">-- </span><br><div dir="ltr" class="signature"><div dir="ltr">' +
       '<div style="font-size:small">Robin</div></div></div>',
   ],
   [
