@@ -150,20 +150,27 @@ Insert queue_message(int64_t mailbox, const IncomingMessage &message,
 }
 
 int64_t backlog(int64_t at_ns) {
+  // A file newer than this release waits for another release, as a held one
+  // waits for its repair. INT64_MAX counts both.
+  const int64_t version =
+      at_ns == INT64_MAX ? INT64_MAX : db::mailbox_version();
   db::Stmt count(
       db::control(),
       "SELECT (SELECT count(*) FROM queue q JOIN mailboxes m ON m.id = q.mailbox_id "
-      "WHERE q.quarantined = 0 AND m.retry_after_ns <= ?1) + "
+      "WHERE q.quarantined = 0 AND m.retry_after_ns <= ?1 AND m.schema <= ?2) + "
       "(SELECT coalesce(sum(unparsed), 0) FROM mailboxes "
-      "WHERE unparsed > 0 AND retry_after_ns <= ?1)");
-  return count && count.integer(1, at_ns).row() ? count.column_integer(0) : -1;
+      "WHERE unparsed > 0 AND retry_after_ns <= ?1 AND schema <= ?2)");
+  return count && count.integer(1, at_ns).integer(2, version).row()
+             ? count.column_integer(0)
+             : -1;
 }
 
 bool deferred_until(int64_t now_ns, int64_t &at_ns) {
   db::Stmt select(
       db::control(),
       "SELECT min(retry_after_ns) FROM mailboxes m WHERE retry_after_ns > 0 AND "
-      "retry_after_ns > ?1 AND retry_after_ns < ?3 AND (unparsed > 0 OR "
+      "retry_after_ns > ?1 AND retry_after_ns < ?3 AND schema <= ?2 AND "
+      "(unparsed > 0 OR "
       "" WAITS_FOR_UPGRADE(
           "?2") " OR EXISTS(SELECT 1 FROM queue q "
                 "WHERE q.mailbox_id = m.id AND q.quarantined = 0))");
@@ -183,13 +190,15 @@ Claim claim_move(int64_t max_attempts, int64_t now_ns, int64_t defer_ns,
   int64_t attempts = 0;
   int64_t mailbox = 0;
   {
+    // A file of another version waits for its upgrade or its release
     db::Stmt select(db::control(),
                     "SELECT q.id, q.attempts, q.mailbox_id FROM queue q "
                     "JOIN mailboxes m ON m.id = q.mailbox_id "
-                    "WHERE q.quarantined = 0 AND m.retry_after_ns <= ? "
+                    "WHERE q.quarantined = 0 AND m.retry_after_ns <= ?1 "
+                    "AND m.schema = ?2 "
                     "ORDER BY q.id LIMIT 1");
     if (!select) return Claim::Failed;
-    if (!select.integer(1, now_ns).row()) {
+    if (!select.integer(1, now_ns).integer(2, db::mailbox_version()).row()) {
       return select.failed() ? Claim::Failed : Claim::Empty;
     }
     queue_id = select.column_integer(0);

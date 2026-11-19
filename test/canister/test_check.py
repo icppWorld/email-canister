@@ -36,6 +36,7 @@ from .support import (
     wait_until_drained,
 )
 from .test_mailbox import seed
+from .test_storage import upgrade
 from .test_storage import nat, stat
 
 
@@ -125,6 +126,71 @@ def test__a_failed_query_does_not_end_the_upgrades() -> None:
         not in call("dev_file_exec", '("bob", "INSERT INTO later VALUES(1)")'),
         "bob's upgrade",
     )
+
+
+# Counts to 3 million, about a second of a local replica's time
+SLOW_STEP = (
+    "CREATE TABLE turn AS WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL "
+    "SELECT x + 1 FROM c WHERE x < 3000000) SELECT count(*) AS n FROM c"
+)
+
+
+def test__upgrades_take_turns_with_mail_for_upgraded_mailboxes() -> None:
+    # Mailboxes enough that their upgrades outlast a few rounds of the pump
+    waiting = [f"turn{n}" for n in range(30)]
+    for n, local in enumerate(waiting, start=10):
+        add_mailbox(local, fake_principal(n))
+    call("dev_pause", "(true)")
+    try:
+        assert re.search(OK, deliver("Turn lemming", "<lemming@x.example>", to="alice"))
+        # A step that takes a while, so the last upgrade comes long after
+        # alice's mail
+        call("dev_schema_step", f'("{SLOW_STEP}")')
+    finally:
+        call("dev_pause", "(false)")
+    # alice's file is upgraded first, and her mail need not wait for the rest
+    wait_until(lambda: len(search("lemming")) == 1, "alice's delivery")
+    assert "Failed" in call(
+        "dev_file_exec", f'("{waiting[-1]}", "INSERT INTO turn VALUES(1)")'
+    ), "every file was upgraded before alice's mail went in"
+    wait_until(
+        lambda: "Failed"
+        not in call(
+            "dev_file_exec", f'("{waiting[-1]}", "INSERT INTO turn VALUES(1)")'
+        ),
+        "the last upgrade",
+        seconds=300,
+    )
+
+
+def test__a_file_newer_than_its_release_waits_for_one_that_knows_its_version(
+    identity: str,
+) -> None:
+    # The steps the earlier tests added are on the heap, so an upgrade to this
+    # same build is a rollback to a release that knows none of them
+    assert upgrade(identity) == ""
+    assert search("lemming") == [], "a newer file is used"
+    assert "needs_repair = null" in entry_line("alice"), "a newer file is not damage"
+    assert "needs a newer release" in call("admin_check", '("alice", null)')
+    # Its mail waits, and does not count toward the canister-wide backlog cap
+    call("dev_set_backlog_cap", "(100 : nat64, 1 : nat64)")
+    try:
+        for n in range(2):
+            assert re.search(
+                OK, deliver(f"Newer marmot {n}", f"<marmot{n}@x.example>", to="alice")
+            )
+    finally:
+        call("dev_set_backlog_cap", "(100 : nat64, 1000 : nat64)")
+    # Each step stands for a later release, until one knows the files' version
+    for _ in range(10):
+        call("dev_schema_step", '("SELECT 1")')
+        if len(search("lemming")) == 1:
+            break
+    wait_until(
+        lambda: len(search("pika")) == 2 and len(search("marmot")) == 2,
+        "alice's and bob's mail",
+    )
+    assert check("alice") == "ok"
 
 
 def test__a_check_of_a_large_mailbox_fits_in_one_call() -> None:
