@@ -15,18 +15,18 @@ email-canister grows in small releases, driven by running it for real mailboxes.
 - Relay bridge fixes (v0.1.4): a rate-limited or lost send retried within the mail gateway's replay window, `#rejected` only for mail certainly not sent, strict JSON escaping, and bridge keys that a deleted outbox message never hands on. The storage design for v0.2.0.
 - One SQLite database per mailbox (v0.2.0), as [docs/storage-per-mailbox.md](docs/storage-per-mailbox.md) recommends: a `control.db` beside one file per mailbox, delivery queued in one commit and moved into each recipient's file, search that costs only the mailbox's own mail, a consistency check per mailbox, a download of the mailbox's file, purge by truncation, outbox ids that never repeat, file schema versions upgraded by the ingest timer, and a relay bridge that removes the results it keeps after 7 days. Deployments are reinstalled: there is no migration from v0.1.x's `mail.db`.
 - Shared mailboxes and several mailboxes per person (v0.2.0): members, all equal and managed by admins; shared read state with who opened each message; who sent each message; a mailbox list in the webmail; and names for people.
+- An upgrade path for mailbox files (v0.3.0): a schema step that fails holds its mailbox only on its third failure in a row, upgrades take turns with incoming mail, and a file newer than the release is left alone until a release that knows it runs. Upgrades keep the mail.
+- The mailbox experience (v0.3.0): Trash and Spam folders; Delete with no confirmation and an Undo, Restore, and Trash and Spam emptied after 30 days; row actions on hover and checkboxes to act on several messages at once; stars in the list; blocked senders, shared by the mailbox's members, whose mail is filed in Spam; the folder shown stays after a send; a compose window at the bottom right that can be minimised or made full screen; and at phone width, the list and the open message taking turns.
 
-## Next: v0.3.0
+## Next
 
 - Aliases: several addresses for one mailbox, and a choice of sending address.
 - Members a mailbox's own owners can manage, roles if they are wanted (`read`, `write`, `owner`), and an audit log of who was added and removed.
-- The user's mailbox experience, on a par with the major webmail services:
-  - a Trash folder: delete is one click with no confirmation and an Undo, mail in Trash can be restored, and Trash is emptied after 30 days;
-  - row actions on hover (delete, read or unread, star), and checkboxes to act on several messages at once;
-  - block a sender: the mailbox's members share one list, and mail from a blocked sender is filed in a Spam folder;
-  - after sending, the webmail stays on the Inbox;
-  - a compose window at the bottom right that can be minimised or made full screen;
-  - plain mail from more mail services in the brand's colours, and the smaller webmail and Admin panel items noted during v0.2.0, among them every row action checking that the Admin panel's list is current.
+- The user's mailbox experience, further:
+  - plain mail from more mail services in the brand's colours;
+  - keyboard shortcuts, and the focus kept inside the compose window in full screen;
+  - at phone width, the device's back gesture returning from a message to the list;
+  - the smaller webmail and Admin panel items noted during v0.2.0 and v0.3.0, among them every row action checking that the Admin panel's list is current, and errors shown without the agent's call details.
 - Provisioner principals that may create and suspend mailboxes without being admins, for automated onboarding.
 - Mailbox states: `active`, `suspended` (receives, cannot send) and `disabled`.
 - Outbound rate limits per mailbox.
