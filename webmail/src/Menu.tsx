@@ -1,7 +1,7 @@
 // A ⋮ button that opens a short list of buttons. Choosing one, a click
 // elsewhere, or Escape closes it.
 
-import { useEffect, useRef, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 
 import { Icon } from './Icon'
 
@@ -13,16 +13,23 @@ export function Menu({
   children: ReactNode
 }) {
   const ref = useRef<HTMLDetailsElement>(null)
+  const [open, setOpen] = useState(false)
+  // The list opens toward the middle of the screen, so it stays on it
+  const [fromLeft, setFromLeft] = useState(false)
+
+  // Listened for only while it is open
   useEffect(() => {
+    if (!open) return
+    const close = () => {
+      if (ref.current) ref.current.open = false
+    }
     const outside = (e: PointerEvent) => {
-      const menu = ref.current
-      if (menu?.open && !menu.contains(e.target as Node)) menu.open = false
+      if (!ref.current?.contains(e.target as Node)) close()
     }
     const escape = (e: KeyboardEvent) => {
-      const menu = ref.current
-      if (e.key !== 'Escape' || !menu?.open) return
-      menu.open = false
-      menu.querySelector('summary')?.focus()
+      if (e.key !== 'Escape') return
+      close()
+      ref.current?.querySelector('summary')?.focus()
     }
     document.addEventListener('pointerdown', outside)
     document.addEventListener('keydown', escape)
@@ -30,14 +37,24 @@ export function Menu({
       document.removeEventListener('pointerdown', outside)
       document.removeEventListener('keydown', escape)
     }
-  }, [])
+  }, [open])
+
   return (
-    <details className="menu" ref={ref}>
+    <details
+      className="menu"
+      ref={ref}
+      onToggle={(e) => {
+        const menu = e.currentTarget
+        const { left, right } = menu.getBoundingClientRect()
+        setFromLeft(left + right < window.innerWidth)
+        setOpen(menu.open)
+      }}
+    >
       <summary aria-label={label} title={label}>
         <Icon name="more" />
       </summary>
       <div
-        className="menu-items"
+        className={fromLeft ? 'menu-items from-left' : 'menu-items'}
         onClick={(e) => {
           if (ref.current && (e.target as Element).closest('button'))
             ref.current.open = false

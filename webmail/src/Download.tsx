@@ -25,13 +25,9 @@ export function useDownload(
   const [error, setError] = useState('')
   // Raised when the session ends, which ends the download under way
   const generation = useRef(0)
-  const renewTimer = useRef<ReturnType<typeof setInterval> | undefined>(
-    undefined
-  )
   useEffect(
     () => () => {
       generation.current += 1
-      clearInterval(renewTimer.current)
       setProgress('')
       setError('')
     },
@@ -62,10 +58,11 @@ export function useDownload(
       const renewMs = Number((info.until_ns - info.started_ns) / 2_500_000n)
       // Each goes out on its own, so that one that hangs does not hold up the
       // next. One that lands after the thaw is refused: it names this download.
+      // It stops itself once the session ends, also while a chunk hangs
       renew = setInterval(() => {
+        if (halted()) return clearInterval(renew)
         backend.mail_export_freeze([info.started_ns]).catch(() => undefined)
       }, renewMs)
-      renewTimer.current = renew
 
       // A query may reach a replica that has not seen the freeze yet, or fail
       // on its way, so a chunk is read a few times before the download gives

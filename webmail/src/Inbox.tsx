@@ -26,6 +26,7 @@ import { formatNs, formatTime, memberName } from './format'
 import { Icon, type IconName } from './Icon'
 import { MessageBody } from './MessageBody'
 import { deliveredVia, parseMail, saveFile, type ParsedMail } from './mime'
+import { BackButton, StarButton } from './Buttons'
 import { Menu } from './Menu'
 import type { Toast, ToastAction } from './Toast'
 
@@ -51,6 +52,14 @@ type Action = {
   icon: IconName
   danger?: true // it cannot be undone
   run: (uids: bigint[]) => Promise<unknown>
+}
+
+// One in the reader's ⋮ menu. needsSender: it waits until the sender's address
+// is known.
+type MoreAction = {
+  label: string
+  needsSender?: true
+  run: (sender: string) => Promise<unknown>
 }
 
 // Runs an action, showing a refusal with onError. A new action clears the
@@ -140,8 +149,7 @@ function Reader({
   touched,
   actions,
   onSpam,
-  onBlock,
-  onUnread,
+  more,
   onReply,
   onFlags,
   onCounts,
@@ -159,8 +167,7 @@ function Reader({
   // In the Inbox: to Spam, with the sender's address once it is known, for
   // the note to offer a block
   onSpam?: (sender: string) => Promise<unknown>
-  onBlock?: (address: string) => Promise<unknown> // in Spam
-  onUnread?: () => Promise<unknown> // in the Inbox, back to the list
+  more: MoreAction[] // the folder's, in the ⋮ menu
   onReply: (draft: Omit<Draft, 'from'>) => void // from the mailbox shown
   // The flags set and cleared, applied to the latest state: another change
   // may have landed while this one was under way
@@ -295,7 +302,6 @@ function Reader({
     onReply({ to: mail.fromAddress, subject, body: quote(mail) })
   }
 
-  const flagged = (summary.flags & FLAG_FLAGGED) !== 0n
   const via = mail
     ? deliveredVia(mail.fromAddress, summary.envelope_from)
     : null
@@ -304,15 +310,7 @@ function Reader({
   return (
     <article className="reader">
       <div className="toolbar">
-        {/* Shown at phone width only, where the toolbar is short of room */}
-        <button
-          className="back"
-          aria-label="Back"
-          title="Back"
-          onClick={onBack}
-        >
-          <Icon name="back" />
-        </button>
+        <BackButton onClick={onBack} />
         <button onClick={reply} disabled={!mail}>
           Reply
         </button>
@@ -325,31 +323,24 @@ function Reader({
             {action.label}
           </button>
         ))}
-        <button
-          className={flagged ? 'bare star on' : 'bare star'}
-          aria-label={flagged ? 'Unstar' : 'Star'}
-          aria-pressed={flagged}
-          title={flagged ? 'Starred' : 'Not starred'}
+        <StarButton
+          flagged={(summary.flags & FLAG_FLAGGED) !== 0n}
           onClick={toggleFlag}
-        >
-          <Icon name="star" />
-        </button>
+        />
         {onSpam && (
           <button onClick={() => act(() => onSpam(sender))}>Spam</button>
         )}
-        {(onUnread || onBlock) && (
+        {more.length > 0 && (
           <Menu label="More actions">
-            {onUnread && (
-              <button onClick={() => act(onUnread)}>Mark unread</button>
-            )}
-            {onBlock && (
+            {more.map((action) => (
               <button
-                onClick={() => act(() => onBlock(sender))}
-                disabled={!sender}
+                key={action.label}
+                disabled={action.needsSender && !sender}
+                onClick={() => act(() => action.run(sender))}
               >
-                Block sender
+                {action.label}
               </button>
-            )}
+            ))}
           </Menu>
         )}
         {(shared ||
@@ -652,14 +643,42 @@ export function Inbox({
     })
   }
 
-  // The note offers to block the sender of a message sent to Spam from the
-  // reader
+  // From the reader: once the sender is known, the note offers to block them
   const spam = (uid: bigint, sender: string) =>
-    move([uid], 'spam', (done) => ({
-      label: 'Block sender',
-      title: `Block ${sender}`,
-      run: () => block(sender, done),
-    }))
+    move(
+      [uid],
+      'spam',
+      sender
+        ? (done) => ({
+            label: 'Block sender',
+            title: `Block ${sender}`,
+            run: () => block(sender, done),
+          })
+        : undefined
+    )
+
+  // The reader's ⋮ menu, by folder
+  const readerMore = (uid: bigint): MoreAction[] =>
+    folder === 'inbox'
+      ? [
+          {
+            label: 'Mark unread',
+            // Back to the list, unless another message opened meanwhile
+            run: async () => {
+              await markUnread.run([uid])
+              setSelected((open) => (open?.uid === uid ? null : open))
+            },
+          },
+        ]
+      : folder === 'spam'
+        ? [
+            {
+              label: 'Block sender',
+              needsSender: true,
+              run: (sender) => block(sender, []),
+            },
+          ]
+        : []
 
   // A refusal in the list shows above it
   const act = (run: () => Promise<unknown>) => attempt(run, setError)
@@ -824,15 +843,11 @@ export function Inbox({
                     onChange={(e) => tick(m.uid, e.target.checked)}
                   />
                 </label>
-                <button
-                  className={flagged ? 'bare star on' : 'bare star'}
-                  aria-label={flagged ? `Unstar ${title}` : `Star ${title}`}
-                  aria-pressed={flagged}
-                  title={flagged ? 'Starred' : 'Not starred'}
+                <StarButton
+                  flagged={flagged}
+                  name={title}
                   onClick={() => act(() => flag([m.uid], ...starring(m.flags)))}
-                >
-                  <Icon name="star" />
-                </button>
+                />
                 <button
                   className={unread ? 'message unread' : 'message'}
                   aria-current={selected?.uid === m.uid}
@@ -890,24 +905,10 @@ export function Inbox({
           actions={actions}
           onSpam={
             folder === 'inbox'
-              ? (sender) =>
-                  sender
-                    ? spam(selected.uid, sender)
-                    : toSpam.run([selected.uid])
+              ? (sender) => spam(selected.uid, sender)
               : undefined
           }
-          onBlock={
-            folder === 'spam' ? (address) => block(address, []) : undefined
-          }
-          onUnread={
-            folder === 'inbox'
-              ? async () => {
-                  const uid = selected.uid
-                  await markUnread.run([uid])
-                  setSelected((open) => (open?.uid === uid ? null : open))
-                }
-              : undefined
-          }
+          more={readerMore(selected.uid)}
           onReply={onReply}
           onFlags={(set, clear) => updateFlags([selected.uid], set, clear)}
           onBack={() => setSelected(null)}

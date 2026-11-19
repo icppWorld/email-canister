@@ -425,17 +425,17 @@ export function App() {
         {(box || me.is_controller) && (
           <Menu label="More">
             {box && (
-              <button
-                aria-current={current === 'blocked'}
-                onClick={() => setView('blocked')}
-              >
-                Blocked senders
-              </button>
-            )}
-            {box && (
-              <button onClick={download.start} disabled={download.busy}>
-                Download a copy
-              </button>
+              <>
+                <button
+                  aria-current={current === 'blocked'}
+                  onClick={() => setView('blocked')}
+                >
+                  Blocked senders
+                </button>
+                <button onClick={download.start} disabled={download.busy}>
+                  Download a copy
+                </button>
+              </>
             )}
             {me.is_controller && (
               <button

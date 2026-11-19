@@ -64,7 +64,8 @@ const isDomain = (name) =>
 const MAX_CUSTOM_DOMAINS = 10
 const OUTPUT_MARKER = '.brand-output'
 
-// A role a brand leaves out follows this role of the brand, before the default
+// A role a brand leaves out takes this role's value, as the brand or the
+// default sets it
 const FOLLOWS = { 'action-text': 'action' }
 
 // Pairs that must stay readable: text, background, minimum contrast
@@ -267,14 +268,15 @@ export function loadBrand(folder) {
     )
   const roles = Object.fromEntries(
     Object.entries(defaults.roles).map(([role, fallback]) => {
-      const value = resolve(
-        own.roles?.[role] ?? own.roles?.[FOLLOWS[role]] ?? fallback
-      )
+      const value = resolve(own.roles?.[role] ?? fallback)
       for (const v of [value.light, value.dark])
         if (!safeRole(v)) fail(`role ${role}: ${v}`)
       return [role, value]
     })
   )
+  for (const [role, leader] of Object.entries(FOLLOWS)) {
+    if (own.roles?.[role] === undefined) roles[role] = roles[leader]
+  }
   // A family may name one of the tokens file's type families, as "{body}"
   const families = Object.fromEntries(
     Object.entries({ ...defaults.families, ...own.families }).map(
