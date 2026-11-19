@@ -42,6 +42,9 @@ void traps(const std::string &test, Method fn, const std::string &method,
 std::string field(const std::string &reply, const std::string &name,
                   size_t from = 0);
 
+// How often `part` occurs in `text`
+size_t count(const std::string &text, const std::string &part);
+
 // Ends the run, failed, unless `text` contains `part`
 void expect(const std::string &test, const std::string &text,
             const std::string &part);
@@ -66,8 +69,12 @@ void add_mailbox(const std::string &test, const std::string &principal,
 // A mailbox method's arguments: the mailbox, then `args`, Candid text in
 // parentheses
 inline std::string in(const std::string &local, const std::string &args) {
-  return "(\"" + local + "\", " + args.substr(1);
+  return "(\"" + local + "\"" + (args == "()" ? ")" : ", " + args.substr(1));
 }
+
+// The caller's MailboxInfo of `local`, from mail_me
+std::string me_of(const std::string &test, const std::string &caller,
+                  const std::string &local);
 
 // mail_send's argument. Each part is Candid text.
 struct Send {
@@ -101,4 +108,5 @@ void test_admin(MockIC &mock_ic);
 void test_mailbox(MockIC &mock_ic);
 void test_outbox(MockIC &mock_ic);
 void test_export(MockIC &mock_ic);
+void test_folders(MockIC &mock_ic);
 void test_check(MockIC &mock_ic);

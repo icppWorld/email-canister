@@ -11,6 +11,9 @@
 namespace {
 
 const size_t k_preview_chars = 200;
+// Mail in Trash or Spam is deleted after 30 days, a few messages at a time
+const int64_t k_keep_filed_ns = 30LL * 24 * 3600 * 1'000'000'000;
+const int64_t k_expired_per_write = 20;
 uint64_t g_search_budget = 3'000'000'000; // a query may use 5B
 int64_t g_purge_step_bytes = 1LL << 30;
 
@@ -22,7 +25,7 @@ const size_t k_max_query_words = 16;
 
 #define SUMMARY_COLUMNS                                                        \
   "uid, state, flags, modseq, received_ns, sent_at, envelope_from, subject, "  \
-  "sender, attachments, preview, raw_bytes"
+  "sender, attachments, preview, raw_bytes, folder"
 
 store::Summary read_summary(db::Stmt &row) {
   store::Summary s;
@@ -38,6 +41,7 @@ store::Summary read_summary(db::Stmt &row) {
   s.attachments = row.column_integer(9);
   s.preview = row.column_text(10);
   s.raw_bytes = row.column_integer(11);
+  s.folder = row.column_integer(12);
   return s;
 }
 
@@ -241,12 +245,17 @@ bool process(int64_t mailbox, int64_t id) {
   }
   const Mailbox box{mailbox, mailbox_file(mailbox)};
   if (box.file == nullptr) return false;
+  int64_t folder = Inbox;
+  bool unread = false;
   {
-    db::Stmt state(box.file, "SELECT state FROM messages WHERE id = ?");
+    db::Stmt state(box.file,
+                   "SELECT state, folder, flags FROM messages WHERE id = ?");
     if (!state) return false;
     if (!state.integer(1, id).row())
       return !state.failed(); // deleted since it was claimed
     if (state.column_integer(0) != Queued) return true;
+    folder = state.column_integer(1);
+    unread = (state.column_integer(2) & Seen) == 0;
   }
   int64_t attempts = 1;
   {
@@ -282,11 +291,17 @@ bool process(int64_t mailbox, int64_t id) {
   }
   const std::string subject = or_empty(summary.subject);
   const std::string sender = or_empty(summary.sender);
+  const std::string sender_address = or_empty(summary.sender_address);
   const std::string text = or_empty(summary.text);
   const std::string preview = make_preview(text.c_str());
   const int64_t sent_at = summary.sent_at_seconds;
   const int64_t attachments = summary.attachments;
   mime_summary_free(&summary);
+  // Mail from a blocked From address goes to Spam, as the move sends mail
+  // from a blocked envelope sender there
+  std::optional<bool> spam = false;
+  if (folder == Inbox) spam = is_blocked(box.file, sender_address);
+  if (!spam) return false;
 
   MailboxWrite write(box);
   if (!write) return false;
@@ -301,22 +316,37 @@ bool process(int64_t mailbox, int64_t id) {
                  "UPDATE mailboxes SET unparsed = unparsed - 1, "
                  "since_merge = since_merge + 1, parse_attempts = 0, "
                  "parse_error = '' WHERE id = ?");
-  const bool ok = update && index && count &&
-                  update.integer(1, Indexed)
-                      .text(2, subject)
-                      .text(3, sender)
-                      .integer(4, sent_at)
-                      .integer(5, attachments)
-                      .text(6, preview)
-                      .integer(7, attempts)
-                      .integer(8, id)
-                      .done() &&
-                  index.integer(1, id)
-                      .text(2, subject)
-                      .text(3, sender)
-                      .text(4, text)
-                      .done() &&
-                  count.integer(1, mailbox).done();
+  bool ok = update && index && count &&
+            update.integer(1, Indexed)
+                .text(2, subject)
+                .text(3, sender)
+                .integer(4, sent_at)
+                .integer(5, attachments)
+                .text(6, preview)
+                .integer(7, attempts)
+                .integer(8, id)
+                .done() &&
+            index.integer(1, id)
+                .text(2, subject)
+                .text(3, sender)
+                .text(4, text)
+                .done() &&
+            count.integer(1, mailbox).done();
+  if (ok && *spam) {
+    db::Stmt bump(db::control(),
+                  "UPDATE mailboxes SET modseq = modseq + 1, "
+                  "unseen = unseen - ? WHERE id = ? RETURNING modseq");
+    ok = bump && bump.integer(1, unread ? 1 : 0).integer(2, mailbox).row();
+    const int64_t modseq = ok ? bump.column_integer(0) : 0;
+    db::Stmt file(box.file, "UPDATE messages SET folder = ?, folder_ns = ?, "
+                            "modseq = ? WHERE id = ?");
+    ok = ok && bump.done() && file &&
+         file.integer(1, Spam)
+             .integer(2, static_cast<int64_t>(IC_API::time()))
+             .integer(3, modseq)
+             .integer(4, id)
+             .done();
+  }
   return ok && write.commit();
 }
 
@@ -356,14 +386,22 @@ IngestStats ingest_stats() {
   return stats;
 }
 
-Page list_messages(const Mailbox &box, std::optional<int64_t> cursor,
-                   int64_t limit) {
+Page list_messages(const Mailbox &box, int64_t folder,
+                   std::optional<int64_t> cursor, int64_t limit) {
   Page page;
-  db::Stmt select(box.file, "SELECT " SUMMARY_COLUMNS " FROM messages "
-                            "WHERE uid < ? ORDER BY uid DESC LIMIT ?");
+  // The mail out of the Inbox has an index, which a query uses only when it
+  // repeats the index's condition
+  db::Stmt select(box.file,
+                  folder == Inbox
+                      ? "SELECT " SUMMARY_COLUMNS " FROM messages WHERE "
+                        "folder = ?1 AND uid < ?2 ORDER BY uid DESC LIMIT ?3"
+                      : "SELECT " SUMMARY_COLUMNS " FROM messages WHERE "
+                        "folder != 0 AND folder = ?1 AND uid < ?2 "
+                        "ORDER BY uid DESC LIMIT ?3");
   if (!select) return page;
-  select.integer(1, cursor.value_or(std::numeric_limits<int64_t>::max()))
-      .integer(2, limit + 1);
+  select.integer(1, folder)
+      .integer(2, cursor.value_or(std::numeric_limits<int64_t>::max()))
+      .integer(3, limit + 1);
   while (select.row()) {
     if (static_cast<int64_t>(page.items.size()) == limit) {
       page.cursor = page.items.back().uid;
@@ -381,40 +419,53 @@ bool get_message(const Mailbox &box, int64_t uid, Summary &summary,
   if (!select || !select.integer(1, uid).row()) return false;
   summary = read_summary(select);
   db::Stmt body(box.file, "SELECT raw FROM bodies WHERE id = ?");
-  if (!body || !body.integer(1, select.column_integer(12)).row()) return false;
+  if (!body || !body.integer(1, select.column_integer(13)).row()) return false;
   const auto *bytes = static_cast<const uint8_t *>(body.column_blob(0));
   raw.assign(bytes, bytes + body.column_bytes(0));
   return true;
 }
 
-bool set_flags(const Mailbox &box, int64_t uid, int64_t set, int64_t clear,
-               const std::string &principal, int64_t now_ns) {
+bool set_flags(const Mailbox &box, const std::vector<uint64_t> &uids,
+               int64_t set, int64_t clear, const std::string &principal,
+               int64_t now_ns) {
   MailboxWrite write(box);
   if (!write) return false;
-  db::Stmt find(box.file, "SELECT flags FROM messages WHERE uid = ?");
-  if (!find || !find.integer(1, uid).row()) return false;
-  const int64_t before = find.column_integer(0);
-  const int64_t after = (before | set) & ~clear;
-  bool ok = find.done();
-  if (after != before) {
-    // The unseen count follows the seen flag
-    const int64_t unseen = ((after & Seen) ? 0 : 1) - ((before & Seen) ? 0 : 1);
-    db::Stmt bump(db::control(),
-                  "UPDATE mailboxes SET modseq = modseq + 1, "
-                  "unseen = unseen + ? WHERE id = ? RETURNING modseq");
-    ok = ok && bump && bump.integer(1, unseen).integer(2, box.id).row();
-    const int64_t modseq = ok ? bump.column_integer(0) : 0;
-    ok = ok && bump.done();
-    db::Stmt update(box.file,
-                    "UPDATE messages SET flags = ?, modseq = ? WHERE uid = ?");
-    ok = ok && update &&
-         update.integer(1, after).integer(2, modseq).integer(3, uid).done();
-  }
-  if (set & Seen) { // the first time only
-    db::Stmt seen(box.file, "INSERT OR IGNORE INTO seen_by(uid, principal, "
-                            "at_ns) VALUES(?, ?, ?)");
-    ok = ok && seen &&
-         seen.integer(1, uid).text(2, principal).integer(3, now_ns).done();
+  db::Stmt find(box.file, "SELECT flags, folder FROM messages WHERE uid = ?");
+  db::Stmt bump(db::control(),
+                "UPDATE mailboxes SET modseq = modseq + 1, "
+                "unseen = unseen + ? WHERE id = ? RETURNING modseq");
+  db::Stmt update(box.file,
+                  "UPDATE messages SET flags = ?, modseq = ? WHERE uid = ?");
+  db::Stmt seen(box.file, "INSERT OR IGNORE INTO seen_by(uid, principal, "
+                          "at_ns) VALUES(?, ?, ?)");
+  bool ok = find && bump && update && seen;
+  for (size_t i = 0; ok && i < uids.size(); ++i) {
+    const auto uid = static_cast<int64_t>(uids[i]);
+    find.reset();
+    if (!find.integer(1, uid).row()) {
+      ok = !find.failed(); // a failed read must not pass for a missing uid
+      continue;
+    }
+    const int64_t before = find.column_integer(0);
+    const bool inbox = find.column_integer(1) == Inbox;
+    const int64_t after = (before | set) & ~clear;
+    find.reset();
+    if (after != before) {
+      // The unseen count follows the seen flag of the Inbox's mail
+      const int64_t unseen =
+          inbox ? ((after & Seen) ? 0 : 1) - ((before & Seen) ? 0 : 1) : 0;
+      bump.reset();
+      ok = bump.integer(1, unseen).integer(2, box.id).row();
+      const int64_t modseq = ok ? bump.column_integer(0) : 0;
+      ok = ok && bump.done();
+      update.reset();
+      ok = ok &&
+           update.integer(1, after).integer(2, modseq).integer(3, uid).done();
+    }
+    if (ok && (set & Seen)) { // the first time only
+      seen.reset();
+      ok = seen.integer(1, uid).text(2, principal).integer(3, now_ns).done();
+    }
   }
   return ok && write.commit();
 }
@@ -430,9 +481,14 @@ std::vector<SeenBy> seen_by(const Mailbox &box, int64_t uid) {
   return found;
 }
 
-int64_t delete_messages(const Mailbox &box, const std::vector<uint64_t> &uids) {
-  MailboxWrite write(box);
-  if (!write) return -1;
+} // namespace store
+
+namespace {
+
+// Deletes the messages in the caller's write. Returns how many, or -1.
+int64_t remove_messages(const store::Mailbox &box,
+                        const std::vector<uint64_t> &uids) {
+  using namespace store;
   int64_t deleted = 0;
   int64_t bytes = 0;
   int64_t unparsed = 0;
@@ -440,8 +496,8 @@ int64_t delete_messages(const Mailbox &box, const std::vector<uint64_t> &uids) {
   int64_t unseen = 0;
   bool ok = true;
   {
-    db::Stmt find(box.file, "SELECT id, state, raw_bytes, flags FROM messages "
-                            "WHERE uid = ?");
+    db::Stmt find(box.file, "SELECT id, state, raw_bytes, flags, folder "
+                            "FROM messages WHERE uid = ?");
     db::Stmt message(box.file, "DELETE FROM messages WHERE id = ?");
     db::Stmt body(box.file, "DELETE FROM bodies WHERE id = ?");
     db::Stmt index(box.file, "DELETE FROM fts WHERE rowid = ?");
@@ -459,7 +515,10 @@ int64_t delete_messages(const Mailbox &box, const std::vector<uint64_t> &uids) {
       bytes += find.column_integer(2);
       unparsed += state == Queued ? 1 : 0;
       quarantined += state == Quarantined ? 1 : 0;
-      unseen += (find.column_integer(3) & Seen) ? 0 : 1;
+      unseen += (find.column_integer(3) & Seen) != 0 ||
+                        find.column_integer(4) != Inbox
+                    ? 0
+                    : 1;
       find.reset();
       message.reset();
       body.reset();
@@ -485,11 +544,81 @@ int64_t delete_messages(const Mailbox &box, const std::vector<uint64_t> &uids) {
            .integer(5, unseen)
            .integer(6, box.id)
            .done();
-  if (!ok || !write.commit()) return -1;
-  return deleted;
+  return ok ? deleted : -1;
 }
 
-Page search(const Mailbox &box, const std::string &query,
+} // namespace
+
+namespace store {
+
+int64_t delete_messages(const Mailbox &box, const std::vector<uint64_t> &uids) {
+  MailboxWrite write(box);
+  if (!write) return -1;
+  const int64_t deleted = remove_messages(box, uids);
+  return deleted >= 0 && write.commit() ? deleted : -1;
+}
+
+bool delete_expired(const Mailbox &box, int64_t now_ns) {
+  std::vector<uint64_t> uids;
+  {
+    db::Stmt select(box.file, "SELECT uid FROM messages WHERE folder != 0 "
+                              "AND folder_ns < ? LIMIT ?");
+    if (!select) return false;
+    select.integer(1, now_ns - k_keep_filed_ns).integer(2, k_expired_per_write);
+    while (select.row())
+      uids.push_back(static_cast<uint64_t>(select.column_integer(0)));
+    if (select.failed()) return false;
+  }
+  return uids.empty() || remove_messages(box, uids) >= 0;
+}
+
+int64_t move_messages(const Mailbox &box, const std::vector<uint64_t> &uids,
+                      int64_t folder, int64_t now_ns) {
+  MailboxWrite write(box);
+  if (!write) return -1;
+  int64_t moved = 0;
+  int64_t unseen = 0;
+  bool ok = true;
+  {
+    db::Stmt bump(db::control(), "UPDATE mailboxes SET modseq = modseq + 1 "
+                                 "WHERE id = ? RETURNING modseq");
+    ok = bump && bump.integer(1, box.id).row();
+    const int64_t modseq = ok ? bump.column_integer(0) : 0;
+    ok = ok && bump.done();
+    db::Stmt find(box.file, "SELECT folder, flags FROM messages WHERE uid = ?");
+    db::Stmt update(box.file, "UPDATE messages SET folder = ?, folder_ns = ?, "
+                              "modseq = ? WHERE uid = ?");
+    ok = ok && find && update;
+    for (size_t i = 0; ok && i < uids.size(); ++i) {
+      const auto uid = static_cast<int64_t>(uids[i]);
+      find.reset();
+      if (!find.integer(1, uid).row()) {
+        ok = !find.failed();
+        continue;
+      }
+      const int64_t from = find.column_integer(0);
+      const bool unread = (find.column_integer(1) & Seen) == 0;
+      find.reset();
+      if (from == folder) continue;
+      // The Inbox's unread mail is its unseen count
+      if (unread) unseen += (folder == Inbox) - (from == Inbox);
+      update.reset();
+      ok = update.integer(1, folder)
+               .integer(2, folder == Inbox ? 0 : now_ns)
+               .integer(3, modseq)
+               .integer(4, uid)
+               .done();
+      ++moved;
+    }
+  }
+  db::Stmt count(db::control(),
+                 "UPDATE mailboxes SET unseen = unseen + ? WHERE id = ?");
+  ok = ok && count && count.integer(1, unseen).integer(2, box.id).done() &&
+       delete_expired(box, now_ns);
+  return ok && write.commit() ? moved : -1;
+}
+
+Page search(const Mailbox &box, int64_t folder, const std::string &query,
             std::optional<int64_t> cursor, int64_t limit) {
   Page page;
   const std::string match = fts_query(query);
@@ -499,8 +628,8 @@ Page search(const Mailbox &box, const std::string &query,
   db::Stmt hits(box.file,
                 "SELECT rowid FROM fts WHERE fts MATCH ? AND rowid < ? "
                 "ORDER BY rowid DESC");
-  db::Stmt lookup(box.file,
-                  "SELECT " SUMMARY_COLUMNS " FROM messages WHERE id = ?");
+  db::Stmt lookup(box.file, "SELECT " SUMMARY_COLUMNS
+                            " FROM messages WHERE id = ? AND folder = ?");
   if (!hits || !lookup) return page;
   hits.text(1, match).integer(
       2, cursor.value_or(std::numeric_limits<int64_t>::max()));
@@ -513,7 +642,7 @@ Page search(const Mailbox &box, const std::string &query,
     }
     examined = true;
     lookup.reset();
-    if (lookup.integer(1, id).row()) {
+    if (lookup.integer(1, id).integer(2, folder).row()) {
       page.items.push_back(read_summary(lookup));
       if (static_cast<int64_t>(page.items.size()) == limit) {
         page.cursor = id;
@@ -522,6 +651,69 @@ Page search(const Mailbox &box, const std::string &query,
     }
   }
   return page;
+}
+
+std::string blockable_address(const std::string &address) {
+  const size_t at = address.rfind('@');
+  if (address.size() > k_max_address_bytes || at == 0 ||
+      at == std::string::npos || at + 1 == address.size())
+    return "";
+  // ASCII only, as SQLite's lower()
+  std::string lower;
+  for (const char c : address) {
+    const auto u = static_cast<unsigned char>(c);
+    if (u <= ' ' || u == 0x7f || c == '<' || c == '>' || c == ',' || c == '"')
+      return "";
+    lower.push_back(u >= 'A' && u <= 'Z' ? static_cast<char>(u + 32) : c);
+  }
+  return lower;
+}
+
+Block block(const Mailbox &box, const std::string &address,
+            const std::string &principal, int64_t now_ns) {
+  MailboxWrite write(box);
+  if (!write) return Block::Failed;
+  {
+    db::Stmt count(box.file, "SELECT count(*), EXISTS(SELECT 1 FROM blocked "
+                             "WHERE address = ?) FROM blocked");
+    if (!count || !count.text(1, address).row()) return Block::Failed;
+    if (count.column_integer(1) != 0) return Block::Done;
+    if (count.column_integer(0) >= k_max_blocked) return Block::Full;
+  }
+  db::Stmt insert(box.file, "INSERT INTO blocked(address, blocked_by, at_ns) "
+                            "VALUES(?, ?, ?)");
+  return insert &&
+                 insert.text(1, address)
+                     .text(2, principal)
+                     .integer(3, now_ns)
+                     .done() &&
+                 write.commit()
+             ? Block::Done
+             : Block::Failed;
+}
+
+bool unblock(const Mailbox &box, const std::string &address) {
+  MailboxWrite write(box);
+  db::Stmt remove(box.file, "DELETE FROM blocked WHERE address = ?");
+  return write && remove && remove.text(1, address).done() && write.commit();
+}
+
+std::vector<Blocked> blocked(const Mailbox &box) {
+  std::vector<Blocked> found;
+  db::Stmt select(box.file, "SELECT address, blocked_by, at_ns FROM blocked "
+                            "ORDER BY at_ns DESC, address");
+  if (!select) return found;
+  while (select.row())
+    found.push_back({select.column_text(0), select.column_text(1),
+                     select.column_integer(2)});
+  return found;
+}
+
+std::optional<bool> is_blocked(sqlite3 *file, const std::string &address) {
+  db::Stmt select(file, "SELECT EXISTS(SELECT 1 FROM blocked "
+                        "WHERE address = lower(?))");
+  if (!select || !select.text(1, address).row()) return std::nullopt;
+  return select.column_integer(0) != 0;
 }
 
 int64_t purge_step(int64_t mailbox) {

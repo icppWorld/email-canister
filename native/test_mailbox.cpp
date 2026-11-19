@@ -9,15 +9,6 @@ using namespace native;
 
 namespace {
 
-size_t count(const std::string &text, const std::string &part) {
-  size_t n = 0;
-  for (size_t at = text.find(part); at != std::string::npos;
-       at = text.find(part, at + part.size())) {
-    ++n;
-  }
-  return n;
-}
-
 std::string uids(int first, int count) {
   std::string out = "(vec {";
   for (int uid = first; uid < first + count; ++uid) {
@@ -34,12 +25,17 @@ struct OwnerCall {
 };
 
 const OwnerCall k_owner_calls[] = {
-    {mail_list, "mail_list", "(record { cursor = null; limit = 10 })"},
+    {mail_list, "mail_list",
+     "(record { folder = 0; cursor = null; limit = 10 })"},
     {mail_get, "mail_get", "(1)"},
     {mail_search, "mail_search",
-     "(record { \"query\" = \"hello\"; cursor = null; limit = 10 })"},
-    {mail_set_flags, "mail_set_flags", "(1, 1, 0)"},
+     "(record { \"query\" = \"hello\"; folder = 0; cursor = null; limit = 10 })"},
+    {mail_set_flags, "mail_set_flags", "(vec { 1 }, 1, 0)"},
     {mail_delete, "mail_delete", "(vec { 1 })"},
+    {mail_move, "mail_move", "(vec { 1 }, 1)"},
+    {mail_block, "mail_block", "(\"x@example.com\")"},
+    {mail_unblock, "mail_unblock", "(\"x@example.com\")"},
+    {mail_blocked, "mail_blocked", "()"},
     {mail_send, "mail_send", Send{}.args()},
     {mail_outbox_list, "mail_outbox_list",
      "(record { cursor = null; limit = 10 })"},
@@ -63,17 +59,6 @@ void no_mailbox(const std::string &who, const std::string &caller) {
   const std::string me = CALL(test, mail_me, "()", caller);
   expect(test, me, "\"principal\" = principal \"" + caller + "\"");
   expect_not(test, me, "local = \"bob\"");
-}
-
-// The caller's MailboxInfo of `local`
-std::string me_of(const std::string &test, const std::string &caller,
-                  const std::string &local) {
-  const std::string me = CALL(test, mail_me, "()", caller);
-  const size_t at = me.find("local = \"" + local + "\"");
-  check(test, at != std::string::npos, "no " + local + " in: " + me);
-  // Its whole record: didc orders the fields by their hashes
-  const size_t start = me.rfind("record {", at);
-  return me.substr(start, me.find('}', at) - start);
 }
 
 } // namespace
@@ -100,10 +85,11 @@ void test_mailbox(MockIC &) {
   CALL("seed alice's mailbox", dev_seed, "(\"alice\", 1, 150)", CONTROLLER);
   for (const std::string &limit : {"0", "100", "1000"}) {
     const std::string test = "a page with limit " + limit + " has 100 items";
-    const std::string page =
-        CALL(test, mail_list,
-             in("alice", "(record { cursor = null; limit = " + limit + " })"),
-             USER_A);
+    const std::string page = CALL(
+        test, mail_list,
+        in("alice",
+           "(record { folder = 0; cursor = null; limit = " + limit + " })"),
+        USER_A);
     check(test, count(page, "uid = ") == 100, "not 100 items in: " + page);
     expect(test, page, "cursor = opt");
   }
@@ -111,12 +97,14 @@ void test_mailbox(MockIC &) {
     const std::string test = "the last page has no cursor";
     const std::string page =
         CALL(test, mail_list,
-             in("alice", "(record { cursor = null; limit = 100 })"), USER_A);
+             in("alice", "(record { folder = 0; cursor = null; limit = 100 })"),
+             USER_A);
     const std::string cursor = field(page, "cursor");
-    const std::string last = CALL(
-        test, mail_list,
-        in("alice", "(record { cursor = opt " + cursor + "; limit = 100 })"),
-        USER_A);
+    const std::string last =
+        CALL(test, mail_list,
+             in("alice", "(record { folder = 0; cursor = opt " + cursor +
+                             "; limit = 100 })"),
+             USER_A);
     check(test, count(last, "uid = ") == 50, "not 50 items in: " + last);
     expect(test, last, "cursor = null");
   }
@@ -125,7 +113,8 @@ void test_mailbox(MockIC &) {
     const std::string test = "an empty search finds nothing";
     const std::string page = CALL(
         test, mail_search,
-        in("alice", "(record { \"query\" = \"\"; cursor = null; limit = 10 })"),
+        in("alice",
+           "(record { \"query\" = \"\"; folder = 0; cursor = null; limit = 10 })"),
         USER_A);
     expect(test, page, "items = vec {}");
     expect(test, page, "cursor = null");
@@ -140,7 +129,7 @@ void test_mailbox(MockIC &) {
     expect(test,
            CALL(test, mail_search,
                 in("alice", "(record { \"query\" = \"" + words +
-                                "\"; cursor = null; limit = 10 })"),
+                                "\"; folder = 0; cursor = null; limit = 10 })"),
                 USER_A),
            "items = vec {}");
   }
@@ -165,7 +154,7 @@ void test_mailbox(MockIC &) {
   }
   {
     const std::string test = "opening a message reads it for all";
-    CALL(test, mail_set_flags, "(\"team\", 1, 1, 0)", USER_A);
+    CALL(test, mail_set_flags, "(\"team\", vec { 1 }, 1, 0)", USER_A);
     expect(test, me_of(test, USER_B, "team"), "unseen = 2");
     const std::string got = CALL(test, mail_get, "(\"team\", 1)", USER_B);
     expect(test, got, "\"principal\" = principal \"" + USER_A + "\"");
@@ -176,8 +165,8 @@ void test_mailbox(MockIC &) {
     const std::string test = "each member is recorded once, at their first";
     const std::string first =
         field(CALL(test, mail_get, "(\"team\", 1)", USER_A), "at_ns");
-    CALL(test, mail_set_flags, "(\"team\", 1, 1, 0)", USER_A);
-    CALL(test, mail_set_flags, "(\"team\", 1, 1, 0)", USER_B);
+    CALL(test, mail_set_flags, "(\"team\", vec { 1 }, 1, 0)", USER_A);
+    CALL(test, mail_set_flags, "(\"team\", vec { 1 }, 1, 0)", USER_B);
     const std::string got = CALL(test, mail_get, "(\"team\", 1)", USER_A);
     expect_equal(test, std::to_string(count(got, "at_ns = ")), "2");
     expect_equal(test, field(got, "at_ns"), first);
@@ -185,16 +174,20 @@ void test_mailbox(MockIC &) {
   }
   {
     const std::string test = "unread again, for every member";
-    CALL(test, mail_set_flags, "(\"team\", 1, 0, 1)", USER_B);
+    CALL(test, mail_set_flags, "(\"team\", vec { 1 }, 0, 1)", USER_B);
     expect(test, me_of(test, USER_A, "team"), "unseen = 3");
     // Who opened it stays known
     expect(test, CALL(test, mail_get, "(\"team\", 1)", USER_A),
            "\"principal\" = principal \"" + USER_B + "\"");
   }
-  TRAPS("an unknown message is not marked", mail_set_flags,
-        "(\"team\", 99, 1, 0)", USER_A, "no such message");
+  {
+    const std::string test = "an unknown message is skipped";
+    CALL(test, mail_set_flags, "(\"team\", vec { 99; 2 }, 2, 0)", USER_A);
+    expect(test, CALL(test, mail_get, "(\"team\", 2)", USER_A), "flags = 2");
+    CALL(test, mail_set_flags, "(\"team\", vec { 2 }, 0, 2)", USER_A);
+  }
   TRAPS("a flag is not both set and cleared", mail_set_flags,
-        "(\"team\", 2, 1, 1)", USER_A, "a flag both set and cleared");
+        "(\"team\", vec { 2 }, 1, 1)", USER_A, "a flag both set and cleared");
   {
     const std::string test = "a refused call records no opening";
     expect(test, CALL(test, mail_get, "(\"team\", 2)", USER_A),
@@ -205,28 +198,31 @@ void test_mailbox(MockIC &) {
     const std::string test = "a mailbox is named in any case";
     expect(test,
            CALL(test, mail_list,
-                in("TeAm", "(record { cursor = null; limit = 1 })"), USER_A),
+                in("TeAm", "(record { folder = 0; cursor = null; limit = 1 })"),
+                USER_A),
            "uid = ");
   }
   {
     // Each member sends only the flags they change, so neither undoes the other
     const std::string test = "two members' flag changes are both kept";
-    CALL(test, mail_set_flags, "(\"team\", 3, 2, 0)", USER_A);
-    CALL(test, mail_set_flags, "(\"team\", 3, 1, 0)", USER_B);
+    CALL(test, mail_set_flags, "(\"team\", vec { 3 }, 2, 0)", USER_A);
+    CALL(test, mail_set_flags, "(\"team\", vec { 3 }, 1, 0)", USER_B);
     const std::string page =
         CALL(test, mail_list,
-             in("team", "(record { cursor = null; limit = 1 })"), USER_A);
+             in("team", "(record { folder = 0; cursor = null; limit = 1 })"),
+             USER_A);
     expect(test, page, "uid = 3");
     expect(test, page, "flags = 3");
-    CALL(test, mail_set_flags, "(\"team\", 3, 0, 1)", USER_A);
+    CALL(test, mail_set_flags, "(\"team\", vec { 3 }, 0, 1)", USER_A);
     expect(test,
            CALL(test, mail_list,
-                in("team", "(record { cursor = null; limit = 1 })"), USER_B),
+                in("team", "(record { folder = 0; cursor = null; limit = 1 })"),
+                USER_B),
            "flags = 2");
   }
   {
     const std::string test = "a deleted message takes its record with it";
-    CALL(test, mail_set_flags, "(\"team\", 2, 1, 0)", USER_A);
+    CALL(test, mail_set_flags, "(\"team\", vec { 2 }, 1, 0)", USER_A);
     CALL(test, mail_delete, "(\"team\", vec { 1; 2 })", USER_B);
     expect(test, me_of(test, USER_A, "team"), "unseen = 1");
     expect(test,

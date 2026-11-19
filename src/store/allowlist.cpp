@@ -453,11 +453,18 @@ check_file(const Entry &entry, const std::optional<std::string> &table) {
   db::Stmt registry(db::control(),
                     "SELECT " COUNTERS " FROM mailboxes WHERE id = ?");
   db::Stmt counters(file, "SELECT " COUNTERS " FROM counters WHERE id = 1");
-  db::Stmt actual(file, "SELECT (SELECT count(*) FROM messages), "
-                        "(SELECT coalesce(max(uid), 0) FROM messages), "
-                        "(SELECT coalesce(max(modseq), 0) FROM messages), "
-                        "(SELECT coalesce(max(id), 0) FROM outbox), "
-                        "(SELECT count(*) FROM messages WHERE flags & 1 = 0)");
+  // The unseen count is the Inbox's. A file waiting for version 2, which
+  // added the folders, has all its mail there.
+#define FILE_TOTALS                                                            \
+  "SELECT (SELECT count(*) FROM messages), "                                   \
+  "(SELECT coalesce(max(uid), 0) FROM messages), "                             \
+  "(SELECT coalesce(max(modseq), 0) FROM messages), "                          \
+  "(SELECT coalesce(max(id), 0) FROM outbox), "                                \
+  "(SELECT count(*) FROM messages WHERE flags & 1 = 0"
+  db::Stmt actual(file, db::file_version(file) < 2 ? FILE_TOTALS ")"
+                                                   : FILE_TOTALS
+                            " AND folder = 0)");
+#undef FILE_TOTALS
   if (!registry || !registry.integer(1, entry.id).row())
     IC_API::trap("cannot read the registry");
   if (!counters || !counters.row()) {

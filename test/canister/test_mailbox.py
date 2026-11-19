@@ -68,11 +68,16 @@ ADMIN_CALLS = {
     "admin_storage_totals": "()",
 }
 MAILBOX_CALLS = {
-    "mail_list": "(record { cursor = null; limit = 10 : nat64 })",
+    "mail_list": "(record { folder = 0 : nat64; cursor = null; limit = 10 : nat64 })",
     "mail_get": "(1 : nat64)",
-    "mail_search": '(record { "query" = "x"; cursor = null; limit = 10 : nat64 })',
-    "mail_set_flags": "(1 : nat64, 1 : nat64, 0 : nat64)",
+    "mail_search": '(record { "query" = "x"; folder = 0 : nat64; cursor = null; '
+    "limit = 10 : nat64 })",
+    "mail_set_flags": "(vec { 1 : nat64 }, 1 : nat64, 0 : nat64)",
     "mail_delete": "(vec { 1 : nat64 })",
+    "mail_move": "(vec { 1 : nat64 }, 1 : nat64)",
+    "mail_block": '("x@example.com")',
+    "mail_unblock": '("x@example.com")',
+    "mail_blocked": "()",
     "mail_send": (
         '(record { client_id = "c"; to = vec { "a@b.example" }; '
         "cc = vec {}; bcc = vec {}; "
@@ -121,23 +126,35 @@ def canister(network: str, identity: str, users: Dict[str, str]) -> None:
 
 
 def page(
-    user: str, cursor: Optional[int] = None, limit: int = 100, local: str = ""
+    user: str,
+    cursor: Optional[int] = None,
+    limit: int = 100,
+    local: str = "",
+    folder: int = 0,
 ) -> str:
     wanted = f"opt ({cursor} : nat64)" if cursor is not None else "null"
     return mail(
         "mail_list",
         local or MAILBOX[user],
-        f"(record {{ cursor = {wanted}; limit = {limit} : nat64 }})",
+        f"(record {{ folder = {folder} : nat64; cursor = {wanted}; "
+        f"limit = {limit} : nat64 }})",
         user,
     )
 
 
-def found(user: str, query: str, cursor: Optional[int] = None, limit: int = 50) -> str:
+def found(
+    user: str,
+    query: str,
+    cursor: Optional[int] = None,
+    limit: int = 50,
+    folder: int = 0,
+) -> str:
     wanted = f"opt ({cursor} : nat64)" if cursor is not None else "null"
     return mail(
         "mail_search",
         MAILBOX[user],
-        f'(record {{ "query" = "{query}"; cursor = {wanted}; '
+        f'(record {{ "query" = "{query}"; folder = {folder} : nat64; '
+        f"cursor = {wanted}; "
         f"limit = {limit} : nat64 }})",
         user,
     )
@@ -291,7 +308,12 @@ def test__a_mailbox_has_at_most_100_members() -> None:
 
 def open_as(user: str, local: str, uid: int) -> str:
     """Opens the message as the user: sets the seen flag"""
-    return mail("mail_set_flags", local, f"({uid} : nat64, 1 : nat64, 0 : nat64)", user)
+    return mail(
+        "mail_set_flags",
+        local,
+        f"(vec {{ {uid} : nat64 }}, 1 : nat64, 0 : nat64)",
+        user,
+    )
 
 
 def unread(user: str, local: str) -> int:
@@ -340,16 +362,29 @@ def test__a_shared_mailbox_has_one_read_state_and_records_each_opening(
     assert unread(USER_A, "pond") == 2
 
     # Unread again for both; who opened it stays known
-    mail("mail_set_flags", "pond", f"({first} : nat64, 0 : nat64, 1 : nat64)", USER_B)
+    mail(
+        "mail_set_flags",
+        "pond",
+        f"(vec {{ {first} : nat64 }}, 0 : nat64, 1 : nat64)",
+        USER_B,
+    )
     assert unread(USER_A, "pond") == 3
     assert len(opened(message_in(USER_A, "pond", first))) == 2
     assert "a flag both set and cleared" in mail(
-        "mail_set_flags", "pond", f"({second} : nat64, 1 : nat64, 1 : nat64)", USER_A
+        "mail_set_flags",
+        "pond",
+        f"(vec {{ {second} : nat64 }}, 1 : nat64, 1 : nat64)",
+        USER_A,
     )
     assert opened(message_in(USER_A, "pond", second)) == []
 
     # Different flags from two members are both kept
-    mail("mail_set_flags", "pond", f"({third} : nat64, 2 : nat64, 0 : nat64)", USER_A)
+    mail(
+        "mail_set_flags",
+        "pond",
+        f"(vec {{ {third} : nat64 }}, 2 : nat64, 0 : nat64)",
+        USER_A,
+    )
     open_as(USER_B, "pond", third)
     assert number(message_in(USER_A, "pond", third), "flags") == 3
 
@@ -416,12 +451,21 @@ def test__mailboxes_are_isolated_although_uids_overlap() -> None:
     assert "no such message" in mail(
         "mail_get", MAILBOX[USER_B], f"({only_alice} : nat64)", USER_B
     )
-    assert "no such message" in mail(
+
+    def alices_flags() -> int:
+        return number(
+            mail("mail_get", MAILBOX[USER_A], f"({only_alice} : nat64)", USER_A),
+            "flags",
+        )
+
+    before = alices_flags()
+    mail(
         "mail_set_flags",
         MAILBOX[USER_B],
-        f"({only_alice} : nat64, 1 : nat64, 0 : nat64)",
+        f"(vec {{ {only_alice} : nat64 }}, 2 : nat64, 0 : nat64)",
         USER_B,
     )
+    assert alices_flags() == before
     assert re.search(
         r"\(0\b",
         mail(
@@ -467,7 +511,7 @@ def test__flags_are_stored_and_bump_the_change_counter() -> None:
     mail(
         "mail_set_flags",
         MAILBOX[USER_B],
-        f"({uid} : nat64, 3 : nat64, 0 : nat64)",
+        f"(vec {{ {uid} : nat64 }}, 3 : nat64, 0 : nat64)",
         USER_B,
     )
     after = found(USER_B, "ibis")
@@ -476,9 +520,59 @@ def test__flags_are_stored_and_bump_the_change_counter() -> None:
     assert "unknown flag" in mail(
         "mail_set_flags",
         MAILBOX[USER_B],
-        f"({uid} : nat64, 0 : nat64, 4 : nat64)",
+        f"(vec {{ {uid} : nat64 }}, 0 : nat64, 4 : nat64)",
         USER_B,
     )
+
+
+def test__mail_from_a_blocked_sender_goes_to_spam() -> None:
+    bob = MAILBOX[USER_B]
+    # Blocked in any case: the envelope sender, and the From address
+    mail("mail_block", bob, '("Spammy@Sender.example")', USER_B)
+    mail("mail_block", bob, '("boss@other.example")', USER_B)
+    before = unread(USER_B, bob)
+    for subject, sender, from_address in [
+        ("Blocked heron", "spammy", "sender@sender.example"),
+        ("Blocked egret", "sender", "Boss@Other.example"),
+        ("Welcome stork", "sender", "sender@sender.example"),
+    ]:
+        assert re.search(
+            OK,
+            deliver(
+                subject,
+                f"<{subject.split()[1]}@sender.example>",
+                to=bob,
+                sender=sender,
+                from_address=from_address,
+            ),
+        )
+    wait_until_drained()
+    spam = page(USER_B, folder=2)
+    assert "Blocked heron" in spam and "Blocked egret" in spam
+    assert "Welcome stork" not in spam
+    assert "Welcome stork" in page(USER_B)
+    assert "Blocked" not in page(USER_B)
+    assert not uids(found(USER_B, "heron"))
+    assert unread(USER_B, bob) == before + 1
+    assert 'result = "ok"' in call("admin_check", f'("{bob}", null)')
+
+    # Not spam: back in the Inbox, and unread there
+    heron = uids(found(USER_B, "heron", folder=2))[0]
+    assert "(1 : nat64)" in mail(
+        "mail_move", bob, f"(vec {{ {heron} : nat64 }}, 0 : nat64)", USER_B
+    )
+    assert unread(USER_B, bob) == before + 2
+
+    # Unblocked, the sender's new mail stays in the Inbox
+    mail("mail_unblock", bob, '("spammy@sender.example")', USER_B)
+    assert "spammy" not in mail("mail_blocked", bob, "()", USER_B)
+    assert re.search(
+        OK,
+        deliver("Unblocked crane", "<crane@sender.example>", to=bob, sender="spammy"),
+    )
+    wait_until_drained()
+    assert "Unblocked crane" in page(USER_B)
+    assert 'result = "ok"' in call("admin_check", f'("{bob}", null)')
 
 
 def test__delete_removes_mail_index_and_usage() -> None:

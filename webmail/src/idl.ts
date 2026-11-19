@@ -33,15 +33,28 @@ export const idlFactory: IDL.InterfaceFactory = ({ IDL }) => {
     attachments: IDL.Nat64,
     preview: IDL.Text,
     raw_bytes: IDL.Nat64,
+    folder: IDL.Nat64,
   })
   const ListRequest = IDL.Record({
     cursor: IDL.Opt(IDL.Nat64),
     limit: IDL.Nat64,
   })
-  const SearchRequest = IDL.Record({
-    query: IDL.Text,
+  const FolderRequest = IDL.Record({
+    folder: IDL.Nat64,
     cursor: IDL.Opt(IDL.Nat64),
     limit: IDL.Nat64,
+  })
+  const SearchRequest = IDL.Record({
+    query: IDL.Text,
+    folder: IDL.Nat64,
+    cursor: IDL.Opt(IDL.Nat64),
+    limit: IDL.Nat64,
+  })
+  const Blocked = IDL.Record({
+    address: IDL.Text,
+    blocked_by: IDL.Principal,
+    name: IDL.Opt(IDL.Text),
+    at_ns: IDL.Nat64,
   })
   const Page = IDL.Record({
     items: IDL.Vec(Summary),
@@ -145,15 +158,23 @@ export const idlFactory: IDL.InterfaceFactory = ({ IDL }) => {
   return IDL.Service({
     // Each mail_ method but mail_me names its mailbox first
     mail_me: IDL.Func([], [Me], ['query']),
-    mail_list: IDL.Func([IDL.Text, ListRequest], [Page], ['query']),
+    mail_list: IDL.Func([IDL.Text, FolderRequest], [Page], ['query']),
     mail_get: IDL.Func([IDL.Text, IDL.Nat64], [FullMessage], ['query']),
     mail_search: IDL.Func([IDL.Text, SearchRequest], [Page], ['query']),
     mail_set_flags: IDL.Func(
-      [IDL.Text, IDL.Nat64, IDL.Nat64, IDL.Nat64],
+      [IDL.Text, IDL.Vec(IDL.Nat64), IDL.Nat64, IDL.Nat64],
       [],
       []
     ),
     mail_delete: IDL.Func([IDL.Text, IDL.Vec(IDL.Nat64)], [IDL.Nat64], []),
+    mail_move: IDL.Func(
+      [IDL.Text, IDL.Vec(IDL.Nat64), IDL.Nat64],
+      [IDL.Nat64],
+      []
+    ),
+    mail_block: IDL.Func([IDL.Text, IDL.Text], [], []),
+    mail_unblock: IDL.Func([IDL.Text, IDL.Text], [], []),
+    mail_blocked: IDL.Func([IDL.Text], [IDL.Vec(Blocked)], ['query']),
     mail_send: IDL.Func([IDL.Text, SendRequest], [IDL.Nat64], []),
     mail_outbox_list: IDL.Func(
       [IDL.Text, ListRequest],

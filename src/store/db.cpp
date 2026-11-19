@@ -210,8 +210,24 @@ PRAGMA user_version = 1;
 )sql";
 
 // The changes to a mailbox file after version 1: step i takes a file from
-// version i + 1 to i + 2. None yet; the test build adds some.
-std::vector<std::string> g_steps;
+// version i + 1 to i + 2. The test build adds some.
+std::vector<std::string> g_steps = {
+    // Version 2: the Trash and Spam folders, and the senders blocked. Every
+    // message is in the Inbox, so the counters stay as they are; the index
+    // holds only the mail out of it, and the messages table is small.
+    R"sql(
+ALTER TABLE messages ADD COLUMN folder INTEGER NOT NULL DEFAULT 0; -- 0 Inbox, 1 Trash, 2 Spam
+ALTER TABLE messages ADD COLUMN folder_ns INTEGER NOT NULL DEFAULT 0; -- when it left the Inbox
+CREATE INDEX messages_filed ON messages(folder, uid) WHERE folder != 0;
+
+-- Mail from these addresses goes to Spam
+CREATE TABLE blocked(
+  address TEXT PRIMARY KEY, -- in lower case
+  blocked_by TEXT NOT NULL,
+  at_ns INTEGER NOT NULL
+) WITHOUT ROWID;
+)sql",
+};
 
 struct OpenMailbox {
   sqlite3 *db;

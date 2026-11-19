@@ -17,6 +17,7 @@ int main() {
   test_mailbox(mock_ic);
   test_outbox(mock_ic);
   test_export(mock_ic);
+  test_folders(mock_ic);
   test_check(mock_ic); // last: it leaves every mailbox held
 
   return mock_ic.test_summary();

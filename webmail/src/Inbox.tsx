@@ -5,6 +5,7 @@ import {
   errorText,
   FLAG_FLAGGED,
   FLAG_SEEN,
+  FOLDER_INBOX,
   MESSAGE_QUARANTINED,
   MESSAGE_QUEUED,
   type Mailbox,
@@ -112,7 +113,7 @@ function Reader({
         const unread = (full.summary.flags & FLAG_SEEN) === 0n
         if (unread || !recorded) {
           try {
-            await backend.mail_set_flags(summary.uid, FLAG_SEEN, 0n)
+            await backend.mail_set_flags([summary.uid], FLAG_SEEN, 0n)
             // A message already read by another member counts no differently
             if (unread) onCounts()
             if (current) {
@@ -176,7 +177,7 @@ function Reader({
     const clear = flagged ? FLAG_FLAGGED : 0n
     changed.current |= FLAG_FLAGGED
     try {
-      await backend.mail_set_flags(summary.uid, set, clear)
+      await backend.mail_set_flags([summary.uid], set, clear)
       setActionError('')
       onFlags(set, clear)
     } catch (e) {
@@ -335,10 +336,15 @@ export function Inbox({
         const page = search
           ? await backend.mail_search({
               query: search,
+              folder: FOLDER_INBOX,
               cursor: from,
               limit: PAGE_SIZE,
             })
-          : await backend.mail_list({ cursor: from, limit: PAGE_SIZE })
+          : await backend.mail_list({
+              folder: FOLDER_INBOX,
+              cursor: from,
+              limit: PAGE_SIZE,
+            })
         if (request !== latestLoad.current) return
         olderShown.current = append
         setItems((previous) =>

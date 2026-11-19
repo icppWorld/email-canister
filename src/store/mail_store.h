@@ -53,6 +53,10 @@ IngestStats ingest_stats();
 // Message flags, which the mailbox owner can set
 enum MessageFlag : int64_t { Seen = 1, Flagged = 2 };
 
+// Where a message is. The unseen count is the Inbox's alone.
+enum Folder : int64_t { Inbox = 0, Trash = 1, Spam = 2 };
+const int64_t k_last_folder = Spam;
+
 struct Summary {
   int64_t uid{0};
   int64_t state{0};
@@ -66,6 +70,7 @@ struct Summary {
   int64_t attachments{0};
   std::string preview;
   int64_t raw_bytes{0};
+  int64_t folder{Inbox};
 };
 
 // One page, newest first. An absent cursor means there is nothing more.
@@ -74,16 +79,18 @@ struct Page {
   std::optional<int64_t> cursor;
 };
 
-Page list_messages(const Mailbox &box, std::optional<int64_t> cursor,
-                   int64_t limit);
+Page list_messages(const Mailbox &box, int64_t folder,
+                   std::optional<int64_t> cursor, int64_t limit);
 bool get_message(const Mailbox &box, int64_t uid, Summary &summary,
                  std::vector<uint8_t> &raw);
-// Sets the flags in `set` and clears those in `clear`, so that members who
-// change different flags at once keep both changes. Setting the seen flag
-// records that `principal` opened the message, at the first time they did.
-// False for a uid that does not exist, or a write that failed.
-bool set_flags(const Mailbox &box, int64_t uid, int64_t set, int64_t clear,
-               const std::string &principal, int64_t now_ns);
+// Sets the flags in `set` and clears those in `clear` on each message, so
+// that members who change different flags at once keep both changes. Setting
+// the seen flag records that `principal` opened the message, at the first
+// time they did. A uid that does not exist is skipped. False when the write
+// failed.
+bool set_flags(const Mailbox &box, const std::vector<uint64_t> &uids,
+               int64_t set, int64_t clear, const std::string &principal,
+               int64_t now_ns);
 struct SeenBy {
   std::string principal;
   int64_t at_ns{0};
@@ -94,10 +101,38 @@ std::vector<SeenBy> seen_by(const Mailbox &box, int64_t uid);
 // Returns how many of the messages were deleted, or -1 on failure
 int64_t delete_messages(const Mailbox &box, const std::vector<uint64_t> &uids);
 
+// Moves the messages to `folder`, and deletes some of the mail that has been
+// in Trash or Spam too long. Returns how many moved, or -1 on failure.
+int64_t move_messages(const Mailbox &box, const std::vector<uint64_t> &uids,
+                      int64_t folder, int64_t now_ns);
+
+// Deletes up to a few messages that have been in Trash or Spam too long, in
+// the caller's write. False on failure.
+bool delete_expired(const Mailbox &box, int64_t now_ns);
+
 // Words in the query must all match, and are never read as FTS5 syntax. A page
 // can be short, even empty, with a cursor: the instruction budget ran out.
-Page search(const Mailbox &box, const std::string &query,
+Page search(const Mailbox &box, int64_t folder, const std::string &query,
             std::optional<int64_t> cursor, int64_t limit);
+
+// Senders whose mail goes to Spam, by envelope sender or From address
+const size_t k_max_address_bytes = 254;
+const int64_t k_max_blocked = 1000;
+// The address in lower case, or "" when it is not one
+std::string blockable_address(const std::string &address);
+enum class Block { Done, Full, Failed };
+Block block(const Mailbox &box, const std::string &address,
+            const std::string &principal, int64_t now_ns);
+// False when the write failed; an address not blocked is no failure
+bool unblock(const Mailbox &box, const std::string &address);
+struct Blocked {
+  std::string address;
+  std::string blocked_by;
+  int64_t at_ns{0};
+};
+std::vector<Blocked> blocked(const Mailbox &box);
+// Whether mail from `address` goes to Spam; nullopt when that cannot be read
+std::optional<bool> is_blocked(sqlite3 *file, const std::string &address);
 
 // Empties a disabled mailbox. The first call clears what control.db holds for
 // it and closes the file; every call then shortens the file by a step, and
