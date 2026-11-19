@@ -1,5 +1,6 @@
 // The owner's view of a mailbox (see owner.h)
 
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -267,7 +268,13 @@ void mail_blocked() {
     return r;
   };
   std::vector<CandidType> items;
-  for (const store::Blocked &b : store::blocked(box))
-    items.push_back(value(b, store::name_of(b.blocked_by)));
+  // Few members block, so each name is looked up once
+  std::map<std::string, std::optional<std::string>> names;
+  for (const store::Blocked &b : store::blocked(box)) {
+    auto name = names.find(b.blocked_by);
+    if (name == names.end())
+      name = names.emplace(b.blocked_by, store::name_of(b.blocked_by)).first;
+    items.push_back(value(b, name->second));
+  }
   ic_api.to_wire(CandidTypeVecOf(value(store::Blocked{}, std::nullopt), items));
 }

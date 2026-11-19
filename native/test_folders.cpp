@@ -149,6 +149,13 @@ void test_folders(MockIC &) {
     later_by_days(11);
     move(test, "vec {}", 1);
     expect(test, fox(test), "message_count = 2 : ");
+  }
+  {
+    const std::string test = "mail past its 30 days does not count as moved";
+    expect(test, move(test, "vec { 2 }", 2), "(1 : nat64)");
+    later_by_days(31);
+    expect(test, move(test, "vec { 2 }", 1), "(0 : nat64)");
+    expect(test, fox(test), "message_count = 1 : ");
     ic0mock_clear_time_override();
   }
 

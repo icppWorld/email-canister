@@ -145,6 +145,9 @@ def test__nothing_changes_the_file_while_it_is_downloaded() -> None:
     for method, argument in [
         ("mail_set_flags", "(vec { 1 : nat64 }, 1 : nat64, 0 : nat64)"),
         ("mail_delete", "(vec { 1 : nat64 })"),
+        ("mail_move", "(vec { 1 : nat64 }, 1 : nat64)"),
+        ("mail_block", '("x@example.com")'),
+        ("mail_unblock", '("x@example.com")'),
         (
             "mail_send",
             '(record { client_id = "c"; to = vec { "x@y.example" }; cc = vec {}; '

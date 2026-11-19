@@ -606,9 +606,10 @@ int64_t move_messages(const Mailbox &box, const std::vector<uint64_t> &uids,
                       int64_t folder, int64_t now_ns) {
   MailboxWrite write(box);
   if (!write) return -1;
+  // Mail past its 30 days goes first, so that none of it counts as moved
+  if (!delete_expired(box, now_ns)) return -1;
   const int64_t moved = file_messages(box, uids, folder, now_ns);
-  return moved >= 0 && delete_expired(box, now_ns) && write.commit() ? moved
-                                                                     : -1;
+  return moved >= 0 && write.commit() ? moved : -1;
 }
 
 Page search(const Mailbox &box, int64_t folder, const std::string &query,
