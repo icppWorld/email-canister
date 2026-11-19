@@ -6,7 +6,8 @@
 # matched case-insensitively, toolchain names as whole words; blank lines and
 # lines starting with # are skipped.
 # A line "toolchain:<name>" names the build toolchain, which may appear only in
-# the build files listed below, and in at most one line of README.md.
+# the build files listed below, in ROADMAP.md (to compare with how its other
+# projects check upgrades), and in at most one line of README.md.
 #
 # scripts/check-neutral.sh               tracked and new files in the repo
 # scripts/check-neutral.sh --staged      the staged files (pre-commit hook)
@@ -20,7 +21,7 @@ TOOLCHAIN_FILES=(
   requirements.txt icpp.toml icpp-test.toml test/relay_stub/icpp.toml Makefile
   scripts/build_wasm_docker.sh scripts/check-neutral.sh
   test/canister/toolchain.py test/test_build_config.py
-  BUILD-PROVENANCE.txt
+  BUILD-PROVENANCE.txt ROADMAP.md
 )
 TOOLCHAIN_DIRS=(docker/ .github/workflows/)
 

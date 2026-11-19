@@ -40,7 +40,7 @@ email-canister grows in small releases, driven by running it for real mailboxes.
 
 - Low-cycles mode that pauses sending, and alerts before the freezing threshold.
 - Snapshot and restore drills.
-- Upgrades that change the Candid API incompatibly: the upgrade notes and the setup guide's upgrade command say that `icp` refuses such an upgrade as breaking until it is accepted with `--yes`, and that the webmail is deployed straight after.
+- Only compatible Candid changes from now on: new methods, and new optional fields and arguments, never a changed or removed signature, so an upgrade from the last release passes `icp`'s compatibility check without `--yes`, and a webmail tab left open keeps working until it reloads. The release skill checks that the last release's deployment upgrades cleanly: the new interface against the last release's `.did`, and the upgrade test from the last release's wasm with mail in it. Before implementing it, compare how icpp-pro and llama_cpp_canister check their upgrades.
 - Mail deleted for good overwritten in the mailbox file (`secure_delete`), and the search index merged after a delete, so a download cannot recover it.
 - A paged rebuild of a mailbox's search index.
 - A scheduled check that a domain's MX records still match the gateway's hosts.
@@ -51,7 +51,7 @@ email-canister grows in small releases, driven by running it for real mailboxes.
 ## Self-hosting track
 
 - A setup guide that someone new to the Internet Computer can follow to a working domain, with a cost formula and worked examples.
-- A deployment repo template that vendors a release, whose backend deploy accepts a release's incompatible Candid changes only when the operator names that release.
+- A deployment repo template that vendors a release.
 - A strict mode for the brand script that fails the build when a brand's colours fall below the contrast it checks, instead of only warning.
 - Reply threading, if the relay gains `In-Reply-To` and `References`.
 - More charsets.
