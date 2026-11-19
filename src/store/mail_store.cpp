@@ -606,7 +606,9 @@ int64_t move_messages(const Mailbox &box, const std::vector<uint64_t> &uids,
                       int64_t folder, int64_t now_ns) {
   MailboxWrite write(box);
   if (!write) return -1;
-  // Mail past its 30 days goes first, so that none of it counts as moved
+  // Expired mail goes first, up to 20 messages, so a move does not count
+  // what this call deletes. Expired mail the cleanup has not reached is still
+  // listed, and moves like any other.
   if (!delete_expired(box, now_ns)) return -1;
   const int64_t moved = file_messages(box, uids, folder, now_ns);
   return moved >= 0 && write.commit() ? moved : -1;
