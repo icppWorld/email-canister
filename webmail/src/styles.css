@@ -796,6 +796,10 @@ th {
     top: auto;
     width: auto;
   }
+  /* Room below the page for the minimised bar, so it covers nothing */
+  body:has(.dialog.compose.minimised) .app {
+    padding-bottom: 48px;
+  }
   .full-toggle,
   .backdrop {
     display: none;

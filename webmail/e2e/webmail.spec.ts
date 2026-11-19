@@ -3435,7 +3435,8 @@ test('the compose window minimises and fills the screen, keeping what it holds',
   if (!bar) throw new Error('no window')
   expect(bar.height).toBeLessThan(80)
   // At the bottom right, clear of the note at the bottom left
-  expect(bar.x + bar.width).toBeGreaterThan(1200)
+  const width = page.viewportSize()?.width ?? 0
+  expect(bar.x + bar.width).toBeGreaterThan(width - 40)
   await window.getByRole('button', { name: 'Restore' }).click()
   await expect(window.getByLabel('Message')).toHaveValue('Hovering.')
   await window.getByRole('button', { name: 'Full screen' }).click()
@@ -3495,6 +3496,10 @@ test('at phone width the list and the open message take turns, and compose fills
   if (!bar) throw new Error('no window')
   expect(bar.height).toBeLessThan(80)
   expect(bar.y + bar.height).toBe(844)
+  // The list ends above it, its last row and Older mail within reach
+  const above = await list.boundingBox()
+  if (!above) throw new Error('no list')
+  expect(above.y + above.height).toBeLessThanOrEqual(bar.y + 1)
   await context.close()
 })
 
@@ -3533,39 +3538,6 @@ test('on a touch screen the row box and star are large enough to tap', async ({
   await context.close()
 })
 
-const QUILL = '4c'.repeat(32)
-
-test('a message sent while older mail is shown in Sent shows there', async ({
-  browser,
-}) => {
-  joinMailbox('quill', QUILL)
-  const quill = await asUser(QUILL, env.url, env.backend)
-  // More than one page
-  await Promise.all(
-    Array.from({ length: 51 }, (_, i) =>
-      quill.mail_send('quill', {
-        client_id: crypto.randomUUID(),
-        to: ['friend@example.org'],
-        cc: [],
-        bcc: [],
-        subject: `Quill page ${i}`,
-        html_body: '<p>Filler</p>',
-        attachments: [],
-      })
-    )
-  )
-  const { context, page } = await signedIn(browser, QUILL)
-  await folder(page, 'Sent')
-  const sent = page.getByRole('region', { name: 'Sent mail' })
-  await page.getByRole('button', { name: 'Older mail' }).click()
-  await expect(sent.getByRole('listitem')).toHaveCount(51)
-  await compose(page, 'Fresh quill')
-  await send(page)
-  await expect(page.getByRole('dialog', { name: 'New message' })).toHaveCount(0)
-  await expect(sent).toContainText('Fresh quill', { timeout: 4_000 })
-  await context.close()
-})
-
 // A mailbox of its own, with more Sent mail than one page holds
 async function fullSent(local: string, seed: string): Promise<void> {
   joinMailbox(local, seed)
@@ -3584,6 +3556,24 @@ async function fullSent(local: string, seed: string): Promise<void> {
     )
   )
 }
+
+const QUILL = '4c'.repeat(32)
+
+test('a message sent while older mail is shown in Sent shows there', async ({
+  browser,
+}) => {
+  await fullSent('quill', QUILL)
+  const { context, page } = await signedIn(browser, QUILL)
+  await folder(page, 'Sent')
+  const sent = page.getByRole('region', { name: 'Sent mail' })
+  await page.getByRole('button', { name: 'Older mail' }).click()
+  await expect(sent.getByRole('listitem')).toHaveCount(51)
+  await compose(page, 'Fresh quill')
+  await send(page)
+  await expect(page.getByRole('dialog', { name: 'New message' })).toHaveCount(0)
+  await expect(sent).toContainText('Fresh quill', { timeout: 4_000 })
+  await context.close()
+})
 
 const QUIRE = '4d'.repeat(32)
 
@@ -3628,5 +3618,54 @@ test('a reload of Sent that fails while older mail is shown is tried again', asy
   await page.unroute('**/api/*/canister/*/*', refuse)
   // The next refresh, at most 5 seconds on
   await expect(sent).toContainText('Late quoin', { timeout: 10_000 })
+  await context.close()
+})
+
+const QUART = '4f'.repeat(32)
+
+test('a send leaves the older mail shown in the Inbox in place', async ({
+  browser,
+}) => {
+  joinMailbox('quart', QUART)
+  backend('dev_seed', '("quart", 1 : nat64, 60 : nat64)')
+  const { context, page } = await signedIn(browser, QUART)
+  await expect(page.getByTestId('address')).toHaveText(`quart@${DOMAIN}`)
+  const rows = page.locator('button.message')
+  await expect(rows).toHaveCount(50)
+  await page.getByRole('button', { name: 'Older mail' }).click()
+  await expect(rows).toHaveCount(60)
+  await compose(page, 'Quiet quart')
+  await send(page)
+  await expect(page.getByTestId('toast')).toHaveText(/Message sent/)
+  // A moment more, for a reload to replace the list with its first page
+  await page.waitForTimeout(2_000)
+  await expect(rows).toHaveCount(60, { timeout: 1_000 })
+  await context.close()
+})
+
+test('a send refused while the window is minimised opens it to show why', async ({
+  browser,
+}) => {
+  const { context, page } = await signedIn(browser, USER_A)
+  let release = () => {}
+  const released = new Promise<void>((resolve) => (release = resolve))
+  let reached = () => {}
+  const seen = new Promise<void>((resolve) => (reached = resolve))
+  // Every attempt, once let go: the agent tries a failed call again
+  await page.route('**/api/*/canister/*/*', async (route) => {
+    if (!callsTo(route.request(), 'mail_send')) return route.fallback()
+    reached()
+    await released
+    await route.abort()
+  })
+  await compose(page, 'Refused bunting')
+  await send(page)
+  await seen
+  const window = page.getByRole('dialog', { name: 'New message' })
+  await window.getByRole('button', { name: 'Minimise' }).click()
+  await expect(window.getByLabel('Subject')).toBeHidden()
+  release()
+  await expect(window.getByRole('alert')).toBeVisible()
+  await expect(window.getByLabel('Subject')).toHaveValue('Refused bunting')
   await context.close()
 })

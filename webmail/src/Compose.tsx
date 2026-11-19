@@ -102,6 +102,8 @@ export function Compose({
     } catch (e) {
       setError(errorText(e))
       setSending(false)
+      // Minimised while it was sending, it opens to show why it did not go
+      setSize((now) => (now === 'minimised' ? 'normal' : now))
     }
   }
 
