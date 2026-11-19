@@ -7,11 +7,11 @@ Email for your own domain, run from Internet Computer canisters you control.
 - **Send** through a small relay app on Caffeine, which hands mail to its mail gateway.
 - **Brand** the webmail with your own name, logo, fonts and colours.
 
-Status: in use for real mailboxes, but young. Read the risks in [docs/design.md](docs/design.md#known-limits) before relying on it.
+> **Status: alpha.** Everything can still change between releases: the canister interface, the storage format, the webmail and the deployment steps. A new release may need a reinstall, which erases all mail, as v0.2.0 did. It runs real mailboxes, but read the risks in [docs/design.md](docs/design.md#known-limits) before relying on it, and keep your own copy of mail that matters.
 
 ## How it works
 
-[How email-canister works](docs/how-it-works.html) explains each component and mail path with diagrams, and the risks of relying on it. Open the file in a browser to see the diagrams.
+[How email-canister works](https://claude.ai/artifact/ToCBwEqQCT4fojJvNituFr) explains each component and mail path with diagrams, and the risks of relying on it. Its source is [docs/how-it-works.html](docs/how-it-works.html).
 
 [docs/design.md](docs/design.md) explains the architecture, the access model, the rules the implementation follows and the measured limits. [ROADMAP.md](ROADMAP.md) lists what comes next.
 
