@@ -14,6 +14,7 @@ import {
   type BrowserContext,
   type Page,
   type Request,
+  type Route,
 } from '@playwright/test'
 import { Cbor } from '@icp-sdk/core/agent'
 
@@ -203,7 +204,7 @@ const asAlice = () =>
 async function compose(page: Page, subject: string): Promise<void> {
   await page.getByRole('button', { name: 'Compose' }).click()
   await page.getByLabel('To', { exact: true }).fill('friend@example.org')
-  await page.getByLabel('Subject').fill(subject)
+  await page.getByLabel('Subject', { exact: true }).fill(subject)
 }
 
 const send = (page: Page) =>
@@ -3294,12 +3295,17 @@ test('a note that takes the place of a held note stays held', async ({
   deliver({ subject: 'Held coot', body: '<p>A coot.</p>' })
   await waitDrained()
   const { context, page } = await signedIn(browser, USER_A)
+  // Each search's own list, before the hover: one that lands later moves the
+  // row away from the pointer
+  const rows = page.locator('li.message-row')
   await search(page, 'limpkin')
+  await expect(rows).toHaveCount(1)
   await messageRow(page, 'Held limpkin').hover()
   await page.getByRole('button', { name: 'Delete: Held limpkin' }).click()
   const note = page.getByTestId('toast')
   await expect(note).toHaveText(/moved to Trash/)
   await search(page, 'coot')
+  await expect(rows).toHaveCount(1)
   const moving = await hold(page, 'mail_move')
   await messageRow(page, 'Held coot').hover()
   await page.getByRole('button', { name: 'Delete: Held coot' }).click()
@@ -3411,5 +3417,337 @@ test('an unblock made while the list reloads stays', async ({ browser }) => {
   await expect(blocked).not.toContainText('brisk@sender.example', {
     timeout: 1_000,
   })
+  await context.close()
+})
+
+test('the compose window minimises and fills the screen, keeping what it holds', async ({
+  browser,
+}) => {
+  const { context, page } = await signedIn(browser, USER_A)
+  await compose(page, 'Window kestrel')
+  const window = page.getByRole('dialog', { name: 'New message' })
+  // The title bar names the message
+  await expect(window.getByRole('heading')).toHaveText('Window kestrel')
+  await window.getByLabel('Message').fill('Hovering.')
+  await window.getByRole('button', { name: 'Minimise' }).click()
+  await expect(window.getByLabel('Subject')).toBeHidden()
+  const bar = await window.boundingBox()
+  if (!bar) throw new Error('no window')
+  expect(bar.height).toBeLessThan(80)
+  // At the bottom right, clear of the note at the bottom left
+  const width = page.viewportSize()?.width ?? 0
+  expect(bar.x + bar.width).toBeGreaterThan(width - 40)
+  await window.getByRole('button', { name: 'Restore' }).click()
+  await expect(window.getByLabel('Message')).toHaveValue('Hovering.')
+  await window.getByRole('button', { name: 'Full screen' }).click()
+  const full = await window.boundingBox()
+  if (!full) throw new Error('no window')
+  expect(full.width).toBeGreaterThan(1100)
+  expect(full.height).toBeGreaterThan(600)
+  await expect(page.locator('.backdrop')).toBeVisible()
+  await window.getByRole('button', { name: 'Exit full screen' }).click()
+  const normal = await window.boundingBox()
+  if (!normal) throw new Error('no window')
+  expect(normal.width).toBeLessThanOrEqual(560)
+  await expect(page.locator('.backdrop')).toHaveCount(0)
+  await expect(window.getByLabel('Subject')).toHaveValue('Window kestrel')
+  await window.getByRole('button', { name: 'Close' }).click()
+  await expect(window).toHaveCount(0)
+  await context.close()
+})
+
+test('at phone width the list and the open message take turns, and compose fills the screen', async ({
+  browser,
+}) => {
+  deliver({ subject: 'Phone plover', body: '<p>A plover.</p>' })
+  await waitDrained()
+  const { context, page } = await signedIn(browser, USER_A, {
+    viewport: { width: 390, height: 844 },
+  })
+  const list = page.getByRole('region', { name: 'Messages' })
+  await openMail(page, 'plover')
+  await expect(page.getByTestId('subject')).toHaveText('Phone plover')
+  await expect(list).toBeHidden()
+  // Its actions wrap rather than run off the side
+  expect(
+    await page
+      .locator('article.reader')
+      .evaluate((reader) => reader.scrollWidth <= reader.clientWidth)
+  ).toBe(true)
+  await page.getByRole('button', { name: 'Back' }).click()
+  await expect(list).toBeVisible()
+  await expect(page.getByTestId('subject')).toHaveCount(0)
+  // The list has the screen's height to itself
+  const box = await list.boundingBox()
+  if (!box) throw new Error('no list')
+  expect(box.height).toBeGreaterThan(500)
+
+  await page.getByRole('button', { name: 'Compose' }).click()
+  const window = page.getByRole('dialog', { name: 'New message' })
+  expect(await window.boundingBox()).toEqual({
+    x: 0,
+    y: 0,
+    width: 390,
+    height: 844,
+  })
+  await expect(window.getByRole('button', { name: 'Full screen' })).toBeHidden()
+  await window.getByRole('button', { name: 'Minimise' }).click()
+  const bar = await window.boundingBox()
+  if (!bar) throw new Error('no window')
+  expect(bar.height).toBeLessThan(80)
+  expect(bar.y + bar.height).toBe(844)
+  // The list ends above it, its last row and Older mail within reach
+  const above = await list.boundingBox()
+  if (!above) throw new Error('no list')
+  expect(above.y + above.height).toBeLessThanOrEqual(bar.y + 1)
+  await context.close()
+})
+
+test('on a touch screen the row box and star are large enough to tap', async ({
+  browser,
+}) => {
+  deliver({ subject: 'Tapped dunlin', body: '<p>A dunlin.</p>' })
+  await waitDrained()
+  const { context, page } = await signedIn(browser, USER_A, {
+    viewport: { width: 390, height: 844 },
+    hasTouch: true,
+    isMobile: true,
+  })
+  expect(
+    await page.evaluate(() => matchMedia('(pointer: coarse)').matches)
+  ).toBe(true)
+  await search(page, 'dunlin')
+  const row = page.locator('li.message-row', { hasText: 'Tapped dunlin' })
+  await expect(row).toHaveCount(1)
+  for (const target of [
+    row.locator('.pick-area'),
+    row.getByRole('button', { name: 'Star Tapped dunlin', exact: true }),
+  ]) {
+    const box = await target.boundingBox()
+    if (!box) throw new Error('no target')
+    expect(box.width).toBeGreaterThanOrEqual(44)
+    expect(box.height).toBeGreaterThanOrEqual(44)
+  }
+  // The box itself keeps its size, and a tap away from it ticks it
+  const pick = row.getByRole('checkbox')
+  const drawn = await pick.boundingBox()
+  if (!drawn) throw new Error('no box')
+  expect(drawn.width).toBeLessThan(32)
+  await row.locator('.pick-area').tap({ position: { x: 40, y: 40 } })
+  await expect(pick).toBeChecked()
+  // The compose window's buttons, and its minimised bar still covers nothing
+  await page.getByRole('button', { name: 'Compose' }).click()
+  const window = page.getByRole('dialog', { name: 'New message' })
+  for (const name of ['Minimise', 'Close']) {
+    const box = await window.getByRole('button', { name }).boundingBox()
+    if (!box) throw new Error(`no ${name}`)
+    expect(box.width).toBeGreaterThanOrEqual(44)
+    expect(box.height).toBeGreaterThanOrEqual(44)
+  }
+  await window.getByRole('button', { name: 'Minimise' }).click()
+  const restore = await window
+    .getByRole('button', { name: 'Restore' })
+    .boundingBox()
+  if (!restore) throw new Error('no Restore')
+  expect(restore.width).toBeGreaterThanOrEqual(44)
+  expect(restore.height).toBeGreaterThanOrEqual(44)
+  const bar = await window.boundingBox()
+  const list = await page
+    .getByRole('region', { name: 'Messages' })
+    .boundingBox()
+  if (!bar || !list) throw new Error('no bar or list')
+  expect(list.y + list.height).toBeLessThanOrEqual(bar.y + 1)
+  await context.close()
+})
+
+// A mailbox of its own, with more Sent mail than one page holds
+async function fullSent(local: string, seed: string): Promise<void> {
+  joinMailbox(local, seed)
+  const box = await asUser(seed, env.url, env.backend)
+  await Promise.all(
+    Array.from({ length: 51 }, (_, i) =>
+      box.mail_send(local, {
+        client_id: crypto.randomUUID(),
+        to: ['friend@example.org'],
+        cc: [],
+        bcc: [],
+        subject: `Filler ${i}`,
+        html_body: '<p>Filler</p>',
+        attachments: [],
+      })
+    )
+  )
+}
+
+const QUILL = '4c'.repeat(32)
+
+test('a message sent while older mail is shown in Sent shows there', async ({
+  browser,
+}) => {
+  await fullSent('quill', QUILL)
+  const { context, page } = await signedIn(browser, QUILL)
+  await folder(page, 'Sent')
+  const sent = page.getByRole('region', { name: 'Sent mail' })
+  await page.getByRole('button', { name: 'Older mail' }).click()
+  await expect(sent.getByRole('listitem')).toHaveCount(51)
+  await compose(page, 'Fresh quill')
+  await send(page)
+  await expect(page.getByRole('dialog', { name: 'New message' })).toHaveCount(0)
+  await expect(sent).toContainText('Fresh quill', { timeout: 4_000 })
+  await context.close()
+})
+
+const QUIRE = '4d'.repeat(32)
+
+test('Older mail clicked while Sent reloads after a send leaves the reload in place', async ({
+  browser,
+}) => {
+  await fullSent('quire', QUIRE)
+  const { context, page } = await signedIn(browser, QUIRE)
+  await folder(page, 'Sent')
+  const sent = page.getByRole('region', { name: 'Sent mail' })
+  await expect(page.getByRole('button', { name: 'Older mail' })).toBeVisible()
+  const loading = await hold(page, 'mail_outbox_list')
+  await compose(page, 'Fresh quire')
+  await send(page)
+  await loading.seen
+  await page.getByRole('button', { name: 'Older mail' }).click()
+  loading.release()
+  await expect(sent).toContainText('Fresh quire', { timeout: 8_000 })
+  await context.close()
+})
+
+const QUOIN = '4e'.repeat(32)
+
+test('a reload of Sent that fails while older mail is shown is tried again', async ({
+  browser,
+}) => {
+  await fullSent('quoin', QUOIN)
+  const { context, page } = await signedIn(browser, QUOIN)
+  await folder(page, 'Sent')
+  const sent = page.getByRole('region', { name: 'Sent mail' })
+  await page.getByRole('button', { name: 'Older mail' }).click()
+  await expect(sent.getByRole('listitem')).toHaveCount(51)
+  // Every attempt: the agent tries a failed call again
+  const refuse = (route: Route) =>
+    callsTo(route.request(), 'mail_outbox_list')
+      ? route.abort()
+      : route.fallback()
+  await page.route('**/api/*/canister/*/*', refuse)
+  await compose(page, 'Late quoin')
+  await send(page)
+  await expect(sent.getByRole('alert')).toBeVisible()
+  await page.unroute('**/api/*/canister/*/*', refuse)
+  // The next refresh, at most 5 seconds on
+  await expect(sent).toContainText('Late quoin', { timeout: 10_000 })
+  await context.close()
+})
+
+const QUART = '4f'.repeat(32)
+
+test('a send leaves the older mail shown in the Inbox in place', async ({
+  browser,
+}) => {
+  joinMailbox('quart', QUART)
+  backend('dev_seed', '("quart", 1 : nat64, 60 : nat64)')
+  const { context, page } = await signedIn(browser, QUART)
+  await expect(page.getByTestId('address')).toHaveText(`quart@${DOMAIN}`)
+  const rows = page.locator('button.message')
+  await expect(rows).toHaveCount(50)
+  await page.getByRole('button', { name: 'Older mail' }).click()
+  await expect(rows).toHaveCount(60)
+  await compose(page, 'Quiet quart')
+  await send(page)
+  await expect(page.getByTestId('toast')).toHaveText(/Message sent/)
+  // A moment more, for a reload to replace the list with its first page
+  await page.waitForTimeout(2_000)
+  await expect(rows).toHaveCount(60, { timeout: 1_000 })
+  await context.close()
+})
+
+test('a send refused while the window is minimised opens it to show why', async ({
+  browser,
+}) => {
+  const { context, page } = await signedIn(browser, USER_A)
+  let release = () => {}
+  const released = new Promise<void>((resolve) => (release = resolve))
+  let reached = () => {}
+  const seen = new Promise<void>((resolve) => (reached = resolve))
+  // Every attempt, once let go: the agent tries a failed call again
+  await page.route('**/api/*/canister/*/*', async (route) => {
+    if (!callsTo(route.request(), 'mail_send')) return route.fallback()
+    reached()
+    await released
+    await route.abort()
+  })
+  await compose(page, 'Refused bunting')
+  await send(page)
+  await seen
+  const window = page.getByRole('dialog', { name: 'New message' })
+  await window.getByRole('button', { name: 'Minimise' }).click()
+  await expect(window.getByLabel('Subject')).toBeHidden()
+  release()
+  await expect(window.getByRole('alert')).toBeVisible()
+  await expect(window.getByLabel('Subject')).toHaveValue('Refused bunting')
+  await context.close()
+})
+
+const QUAIL = '50'.repeat(32)
+
+test('a failed reload of Sent is tried again after Older mail goes through', async ({
+  browser,
+}) => {
+  await fullSent('quail', QUAIL)
+  const { context, page } = await signedIn(browser, QUAIL)
+  await folder(page, 'Sent')
+  const sent = page.getByRole('region', { name: 'Sent mail' })
+  await expect(page.getByRole('button', { name: 'Older mail' })).toBeVisible()
+  // The first page alone, every attempt: the agent tries a failed call again,
+  // and Older mail, which names a cursor, goes through
+  let firstPage: Buffer | undefined
+  const refuse = (route: Route) => {
+    if (!callsTo(route.request(), 'mail_outbox_list')) return route.fallback()
+    const arg = argOf(route.request())
+    firstPage ??= arg
+    return arg.equals(firstPage) ? route.abort() : route.fallback()
+  }
+  await page.route('**/api/*/canister/*/*', refuse)
+  await compose(page, 'Retried quail')
+  await send(page)
+  await expect(sent.getByRole('alert')).toBeVisible()
+  // Older mail waits while a retry of the first page is under way: it goes
+  // through between two
+  const older = page.getByRole('button', { name: 'Older mail' })
+  await expect(async () => {
+    // Gone once an earlier click went through
+    if (await older.isVisible()) await older.click()
+    await expect(sent.getByRole('listitem')).toHaveCount(51, { timeout: 1_000 })
+  }).toPass({ timeout: 30_000 })
+  await page.unroute('**/api/*/canister/*/*', refuse)
+  // The next refresh, at most 5 seconds on
+  await expect(sent).toContainText('Retried quail', { timeout: 10_000 })
+  await context.close()
+})
+
+test('a Sent list slower to answer than its refresh still shows a send', async ({
+  browser,
+}) => {
+  const { context, page } = await signedIn(browser, USER_A)
+  await folder(page, 'Sent')
+  const sent = page.getByRole('region', { name: 'Sent mail' })
+  await expect(sent.getByRole('listitem').first()).toBeVisible()
+  // Each reply 6 seconds late, past the 5-second refresh
+  await page.route('**/api/*/canister/*/*', async (route) => {
+    if (!callsTo(route.request(), 'mail_outbox_list')) return route.fallback()
+    const url = new URL(route.request().url())
+    url.hostname = '127.0.0.1'
+    const response = await route.fetch({ url: url.toString() })
+    await new Promise((resolve) => setTimeout(resolve, 6_000))
+    await route.fulfill({ response }).catch(() => {})
+  })
+  await compose(page, 'Slow grebe')
+  await send(page)
+  await expect(sent).toContainText('Slow grebe', { timeout: 20_000 })
+  await page.unrouteAll({ behavior: 'ignoreErrors' })
   await context.close()
 })

@@ -142,6 +142,7 @@ function Reader({
   onReply,
   onFlags,
   onCounts,
+  onBack,
 }: {
   backend: Mailbox
   principal: string // the reader's own
@@ -158,6 +159,7 @@ function Reader({
   // The flags set and cleared, applied to the latest state: another change
   // may have landed while this one was under way
   onFlags: (set: bigint, clear: bigint) => void
+  onBack: () => void // to the list, at phone width
 }) {
   const [raw, setRaw] = useState<Uint8Array | null>(null)
   const [mail, setMail] = useState<ParsedMail | null>(null)
@@ -303,6 +305,9 @@ function Reader({
   return (
     <article className="reader">
       <div className="toolbar">
+        <button className="back" onClick={onBack}>
+          <Icon name="back" /> Back
+        </button>
         <button onClick={reply} disabled={!mail}>
           Reply
         </button>
@@ -677,7 +682,7 @@ export function Inbox({
   }, [someTicked])
 
   return (
-    <div className="split">
+    <div className={selected ? 'split reading' : 'split'}>
       <section className="list" aria-label="Messages">
         <div className="list-head">
           <form
@@ -776,13 +781,16 @@ export function Inbox({
                 : actions
             return (
               <li key={m.uid.toString()} className="message-row">
-                <input
-                  type="checkbox"
-                  className="pick"
-                  aria-label={`Select ${title}`}
-                  checked={checked.has(m.uid)}
-                  onChange={(e) => tick(m.uid, e.target.checked)}
-                />
+                {/* The label is the box's larger touch target */}
+                <label className="pick-area">
+                  <input
+                    type="checkbox"
+                    className="pick"
+                    aria-label={`Select ${title}`}
+                    checked={checked.has(m.uid)}
+                    onChange={(e) => tick(m.uid, e.target.checked)}
+                  />
+                </label>
                 <button
                   className={flagged ? 'bare star on' : 'bare star'}
                   aria-label={flagged ? `Unstar ${title}` : `Star ${title}`}
@@ -854,6 +862,7 @@ export function Inbox({
           }
           onReply={onReply}
           onFlags={(set, clear) => updateFlags([selected.uid], set, clear)}
+          onBack={() => setSelected(null)}
         />
       ) : (
         <div className="reader empty">Select a message to read it.</div>

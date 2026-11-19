@@ -149,6 +149,8 @@ export function App() {
   const [selected, setSelected] = useState<string | null>(() => route().local)
   const [view, setView] = useState<View>(() => route().view)
   const [refresh, setRefresh] = useState(0)
+  // Sends made here, for the Sent list alone: other folders keep their pages
+  const [sends, setSends] = useState(0)
   const [refreshing, setRefreshing] = useState(false)
   const onLoaded = useCallback(() => setRefreshing(false), [])
   const [draft, setDraft] = useState<Draft | null>(null)
@@ -517,6 +519,7 @@ export function App() {
             backend={box}
             principal={principal}
             shared={shared}
+            refresh={sends}
           />
         )}
         {current === 'blocked' && box && (
@@ -540,9 +543,10 @@ export function App() {
             // A send that ends after this draft was closed, as over a new
             // sign-in, leaves the draft open now alone
             if (sendingDraft.current?.clientId !== clientId) return
-            // The folder shown stays; the note leads to the Sent folder of the
-            // mailbox it was sent from
+            // The folder shown stays, and a Sent list shown reloads; the note
+            // leads to the Sent folder it was sent from
             setDraft(null)
+            setSends((count) => count + 1)
             setToast({
               text: 'Message sent',
               action: {

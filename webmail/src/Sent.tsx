@@ -40,11 +40,13 @@ function Details({
   summary,
   sentBy,
   onChanged,
+  onBack,
 }: {
   backend: Mailbox
   summary: OutboxSummary
   sentBy: string | null // which member sent it, in a mailbox others share
   onChanged: () => void
+  onBack: () => void // to the list, at phone width
 }) {
   const [message, setMessage] = useState<OutboxMessage | null>(null)
   const [error, setError] = useState('')
@@ -86,6 +88,9 @@ function Details({
   return (
     <article className="reader">
       <div className="toolbar">
+        <button className="back" onClick={onBack}>
+          <Icon name="back" /> Back
+        </button>
         {canResend && (
           <button className="primary" onClick={resend}>
             Send again
@@ -169,10 +174,13 @@ export function Sent({
   backend,
   principal,
   shared,
+  refresh,
 }: {
   backend: Mailbox
   principal: string // the reader's own
   shared: boolean // the mailbox has other members
+  // Changes after a send: the list reloads, also while older mail is shown
+  refresh: number
 }) {
   const [items, setItems] = useState<OutboxSummary[]>([])
   const [cursor, setCursor] = useState<[] | [bigint]>([])
@@ -181,18 +189,29 @@ export function Sent({
   // Replies can arrive out of order, and only the newest may be shown
   const latestLoad = useRef(0)
   const olderShown = useRef(false)
+  // The first page is loading: Older mail waits, or it would drop that load
+  const loading = useRef(false)
+  // A first-page load failed, as after a send: refreshes try it again until
+  // one succeeds, also while older mail is shown
+  const failed = useRef(false)
 
   const load = useCallback(async () => {
     const request = ++latestLoad.current
+    loading.current = true
     try {
       const page = await backend.mail_outbox_list({ cursor: [], limit: 50n })
       if (request !== latestLoad.current) return
       olderShown.current = false
+      failed.current = false
       setItems(page.items)
       setCursor(page.cursor)
       setError('')
     } catch (e) {
-      if (request === latestLoad.current) setError(errorText(e))
+      if (request !== latestLoad.current) return
+      setError(errorText(e))
+      failed.current = true
+    } finally {
+      if (request === latestLoad.current) loading.current = false
     }
   }, [backend])
 
@@ -200,12 +219,16 @@ export function Sent({
     load()
     // Refreshing replaces the list with its first page, so not while reading older mail
     const timer = window.setInterval(() => {
-      if (!olderShown.current) load()
+      // One at a time: a load slower than this would otherwise be replaced
+      // by the next before its reply could show
+      if (loading.current) return
+      if (!olderShown.current || failed.current) load()
     }, REFRESH_MS)
     return () => window.clearInterval(timer)
-  }, [load])
+  }, [load, refresh])
 
   const older = async () => {
+    if (loading.current) return
     const request = ++latestLoad.current
     try {
       const page = await backend.mail_outbox_list({ cursor, limit: 50n })
@@ -221,7 +244,7 @@ export function Sent({
   const selected = items.find((m) => m.id === selectedId) ?? null
 
   return (
-    <div className="split">
+    <div className={selected ? 'split reading' : 'split'}>
       <section className="list" aria-label="Sent mail">
         {error && (
           <p className="error" role="alert">
@@ -277,6 +300,7 @@ export function Sent({
             setSelectedId(null)
             load()
           }}
+          onBack={() => setSelectedId(null)}
         />
       ) : (
         <div className="reader empty">Select a message to see its status.</div>
