@@ -233,12 +233,14 @@ export function App() {
   // A toast's action, such as Undo
   const runToast = async (action: NonNullable<Toast['action']>) => {
     setToast(null)
+    // Its end belongs to the session it began in
+    const session = latestBackend.current
     try {
       await action.run()
     } catch (e) {
-      setToast({ text: errorText(e) })
+      if (session === latestBackend.current) setToast({ text: errorText(e) })
     } finally {
-      if (action.reload) {
+      if (action.reload && session === latestBackend.current) {
         setRefresh((count) => count + 1)
         reloadMailboxes()
       }

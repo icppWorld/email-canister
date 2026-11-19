@@ -52,13 +52,15 @@ type Action = {
   run: (uids: bigint[]) => Promise<unknown>
 }
 
-// Runs an action, showing a refusal with onError
+// Runs an action, showing a refusal with onError, and clearing one shown
+// before once it goes through
 async function attempt(
   run: () => Promise<unknown>,
   onError: (text: string) => void
 ): Promise<void> {
   try {
     await run()
+    onError('')
   } catch (e) {
     onError(errorText(e))
   }
@@ -576,19 +578,23 @@ export function Inbox({
       )
     )
       return
-    for (;;) {
-      const page = await backend.mail_list({
-        folder: here,
-        cursor: [],
-        limit: BigInt(BATCH),
-      })
-      if (page.items.length === 0) break
-      // None of them could go: stop rather than ask again forever
-      if ((await backend.mail_delete(page.items.map((m) => m.uid))) === 0n)
-        break
+    try {
+      for (;;) {
+        const page = await backend.mail_list({
+          folder: here,
+          cursor: [],
+          limit: BigInt(BATCH),
+        })
+        if (page.items.length === 0) break
+        // None of them could go: stop rather than ask again forever
+        if ((await backend.mail_delete(page.items.map((m) => m.uid))) === 0n)
+          break
+      }
+    } finally {
+      // Also after a refusal: what went before is gone from the list
+      setSelected(null)
+      await load([], false, activeQuery)
     }
-    setSelected(null)
-    await load([], false, activeQuery)
   }
 
   // Blocked first, then out to Spam: a refused block moves nothing. Undo

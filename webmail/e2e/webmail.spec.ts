@@ -3064,7 +3064,8 @@ test('a move that ends after a new sign-in leaves no note', async ({
     )
     .toBe(1)
   await page.waitForTimeout(1_000)
-  await expect(page.getByTestId('toast')).toBeEmpty()
+  // Read once: the note would close by itself before a waiting check ended
+  expect(await page.getByTestId('toast').textContent()).toBe('')
   await context.close()
 })
 
@@ -3085,5 +3086,109 @@ test('a search under way when a message opens still shows what it found', async 
   searching.release()
   await expect(page.locator('button.message')).toHaveCount(1)
   await expect(messageRow(page, 'Patient bittern')).toHaveCount(1)
+  await context.close()
+})
+
+test('an action that goes through once refused clears the refusal', async ({
+  browser,
+}) => {
+  deliver({ subject: 'Retried wagtail', body: '<p>A wagtail.</p>' })
+  await waitDrained()
+  const { context, page } = await signedIn(browser, USER_A)
+  await search(page, 'wagtail')
+  await expect(messageRow(page, 'Retried wagtail')).toHaveCount(1)
+  // Refused, the agent's own retries included, until the refusal shows
+  let refusing = true
+  await page.route('**/api/*/canister/*/*', (route) =>
+    refusing && callsTo(route.request(), 'mail_set_flags')
+      ? route.abort('failed')
+      : route.fallback()
+  )
+  const star = page.getByRole('button', {
+    name: 'Star Retried wagtail',
+    exact: true,
+  })
+  const refusal = page
+    .getByRole('region', { name: 'Messages' })
+    .getByRole('alert')
+  await star.click()
+  await expect(refusal).toBeVisible()
+  refusing = false
+  await star.click()
+  await expect(
+    page.getByRole('button', { name: 'Unstar Retried wagtail', exact: true })
+  ).toHaveAttribute('aria-pressed', 'true')
+  await expect(refusal).toHaveCount(0)
+  await context.close()
+})
+
+test('an Undo that fails after a new sign-in leaves no note', async ({
+  browser,
+}) => {
+  deliver({ subject: 'Undone smew', body: '<p>A smew.</p>' })
+  await waitDrained()
+  const { context, page } = await signedIn(browser, USER_A)
+  await search(page, 'smew')
+  await messageRow(page, 'Undone smew').hover()
+  await page.getByRole('button', { name: 'Delete: Undone smew' }).click()
+  await expect(page.getByTestId('toast')).toHaveText(/moved to Trash/)
+  // The move back is refused, after the sign-in that began it has ended
+  let release = () => {}
+  const released = new Promise<void>((resolve) => (release = resolve))
+  let reached = () => {}
+  const seen = new Promise<void>((resolve) => (reached = resolve))
+  let refused = 0
+  await page.route('**/api/*/canister/*/*', async (route) => {
+    if (!callsTo(route.request(), 'mail_move')) return route.fallback()
+    reached()
+    await released
+    await route.abort('failed')
+    refused++
+  })
+  await undo(page)
+  await seen
+  await page.getByRole('button', { name: 'Sign out' }).click()
+  await signInAgain(page, USER_A)
+  await expect(page.getByTestId('address')).toBeVisible()
+  release()
+  // The agent tries 3 more times before the Undo fails
+  await expect.poll(() => refused, { timeout: 60_000 }).toBe(4)
+  await page.waitForTimeout(3_000)
+  // Read once: the note would close by itself before a waiting check ended
+  expect(await page.getByTestId('toast').textContent()).toBe('')
+  await context.close()
+})
+
+// Snow has the mailbox snipe, with seeded mail in Trash
+const SNOW = '4b'.repeat(32)
+
+test('Empty Trash refused part way leaves only what is still there', async ({
+  browser,
+}) => {
+  joinMailbox('snipe', SNOW)
+  backend('dev_seed', '("snipe", 1 : nat64, 120 : nat64)')
+  const snow = await asUser(SNOW, env.url, env.backend)
+  const uids = Array.from({ length: 120 }, (_, n) => BigInt(n + 1))
+  expect(await snow.mail_move('snipe', uids, FOLDER_TRASH)).toBe(120n)
+  const { context, page } = await signedIn(browser, SNOW)
+  await expect(page.getByTestId('address')).toHaveText(`snipe@${DOMAIN}`)
+  await folder(page, 'Trash')
+  await expect(page.locator('button.message')).toHaveCount(50)
+  // The first part goes, the second is refused
+  let deletes = 0
+  await page.route('**/api/*/canister/*/*', (route) =>
+    callsTo(route.request(), 'mail_delete') && ++deletes > 1
+      ? route.abort('failed')
+      : route.fallback()
+  )
+  page.once('dialog', (dialog) => dialog.accept())
+  await page.getByRole('button', { name: 'Empty Trash' }).click()
+  await expect(
+    page.getByRole('region', { name: 'Messages' }).getByRole('alert')
+  ).toBeVisible()
+  // At once, not at the next timed refresh
+  await expect(page.locator('button.message')).toHaveCount(20, {
+    timeout: 2_000,
+  })
   await context.close()
 })
