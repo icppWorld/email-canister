@@ -12,6 +12,7 @@ import {
   test,
   type Browser,
   type BrowserContext,
+  type Locator,
   type Page,
   type Request,
   type Route,
@@ -227,6 +228,34 @@ const viewSent = (page: Page) => toastButton(page, 'View in Sent')
 const messageRow = (page: Page, text: string) =>
   page.locator('button.message', { hasText: text })
 
+// A ⋮ menu, by the label of its button: More in the header, More actions in
+// the reader
+const menu = (page: Page, label: string) =>
+  page
+    .locator('details.menu')
+    .filter({ has: page.getByLabel(label, { exact: true }) })
+
+const openMenu = (page: Page, label: string) =>
+  page.getByLabel(label, { exact: true }).click()
+
+// Opens a ⋮ menu and chooses one of its items, which closes it
+async function menuItem(
+  page: Page,
+  label: string,
+  name: string
+): Promise<void> {
+  await openMenu(page, label)
+  await menu(page, label).getByRole('button', { name, exact: true }).click()
+}
+
+// A download of the mailbox shown, started from the header's menu
+const downloadCopy = (page: Page) => menuItem(page, 'More', 'Download a copy')
+
+// What a download shows while it runs, below the folders. Gone once it has
+// ended, its thaw included: the menu's button is enabled again then.
+const downloadStatus = (page: Page) =>
+  page.getByRole('navigation', { name: 'Folders' }).getByRole('status')
+
 async function search(page: Page, text: string): Promise<void> {
   await page.getByLabel('Search mail').fill(text)
   await page.getByLabel('Search mail').press('Enter')
@@ -354,6 +383,10 @@ test('onboards two users through the Admin panel', async ({ browser }) => {
 
   await a.page.reload()
   await expect(a.page.getByTestId('address')).toHaveText(`alice@${DOMAIN}`)
+  await openMenu(a.page, 'More')
+  await expect(
+    menu(a.page, 'More').getByRole('button', { name: 'Blocked senders' })
+  ).toBeVisible()
   await expect(a.page.getByRole('button', { name: 'Admin' })).toHaveCount(0)
   await expect(a.page.locator('.brand img.logo')).toBeVisible()
   await b.page.reload()
@@ -1162,7 +1195,7 @@ test('downloads a copy of the mailbox, as its SQLite file', async ({
   const { context, page } = await signedIn(browser, USER_A)
   const [file] = await Promise.all([
     page.waitForEvent('download'),
-    page.getByRole('button', { name: 'Download a copy' }).click(),
+    downloadCopy(page),
   ])
   expect(file.suggestedFilename()).toMatch(
     new RegExp(`^alice@${DOMAIN}-\\d{4}-\\d{2}-\\d{2}\\.sqlite$`)
@@ -1172,9 +1205,7 @@ test('downloads a copy of the mailbox, as its SQLite file', async ({
   expect(data.length % 4096).toBe(0)
 
   // The download ends its freeze: new mail moves in at once
-  await expect(
-    page.getByRole('button', { name: 'Download a copy' })
-  ).toBeEnabled()
+  await expect(downloadStatus(page)).toHaveCount(0)
   deliver({
     subject: 'After the copy',
     body: '<p>A <b>pelican</b> arrives.</p>',
@@ -1194,10 +1225,12 @@ test('a failed chunk ends the download with an error, and frees the mailbox', as
       ? route.abort('failed')
       : route.fallback()
   )
-  const button = page.getByRole('button', { name: 'Download a copy' })
-  await button.click()
-  await expect(page.getByRole('alert')).toBeVisible({ timeout: 30_000 })
-  await expect(button).toBeEnabled()
+  await downloadCopy(page)
+  // Below the folders, where the download shows
+  await expect(
+    page.getByRole('navigation', { name: 'Folders' }).getByRole('alert')
+  ).toBeVisible({ timeout: 30_000 })
+  await expect(downloadStatus(page)).toHaveCount(0)
   await noDownloadHeld()
   await context.close()
 })
@@ -1222,14 +1255,16 @@ test('a chunk that fails once is read again', async ({ browser }) => {
     failed += 1
     return route.abort('failed')
   })
-  const data = await download(page, /Download a copy/)
+  const [file] = await Promise.all([
+    page.waitForEvent('download'),
+    downloadCopy(page),
+  ])
+  const data = readFileSync(await file.path())
   expect(failed).toBe(4)
   expect(tries).toBeGreaterThan(4)
   expect(data.subarray(0, 16).toString('latin1')).toBe('SQLite format 3\0')
   // The thaw follows the save: closing the page first could cancel it
-  await expect(
-    page.getByRole('button', { name: 'Download a copy' })
-  ).toBeEnabled()
+  await expect(downloadStatus(page)).toHaveCount(0)
   await context.close()
 })
 
@@ -1265,7 +1300,7 @@ test('a renewal that fails does not end the download', async ({ browser }) => {
     const [file] = await Promise.all([
       page.waitForEvent('download'),
       (async () => {
-        await page.getByRole('button', { name: 'Download a copy' }).click()
+        await downloadCopy(page)
         await chunk.seen
         // The failed renewal, then one that holds the download again
         await expect.poll(() => renewed, { timeout: 30_000 }).toBeGreaterThan(0)
@@ -1277,9 +1312,7 @@ test('a renewal that fails does not end the download', async ({ browser }) => {
     const data = readFileSync(await file.path())
     expect(data.subarray(0, 16).toString('latin1')).toBe('SQLite format 3\0')
     // The thaw follows the save: closing the page first could cancel it
-    await expect(
-      page.getByRole('button', { name: 'Download a copy' })
-    ).toBeEnabled()
+    await expect(downloadStatus(page)).toHaveCount(0)
   } finally {
     await context?.close()
     backend(
@@ -1316,7 +1349,7 @@ test('a renewal that hangs does not hold up the next', async ({ browser }) => {
     const [file] = await Promise.all([
       page.waitForEvent('download'),
       (async () => {
-        await page.getByRole('button', { name: 'Download a copy' }).click()
+        await downloadCopy(page)
         await chunk.seen
         // The next renewal goes out while the first still hangs
         await expect.poll(() => freezes, { timeout: 30_000 }).toBeGreaterThan(2)
@@ -1328,9 +1361,7 @@ test('a renewal that hangs does not hold up the next', async ({ browser }) => {
     const data = readFileSync(await file.path())
     expect(data.subarray(0, 16).toString('latin1')).toBe('SQLite format 3\0')
     // The download ends while the first renewal still hangs
-    await expect(
-      page.getByRole('button', { name: 'Download a copy' })
-    ).toBeEnabled()
+    await expect(downloadStatus(page)).toHaveCount(0)
     await noDownloadHeld()
   } finally {
     unhang()
@@ -1365,9 +1396,9 @@ test("a message's load error stays beside a flag or a refused delete", async ({
     await expect(alerts).toHaveCount(1)
     const loadError = (await alerts.first().textContent()) ?? ''
     expect(loadError).not.toBe('')
-    await page.getByRole('button', { name: 'Flag', exact: true }).click()
+    await page.getByRole('button', { name: 'Star', exact: true }).click()
     await expect(
-      page.getByRole('button', { name: 'Unflag', exact: true })
+      page.getByRole('button', { name: 'Unstar', exact: true })
     ).toBeVisible()
     // The reader still says why the message is missing
     await expect(alerts).toHaveCount(1)
@@ -1403,14 +1434,14 @@ test('flagging during a download says why it is refused', async ({
     const page = signed.page
     await openMail(page, 'heron')
     await expect(page.getByTestId('subject')).toHaveText('Frozen heron')
-    const flag = page.getByRole('button', { name: 'Flag', exact: true })
+    const flag = page.getByRole('button', { name: 'Star', exact: true })
     await flag.click()
     await expect(page.getByRole('alert')).toContainText('downloaded')
     // Once the download ends, flagging works and the refusal goes away
     await alice.mail_export_thaw('alice', info.started_ns)
     await flag.click()
     await expect(
-      page.getByRole('button', { name: 'Unflag', exact: true })
+      page.getByRole('button', { name: 'Unstar', exact: true })
     ).toBeVisible()
     await expect(page.getByRole('alert')).toHaveCount(0)
   } finally {
@@ -1426,13 +1457,18 @@ test('the Download button waits until the download has ended', async ({
 }) => {
   const { context, page } = await signedIn(browser, USER_A)
   const thaw = await hold(page, 'mail_export_thaw')
-  const button = page.getByRole('button', { name: 'Download a copy' })
-  await download(page, /Download a copy/)
+  await Promise.all([page.waitForEvent('download'), downloadCopy(page)])
   await thaw.seen
   // Saved, but the freeze has not ended yet: a new download would be refused
+  await openMenu(page, 'More')
+  const button = menu(page, 'More').getByRole('button', {
+    name: 'Download a copy',
+  })
   await expect(button).toBeDisabled()
+  await expect(downloadStatus(page)).toBeVisible()
   thaw.release()
   await expect(button).toBeEnabled()
+  await expect(downloadStatus(page)).toHaveCount(0)
   await noDownloadHeld()
   await context.close()
 })
@@ -1443,7 +1479,7 @@ test('signing out ends a download under way', async ({ browser }) => {
   const thaws = watch(page, 'mail_export_thaw')
   let downloaded = false
   page.on('download', () => (downloaded = true))
-  await page.getByRole('button', { name: 'Download a copy' }).click()
+  await downloadCopy(page)
   await chunk.seen
   await page.getByRole('button', { name: 'Sign out' }).click()
   chunk.release()
@@ -2033,15 +2069,15 @@ test('a flag set while the message loads stays set', async ({ browser }) => {
   const reply = await hold(page, 'mail_get', { late: true })
   await openMail(page, 'Slow avocet')
   await reply.seen
-  await page.getByRole('button', { name: 'Flag', exact: true }).click()
+  await page.getByRole('button', { name: 'Star', exact: true }).click()
   await expect(
-    page.getByRole('button', { name: 'Unflag', exact: true })
+    page.getByRole('button', { name: 'Unstar', exact: true })
   ).toBeVisible()
   reply.release()
   // Read once the message has loaded, and still flagged
   await expect(page.locator('button.message.unread')).toHaveCount(0)
   await expect(
-    page.getByRole('button', { name: 'Unflag', exact: true })
+    page.getByRole('button', { name: 'Unstar', exact: true })
   ).toBeVisible()
   await context.close()
 })
@@ -2075,7 +2111,7 @@ test('an opened message shows the flags another member set meanwhile', async ({
   await unread.click()
   await expect(unread).toHaveCount(0)
   await expect(
-    page.getByRole('button', { name: 'Unflag', exact: true })
+    page.getByRole('button', { name: 'Unstar', exact: true })
   ).toBeVisible()
   // The list shows the message's flags before a write would start: a moment
   // more, for one to show
@@ -2152,15 +2188,15 @@ test('a flag set while the message is being marked read stays set', async ({
   })
   await openMail(page, 'Raced plover')
   await expect.poll(() => held).toBe(true)
-  await page.getByRole('button', { name: 'Flag', exact: true }).click()
+  await page.getByRole('button', { name: 'Star', exact: true }).click()
   await expect(
-    page.getByRole('button', { name: 'Unflag', exact: true })
+    page.getByRole('button', { name: 'Unstar', exact: true })
   ).toBeVisible()
   release()
   // The list shows the message read only once the held call has completed
   await expect(page.locator('button.message.unread')).toHaveCount(0)
   await expect(
-    page.getByRole('button', { name: 'Unflag', exact: true })
+    page.getByRole('button', { name: 'Unstar', exact: true })
   ).toBeVisible()
   const alice = await asAlice()
   await expect
@@ -2419,10 +2455,10 @@ test('a late reply does not undo a flag set and cleared while the message loads'
   const reply = await hold(page, 'mail_get', { late: true })
   await row.click()
   await reply.seen
-  await page.getByRole('button', { name: 'Flag', exact: true }).click()
-  await page.getByRole('button', { name: 'Unflag', exact: true }).click()
+  await page.getByRole('button', { name: 'Star', exact: true }).click()
+  await page.getByRole('button', { name: 'Unstar', exact: true }).click()
   await expect(
-    page.getByRole('button', { name: 'Flag', exact: true })
+    page.getByRole('button', { name: 'Star', exact: true })
   ).toBeVisible()
   reply.release()
   // Read once the message has loaded, and still not flagged, as stored
@@ -2430,7 +2466,7 @@ test('a late reply does not undo a flag set and cleared while the message loads'
     page.locator('button.message.unread', { hasText: 'Late plover' })
   ).toHaveCount(0)
   await expect(
-    page.getByRole('button', { name: 'Flag', exact: true })
+    page.getByRole('button', { name: 'Star', exact: true })
   ).toBeVisible()
   const { items } = await gail.mail_search('shore', {
     query: 'Late plover',
@@ -2442,7 +2478,7 @@ test('a late reply does not undo a flag set and cleared while the message loads'
   await context.close()
 })
 
-test('a download keeps going, and names its mailbox, when another one opens', async ({
+test('a download started from the menu shows below the folders, keeps going, and names its mailbox, when another one opens', async ({
   browser,
 }) => {
   fernAndGail()
@@ -2450,19 +2486,22 @@ test('a download keeps going, and names its mailbox, when another one opens', as
   await expect(page.getByTestId('address')).toHaveText(`heron@${DOMAIN}`)
   const chunks = await hold(page, 'mail_export_chunk')
   const saved = page.waitForEvent('download')
-  await page.getByRole('button', { name: 'Download a copy' }).click()
+  await downloadCopy(page)
   await chunks.seen
+  // The menu closed behind its item; the download shows in the folders' column
+  await expect(
+    menu(page, 'More').getByRole('button', { name: 'Download a copy' })
+  ).toBeHidden()
+  const status = page.locator('nav p.download-status')
+  await expect(status).toHaveRole('status')
+  await expect(status).toContainText(`heron@${DOMAIN}`)
   await mailboxButton(page, 'shore').click()
   await expect(page.getByTestId('address')).toHaveText(`shore@${DOMAIN}`)
-  await expect(page.locator('.download [role=status]')).toContainText(
-    `heron@${DOMAIN}`
-  )
+  await expect(downloadStatus(page)).toContainText(`heron@${DOMAIN}`)
   chunks.release()
   expect((await saved).suggestedFilename()).toMatch(/^heron@/)
   // The download has ended its hold, so later tests can write to heron
-  await expect(
-    page.getByRole('button', { name: 'Download a copy' })
-  ).toBeEnabled()
+  await expect(downloadStatus(page)).toHaveCount(0)
   await context.close()
 })
 
@@ -2742,6 +2781,19 @@ const folder = (page: Page, name: string) =>
     .getByRole('button', { name, exact: true })
     .click()
 
+const reader = (page: Page) => page.locator('article.reader')
+
+// The open message to Spam, then its sender blocked from the note this leaves.
+// The note offers the block once the sender is known, as the message has
+// loaded: Reply waits for that too.
+async function spamAndBlock(page: Page): Promise<void> {
+  await expect(
+    reader(page).getByRole('button', { name: 'Reply' })
+  ).toBeEnabled()
+  await reader(page).getByRole('button', { name: 'Spam', exact: true }).click()
+  await toastButton(page, 'Block sender')
+}
+
 test('Delete moves mail to Trash, where Undo, Restore and Delete forever work', async ({
   browser,
 }) => {
@@ -2849,6 +2901,9 @@ test('ticked messages are read, unread, starred and deleted together, and Trash 
   await expect(page.getByTestId('toast')).toHaveText(/Message moved to Trash/)
 
   await bulk.getByLabel('Select all').check()
+  await expect(
+    bulk.getByRole('button', { name: 'Spam', exact: true })
+  ).toBeVisible()
   await bulk.getByRole('button', { name: 'Delete', exact: true }).click()
   await expect(page.getByTestId('toast')).toHaveText(
     /2 messages moved to Trash/
@@ -2870,9 +2925,10 @@ test('a blocked sender goes to Spam, until Not spam and Unblock bring the mail b
   deliver({ subject: 'Pushy grebe', body: '<p>Buy now.</p>', from })
   await waitDrained()
   const { context, page } = await signedIn(browser, USER_A)
+  // Blocked with no dialog to confirm
+  const dialogs = answer(page)
   await openMail(page, 'Pushy grebe')
-  page.once('dialog', (dialog) => dialog.accept())
-  await page.getByRole('button', { name: 'Block sender' }).click()
+  await spamAndBlock(page)
   await expect(page.getByTestId('toast')).toHaveText(
     /Blocked pushy@sender.example/
   )
@@ -2885,7 +2941,7 @@ test('a blocked sender goes to Spam, until Not spam and Unblock bring the mail b
   await expect(page).toHaveURL(/#alice\/spam$/)
   await expect(messageRow(page, 'Pushy grebe')).toHaveCount(2)
 
-  await folder(page, 'Blocked senders')
+  await menuItem(page, 'More', 'Blocked senders')
   const blocked = page.getByRole('region', { name: 'Blocked senders' })
   await expect(blocked).toContainText('pushy@sender.example')
   await expect(blocked).toContainText('by you')
@@ -2910,12 +2966,12 @@ test('a blocked sender goes to Spam, until Not spam and Unblock bring the mail b
   await waitDrained()
   await folder(page, 'Spam')
   await messageRow(page, 'Pushy shrike').click()
-  page.once('dialog', (dialog) => dialog.accept())
-  await page.getByRole('button', { name: 'Block sender' }).click()
+  await menuItem(page, 'More actions', 'Block sender')
   const note = page.getByTestId('toast')
   await expect(note).toHaveText(/again@sender.example was blocked already/)
   await expect(note.getByRole('button', { name: 'Undo' })).toHaveCount(0)
   await alice.mail_unblock('alice', 'again@sender.example')
+  expect(dialogs).toEqual([])
   await context.close()
 })
 
@@ -3211,7 +3267,8 @@ test('Empty Trash refused part way leaves only what is still there', async ({
   await context.close()
 })
 
-test('a block whose move is refused still offers Undo', async ({ browser }) => {
+// The block comes after the move, from its note: a refused move blocks no one
+test('a move to Spam that is refused offers no block', async ({ browser }) => {
   deliver({
     subject: 'Stubborn dipper',
     body: '<p>A dipper.</p>',
@@ -3221,23 +3278,28 @@ test('a block whose move is refused still offers Undo', async ({ browser }) => {
   const { context, page } = await signedIn(browser, USER_A)
   await openMail(page, 'dipper')
   await expect(page.getByTestId('subject')).toHaveText('Stubborn dipper')
+  // Loaded, so a move that went through would offer the block
+  await expect(
+    reader(page).getByRole('button', { name: 'Reply' })
+  ).toBeEnabled()
   await page.route('**/api/*/canister/*/*', (route) =>
     callsTo(route.request(), 'mail_move')
       ? route.abort('failed')
       : route.fallback()
   )
-  page.once('dialog', (dialog) => dialog.accept())
-  await page.getByRole('button', { name: 'Block sender' }).click()
-  const note = page.getByTestId('toast')
-  await expect(note).toHaveText(/Blocked dipper@sender.example/, {
+  await reader(page).getByRole('button', { name: 'Spam', exact: true }).click()
+  // The refusal shows beside the message, after the agent's own retries
+  await expect(reader(page).getByRole('alert')).toBeVisible({
     timeout: 60_000,
   })
-  await page.unrouteAll({ behavior: 'wait' })
-  await note.getByRole('button', { name: 'Undo' }).click()
+  await expect(
+    page.getByTestId('toast').getByRole('button', { name: 'Block sender' })
+  ).toHaveCount(0)
+  await expect(messageRow(page, 'Stubborn dipper')).toHaveCount(1)
   const alice = await asAlice()
-  await expect
-    .poll(async () => (await alice.mail_blocked('alice')).map((b) => b.address))
-    .not.toContain('dipper@sender.example')
+  expect(
+    (await alice.mail_blocked('alice')).map((b) => b.address)
+  ).not.toContain('dipper@sender.example')
   await context.close()
 })
 
@@ -3256,8 +3318,7 @@ test('a block made before of an address with letters beyond A to Z is not undone
   const { context, page } = await signedIn(browser, USER_A)
   await folder(page, 'Spam')
   await messageRow(page, 'Foreign grosbeak').click()
-  page.once('dialog', (dialog) => dialog.accept())
-  await page.getByRole('button', { name: 'Block sender' }).click()
+  await menuItem(page, 'More actions', 'Block sender')
   const note = page.getByTestId('toast')
   await expect(note).toHaveText(/Ärla@sender.example was blocked already/)
   await expect(note.getByRole('button', { name: 'Undo' })).toHaveCount(0)
@@ -3321,6 +3382,7 @@ test('a note that takes the place of a held note stays held', async ({
   await context.close()
 })
 
+// From the Spam folder's reader, which keeps the message where it is
 test('Undo of a block shows on the Blocked senders page', async ({
   browser,
 }) => {
@@ -3330,18 +3392,238 @@ test('Undo of a block shows on the Blocked senders page', async ({
     from: 'Hasty <hasty@sender.example>',
   })
   await waitDrained()
+  const alice = await asAlice()
+  const uid = await uidOf(alice, 'alice', 'Hasty jay')
+  await alice.mail_move('alice', [uid], FOLDER_SPAM)
   const { context, page } = await signedIn(browser, USER_A)
-  await openMail(page, 'jay')
+  await folder(page, 'Spam')
+  await messageRow(page, 'Hasty jay').click()
   await expect(page.getByTestId('subject')).toHaveText('Hasty jay')
-  page.once('dialog', (dialog) => dialog.accept())
-  await page.getByRole('button', { name: 'Block sender' }).click()
+  // Spam has Block sender in its menu, and asks nothing
+  const dialogs = answer(page)
+  await menuItem(page, 'More actions', 'Block sender')
   const note = page.getByTestId('toast')
   await expect(note).toHaveText(/Blocked hasty@sender.example/)
-  await folder(page, 'Blocked senders')
+  await menuItem(page, 'More', 'Blocked senders')
   const blocked = page.getByRole('region', { name: 'Blocked senders' })
   await expect(blocked).toContainText('hasty@sender.example')
   await note.getByRole('button', { name: 'Undo' }).click()
   await expect(blocked).not.toContainText('hasty@sender.example')
+  expect(dialogs).toEqual([])
+  await context.close()
+})
+
+test("Spam in the reader offers to block the sender, and that block's Undo brings the message back", async ({
+  browser,
+}) => {
+  deliver({
+    subject: 'Brash kittiwake',
+    body: '<p>A kittiwake.</p>',
+    from: 'Brash <brash@sender.example>',
+  })
+  await waitDrained()
+  const { context, page } = await signedIn(browser, USER_A)
+  const dialogs = answer(page)
+  await openMail(page, 'kittiwake')
+  await expect(page.getByTestId('subject')).toHaveText('Brash kittiwake')
+  // The Inbox's reader blocks no one by itself: the note offers it
+  await openMenu(page, 'More actions')
+  await expect(
+    menu(page, 'More actions').getByRole('button', { name: 'Mark unread' })
+  ).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Block sender' })).toHaveCount(
+    0
+  )
+  await page.keyboard.press('Escape')
+  await expect(
+    reader(page).getByRole('button', { name: 'Reply' })
+  ).toBeEnabled()
+  await reader(page).getByRole('button', { name: 'Spam', exact: true }).click()
+  const note = page.getByTestId('toast')
+  await expect(note).toHaveText(/Message moved to Spam/)
+  await expect(messageRow(page, 'Brash kittiwake')).toHaveCount(0)
+  await expect(note.getByRole('button', { name: 'Undo' })).toBeVisible()
+  await expect(
+    note.getByRole('button', { name: 'Block sender' })
+  ).toHaveAttribute('title', 'Block brash@sender.example')
+
+  await note.getByRole('button', { name: 'Block sender' }).click()
+  await expect(note).toHaveText(/Blocked brash@sender.example/)
+  await menuItem(page, 'More', 'Blocked senders')
+  const blocked = page.getByRole('region', { name: 'Blocked senders' })
+  await expect(blocked).toContainText('brash@sender.example')
+
+  // Undo unblocks the address and brings the message back from Spam
+  await note.getByRole('button', { name: 'Undo' }).click()
+  await expect(blocked).not.toContainText('brash@sender.example')
+  const alice = await asAlice()
+  expect(
+    (await alice.mail_blocked('alice')).map((b) => b.address)
+  ).not.toContain('brash@sender.example')
+  await openMail(page, 'kittiwake')
+  await expect(page.getByTestId('subject')).toHaveText('Brash kittiwake')
+  expect(dialogs).toEqual([])
+  await context.close()
+})
+
+test("the reader's Mark unread marks the message unread and closes it", async ({
+  browser,
+}) => {
+  deliver({ subject: 'Unread kestrel', body: '<p>A kestrel.</p>' })
+  await waitDrained()
+  const alice = await asAlice()
+  // As stored, read without opening it
+  const seen = async () => {
+    const { items } = await alice.mail_search('alice', {
+      query: 'Unread kestrel',
+      folder: FOLDER_INBOX,
+      cursor: [],
+      limit: 1n,
+    })
+    return ((items[0]?.flags ?? 0n) & FLAG_SEEN) !== 0n
+  }
+  const { context, page } = await signedIn(browser, USER_A)
+  await openMail(page, 'kestrel')
+  await expect(page.getByTestId('subject')).toHaveText('Unread kestrel')
+  const unread = page.locator('button.message.unread', {
+    hasText: 'Unread kestrel',
+  })
+  // Read by opening it, first
+  await expect(unread).toHaveCount(0)
+  await expect.poll(seen).toBe(true)
+  await menuItem(page, 'More actions', 'Mark unread')
+  await expect(reader(page)).toHaveCount(0)
+  await expect(unread).toHaveCount(1)
+  await expect.poll(seen).toBe(false)
+  await context.close()
+})
+
+test('the header menu holds Blocked senders, Download a copy and, for a controller, Admin', async ({
+  browser,
+}) => {
+  const nav = (page: Page) => page.getByRole('navigation', { name: 'Folders' })
+  const { context, page } = await signedIn(browser, USER_A)
+  await expect(page.getByTestId('address')).toHaveText(`alice@${DOMAIN}`)
+  await expect(nav(page).getByRole('button', { name: 'Inbox' })).toBeVisible()
+  // No longer among the folders
+  for (const name of ['Blocked senders', 'Download a copy', 'Admin']) {
+    await expect(nav(page).getByRole('button', { name })).toHaveCount(0)
+  }
+  const more = menu(page, 'More')
+  const blockedItem = more.getByRole('button', { name: 'Blocked senders' })
+  await openMenu(page, 'More')
+  await expect(blockedItem).toBeVisible()
+  await expect(
+    more.getByRole('button', { name: 'Download a copy' })
+  ).toBeVisible()
+  await expect(more.getByRole('button', { name: 'Admin' })).toHaveCount(0)
+
+  // Escape closes it, and so does a click beside it
+  await page.keyboard.press('Escape')
+  await expect(blockedItem).toBeHidden()
+  await openMenu(page, 'More')
+  await expect(blockedItem).toBeVisible()
+  await page.getByTestId('address').click()
+  await expect(blockedItem).toBeHidden()
+  // and the item chosen
+  await menuItem(page, 'More', 'Blocked senders')
+  await expect(
+    page.getByRole('region', { name: 'Blocked senders' })
+  ).toBeVisible()
+  await expect(blockedItem).toBeHidden()
+  await context.close()
+
+  // A controller with no mailbox has only Admin there
+  const admin = await signedIn(browser, ADMIN)
+  await expect(
+    admin.page.getByRole('heading', { name: 'Administration' })
+  ).toBeVisible()
+  await expect(
+    nav(admin.page).getByRole('button', { name: 'Admin' })
+  ).toHaveCount(0)
+  await openMenu(admin.page, 'More')
+  const adminMenu = menu(admin.page, 'More')
+  await expect(adminMenu.getByRole('button', { name: 'Admin' })).toBeVisible()
+  await expect(adminMenu.getByRole('button')).toHaveCount(1)
+  await admin.context.close()
+})
+
+test('the selected folder is bold, with a bar in the action-text colour, and a hovered one is not', async ({
+  browser,
+}) => {
+  const { context, page } = await signedIn(browser, USER_A)
+  const nav = page.getByRole('navigation', { name: 'Folders' })
+  const inbox = nav.getByRole('button', { name: 'Inbox', exact: true })
+  const trash = nav.getByRole('button', { name: 'Trash', exact: true })
+  await expect(inbox).toHaveAttribute('aria-current', 'true')
+  const style = (button: Locator) =>
+    button.evaluate((el) => {
+      const computed = getComputedStyle(el)
+      return {
+        weight: computed.fontWeight,
+        shadow: computed.boxShadow,
+        background: computed.backgroundColor,
+      }
+    })
+  const bar = await roleColour(page, '--action-text')
+  const selected = await style(inbox)
+  expect(selected.weight).toBe('700')
+  expect(selected.shadow).toContain(bar)
+  expect(selected.shadow).toContain('inset')
+  // A bar at the side
+  expect(selected.shadow).not.toContain('-3px')
+  // Only the folder: the mailbox open above it keeps just the tint
+  const mailbox = nav.getByRole('button', { name: /^alice/ })
+  await expect(mailbox).toHaveAttribute('aria-current', 'true')
+  expect((await style(mailbox)).shadow).toBe('none')
+  expect((await style(mailbox)).weight).not.toBe('700')
+
+  // The hover's tint is the selected one's, and that is all it has
+  await trash.hover()
+  await expect
+    .poll(async () => (await style(trash)).background)
+    .toBe(selected.background)
+  const hovered = await style(trash)
+  expect(hovered.weight).not.toBe('700')
+  expect(hovered.shadow).toBe('none')
+
+  // At phone width the folders are tabs, with the bar below
+  await page.setViewportSize({ width: 390, height: 844 })
+  await expect.poll(async () => (await style(inbox)).shadow).toContain('-3px')
+  expect((await style(inbox)).shadow).toContain(bar)
+  await context.close()
+})
+
+test("at phone width the reader's actions keep to one row, and its menu opens on screen", async ({
+  browser,
+}) => {
+  deliver({ subject: 'Narrow sanderling', body: '<p>A sanderling.</p>' })
+  await waitDrained()
+  const viewport = { width: 390, height: 844 }
+  const { context, page } = await signedIn(browser, USER_A, { viewport })
+  await openMail(page, 'Narrow sanderling')
+  await expect(page.getByTestId('subject')).toHaveText('Narrow sanderling')
+  await openMenu(page, 'More actions')
+  const list = menu(page, 'More actions').locator('.menu-items')
+  await expect(list).toBeVisible()
+  const box = await list.boundingBox()
+  if (!box) throw new Error('no menu list')
+  expect(box.x).toBeGreaterThanOrEqual(0)
+  expect(box.y).toBeGreaterThanOrEqual(0)
+  expect(box.x + box.width).toBeLessThanOrEqual(viewport.width)
+  expect(box.y + box.height).toBeLessThanOrEqual(viewport.height)
+
+  // By their middles: the buttons differ in height
+  const middle = async (locator: Locator) => {
+    const found = await locator.boundingBox()
+    if (!found) throw new Error('not shown')
+    return found.y + found.height / 2
+  }
+  const more = await middle(page.getByLabel('More actions', { exact: true }))
+  for (const name of ['Back', 'Spam']) {
+    const button = reader(page).getByRole('button', { name, exact: true })
+    expect(Math.abs((await middle(button)) - more), name).toBeLessThan(2)
+  }
   await context.close()
 })
 
@@ -3393,11 +3675,10 @@ test('an unblock made while the list reloads stays', async ({ browser }) => {
   const { context, page } = await signedIn(browser, USER_A)
   await openMail(page, 'wren')
   await expect(page.getByTestId('subject')).toHaveText('Rash wren')
-  page.once('dialog', (dialog) => dialog.accept())
-  await page.getByRole('button', { name: 'Block sender' }).click()
+  await spamAndBlock(page)
   const note = page.getByTestId('toast')
   await expect(note).toHaveText(/Blocked rash@sender.example/)
-  await folder(page, 'Blocked senders')
+  await menuItem(page, 'More', 'Blocked senders')
   const blocked = page.getByRole('region', { name: 'Blocked senders' })
   await expect(blocked).toContainText('brisk@sender.example')
   // The reload after Undo reads the list while brisk is still blocked

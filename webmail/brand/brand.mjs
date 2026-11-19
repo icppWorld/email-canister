@@ -64,16 +64,21 @@ const isDomain = (name) =>
 const MAX_CUSTOM_DOMAINS = 10
 const OUTPUT_MARKER = '.brand-output'
 
+// A role a brand leaves out follows this role of the brand, before the default
+const FOLLOWS = { 'action-text': 'action' }
+
 // Pairs that must stay readable: text, background, minimum contrast
 const CONTRAST = [
   ['ink', 'surface', 4.5],
   ['ink', 'surface-muted', 4.5],
   ['ink', 'surface-raised', 4.5],
-  ['action', 'surface-raised', 4.5],
+  ['action-text', 'surface-raised', 4.5],
   ['ink', 'selected', 4.5],
   ['ink-muted', 'surface', 4.5],
   ['ink-muted', 'surface-muted', 4.5],
   ['ink-muted', 'selected', 4.5],
+  // The bar that marks the selected folder
+  ['action-text', 'selected', 3],
   ['danger', 'surface', 4.5],
   ['warning', 'warning-surface', 4.5],
   ['on-action', 'action', 4.5],
@@ -262,7 +267,9 @@ export function loadBrand(folder) {
     )
   const roles = Object.fromEntries(
     Object.entries(defaults.roles).map(([role, fallback]) => {
-      const value = resolve(own.roles?.[role] ?? fallback)
+      const value = resolve(
+        own.roles?.[role] ?? own.roles?.[FOLLOWS[role]] ?? fallback
+      )
       for (const v of [value.light, value.dark])
         if (!safeRole(v)) fail(`role ${role}: ${v}`)
       return [role, value]

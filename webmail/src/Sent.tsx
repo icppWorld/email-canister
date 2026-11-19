@@ -88,8 +88,13 @@ function Details({
   return (
     <article className="reader">
       <div className="toolbar">
-        <button className="back" onClick={onBack}>
-          <Icon name="back" /> Back
+        <button
+          className="back"
+          aria-label="Back"
+          title="Back"
+          onClick={onBack}
+        >
+          <Icon name="back" />
         </button>
         {canResend && (
           <button className="primary" onClick={resend}>

@@ -8,11 +8,12 @@ import { BlockedSenders } from './Blocked'
 import { formatBytes } from './format'
 import { Icon } from './Icon'
 import { Compose, type Draft } from './Compose'
-import { Download } from './Download'
+import { useDownload } from './Download'
 import { Inbox, isFolder } from './Inbox'
+import { Menu } from './Menu'
 import { Sent } from './Sent'
 import { deployment } from './settings'
-import { ToastBar, type Toast } from './Toast'
+import { ToastBar, type Toast, type ToastAction } from './Toast'
 
 // A mailbox's folders and pages, each with an address of its own
 const PAGES = {
@@ -185,6 +186,7 @@ export function App() {
     [backend, local]
   )
   const current = box !== null ? view : 'admin'
+  const download = useDownload(box, shown?.address ?? '', backend)
 
   // The draft open now, for a send that ends later
   const sendingDraft = useRef(draft)
@@ -240,7 +242,7 @@ export function App() {
   }, [toast, toastHeld])
 
   // A toast's action, such as Undo
-  const runToast = async (action: NonNullable<Toast['action']>) => {
+  const runToast = async (action: ToastAction) => {
     setToast(null)
     // Its end belongs to the session it began in
     const session = latestBackend.current
@@ -396,7 +398,8 @@ export function App() {
         </button>
       </div>
       {(Object.keys(PAGES) as Page[])
-        .filter((page) => page !== 'inbox')
+        // Blocked senders is in the menu
+        .filter((page) => page !== 'inbox' && page !== 'blocked')
         .map((page) => (
           <button
             key={page}
@@ -419,6 +422,31 @@ export function App() {
         <span className="address" data-testid="address">
           {shown?.address ?? 'Administrator'}
         </span>
+        {(box || me.is_controller) && (
+          <Menu label="More">
+            {box && (
+              <button
+                aria-current={current === 'blocked'}
+                onClick={() => setView('blocked')}
+              >
+                Blocked senders
+              </button>
+            )}
+            {box && (
+              <button onClick={download.start} disabled={download.busy}>
+                Download a copy
+              </button>
+            )}
+            {me.is_controller && (
+              <button
+                aria-current={current === 'admin'}
+                onClick={() => setView('admin')}
+              >
+                Admin
+              </button>
+            )}
+          </Menu>
+        )}
         <button onClick={signOut}>Sign out</button>
       </header>
       <nav aria-label="Folders">
@@ -472,21 +500,23 @@ export function App() {
             </ul>
           </>
         )}
-        {me.is_controller && (
-          <button
-            aria-current={current === 'admin'}
-            onClick={() => setView('admin')}
-          >
-            Admin
-          </button>
-        )}
         {shown && (
           <p className="usage" data-testid="usage">
             {formatBytes(shown.used_bytes)} of {formatBytes(shown.quota_bytes)}{' '}
             used
           </p>
         )}
-        {box && shown && <Download backend={box} address={shown.address} />}
+        {/* Started from the menu, and shown here while it runs */}
+        {download.progress && (
+          <p className="download-status" role="status">
+            {download.progress}
+          </p>
+        )}
+        {download.error && (
+          <p className="error" role="alert">
+            {download.error}
+          </p>
+        )}
         {!box && (
           <p className="hint" data-testid="principal">
             {principal}
@@ -549,13 +579,15 @@ export function App() {
             setSends((count) => count + 1)
             setToast({
               text: 'Message sent',
-              action: {
-                label: 'View in Sent',
-                run: () => {
-                  setSelected(from)
-                  setView('sent')
+              actions: [
+                {
+                  label: 'View in Sent',
+                  run: () => {
+                    setSelected(from)
+                    setView('sent')
+                  },
                 },
-              },
+              ],
             })
           }}
         />

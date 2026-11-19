@@ -449,6 +449,58 @@ test('takes font families from the tokens file', () => {
   )
 })
 
+test("action-text follows the brand's action unless set, and is checked on its grounds", () => {
+  // The brand's roles, with these added or changed
+  const withRoles = (roles: Record<string, unknown>) =>
+    brandCopy((d) => {
+      const file = path.join(d, 'brand.json')
+      const settings = JSON.parse(readFileSync(file, 'utf8'))
+      writeFileSync(
+        file,
+        JSON.stringify({ ...settings, roles: { ...settings.roles, ...roles } })
+      )
+    })
+  const css = (out: string) => readFileSync(path.join(out, 'brand.css'), 'utf8')
+
+  // e2e/brand sets action, not action-text: links and the bar take its action
+  const follows = brand({ brand: 'e2e/brand' })
+  expect(follows.ok, follows.output).toBe(true)
+  expect(css(follows.out)).toContain('--action-text: #1d5e8c;')
+  expect(css(follows.out)).toContain('--action-text: #7fc1f0;')
+
+  const own = brand({
+    brand: withRoles({
+      'action-text': { light: '#0b4a75', dark: '#9ccff3' },
+    }),
+  })
+  expect(own.ok, own.output).toBe(true)
+  expect(css(own.out)).toContain('--action-text: #0b4a75;')
+  expect(css(own.out)).toContain('--action-text: #9ccff3;')
+  expect(css(own.out)).toContain('--action: #1d5e8c;')
+
+  // Too faint for the bar beside the selected folder
+  const faint = brand({
+    brand: withRoles({
+      'action-text': { light: '#a0a0a0', dark: '#7fc1f0' },
+    }),
+  })
+  expect(faint.ok, faint.output).toBe(true)
+  expect(faint.output).toMatch(
+    /brand: action-text on selected in light is \d+\.\d{2}:1, below 3:1/
+  )
+
+  // A button colour too dark for text in dark mode, with links of their own
+  const dark = brand({
+    brand: withRoles({
+      action: { light: '#1d5e8c', dark: '#0b2a40' },
+      'action-text': { light: '#1d5e8c', dark: '#7fc1f0' },
+    }),
+  })
+  expect(dark.ok, dark.output).toBe(true)
+  expect(dark.output).not.toContain('on surface-raised')
+  expect(dark.output).not.toContain('action-text on selected')
+})
+
 test('refuses an unknown role, a missing token, a path outside the brand and unsafe CSS', () => {
   const edit = (patch: Record<string, unknown>) =>
     brandCopy((d) => {
