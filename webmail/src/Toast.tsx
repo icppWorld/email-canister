@@ -3,7 +3,8 @@
 
 export type Toast = {
   text: string
-  action?: { label: string; run: () => Promise<void> | void }
+  // reload: the action changes mail, so the list and counts load again
+  action?: { label: string; run: () => Promise<void> | void; reload?: true }
 }
 
 export function ToastBar({
@@ -12,21 +13,22 @@ export function ToastBar({
   onClose,
 }: {
   toast: Toast | null
-  onAction: (run: () => Promise<void> | void) => void
+  onAction: (action: NonNullable<Toast['action']>) => void
   onClose: () => void
 }) {
+  const action = toast?.action
   // The live region stays on the page, so a new note is announced
   return (
     <div className="toast" role="status" data-testid="toast">
       {toast && (
         <>
           <span>{toast.text}</span>
-          {toast.action && (
-            <button onClick={() => onAction(toast.action!.run)}>
-              {toast.action.label}
+          {action && (
+            <button className="bare" onClick={() => onAction(action)}>
+              {action.label}
             </button>
           )}
-          <button className="close" aria-label="Dismiss" onClick={onClose}>
+          <button className="bare" aria-label="Dismiss" onClick={onClose}>
             ×
           </button>
         </>

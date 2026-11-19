@@ -31,6 +31,9 @@ const USER_D = 'e5'.repeat(32)
 // The flags, as src/api.ts has them: importing that runs the page's own code
 const FLAG_SEEN = 1n
 const FLAG_FLAGGED = 2n
+const FOLDER_INBOX = 0n
+const FOLDER_TRASH = 1n
+const FOLDER_SPAM = 2n
 const principalOf = (seed: string) => identityOf(seed).getPrincipal().toText()
 
 const backend = (method: string, arg = '()') =>
@@ -213,21 +216,26 @@ async function noDownloadHeld(backend?: Backend): Promise<void> {
   await alice.mail_export_thaw('alice', info.started_ns)
 }
 
+const toastButton = (page: Page, name: string) =>
+  page.getByTestId('toast').getByRole('button', { name }).click()
+
 // After a send the folder shown stays: the note it leaves opens the Sent
 // folder of the mailbox it went from
-async function viewSent(page: Page): Promise<void> {
-  await page
-    .getByTestId('toast')
-    .getByRole('button', { name: 'View in Sent' })
-    .click()
+const viewSent = (page: Page) => toastButton(page, 'View in Sent')
+
+const messageRow = (page: Page, text: string) =>
+  page.locator('button.message', { hasText: text })
+
+async function search(page: Page, text: string): Promise<void> {
+  await page.getByLabel('Search mail').fill(text)
+  await page.getByLabel('Search mail').press('Enter')
 }
 
 async function openMail(page: Page, text: string): Promise<void> {
   await page.getByRole('button', { name: 'Inbox' }).click()
-  await page.getByLabel('Search mail').fill(text)
-  await page.getByLabel('Search mail').press('Enter')
+  await search(page, text)
   // By its text: until the search returns, the list still shows earlier mail
-  await page.locator('button.message', { hasText: text }).first().click()
+  await messageRow(page, text).first().click()
 }
 
 test.describe.configure({ mode: 'serial' })
@@ -981,7 +989,7 @@ test('a 1.4 MB attachment survives receiving and sending, by hash', async ({
   })
   await send(page)
 
-  await viewSent(page)
+  await page.getByRole('button', { name: 'Sent', exact: true }).click()
   await page.getByRole('button', { name: /Sending the file/ }).click()
   await expect(page.getByTestId('outbox-state')).toHaveText(
     'Accepted for delivery',
@@ -1026,7 +1034,7 @@ test('shows an unknown outcome and warns before sending again', async ({
   const { context, page } = await signedIn(browser, USER_A)
   await compose(page, 'Doubtful message')
   await send(page)
-  await viewSent(page)
+  await page.getByRole('button', { name: 'Sent', exact: true }).click()
   await page.getByRole('button', { name: /Doubtful message/ }).click()
   await expect(page.getByTestId('outbox-state')).toHaveText('Outcome unknown', {
     timeout: 60_000,
@@ -1061,7 +1069,7 @@ test('shows mail the gateway refused, with its reason, and sends it again', asyn
   page.on('dialog', (dialog) => dialog.accept())
   await compose(page, 'Refused message')
   await send(page)
-  await viewSent(page)
+  await page.getByRole('button', { name: 'Sent', exact: true }).click()
   await page.getByRole('button', { name: /Refused message/ }).click()
   await expect(page.getByTestId('outbox-state')).toHaveText('Not sent', {
     timeout: 60_000,
@@ -2724,10 +2732,7 @@ test('a send that ends after a new sign-in leaves the draft open then alone', as
   await context.close()
 })
 
-const row = (page: Page, text: string) =>
-  page.locator('button.message', { hasText: text })
-const undo = (page: Page) =>
-  page.getByTestId('toast').getByRole('button', { name: 'Undo' }).click()
+const undo = (page: Page) => toastButton(page, 'Undo')
 
 test('Delete moves mail to Trash, where Undo, Restore and Delete forever work', async ({
   browser,
@@ -2737,32 +2742,32 @@ test('Delete moves mail to Trash, where Undo, Restore and Delete forever work', 
   const { context, page } = await signedIn(browser, USER_A)
   await openMail(page, 'avocet')
   await page.getByRole('button', { name: 'Delete', exact: true }).click()
-  await expect(row(page, 'Trashed avocet')).toHaveCount(0)
+  await expect(messageRow(page, 'Trashed avocet')).toHaveCount(0)
   await undo(page)
-  await expect(row(page, 'Trashed avocet')).toHaveCount(1)
+  await expect(messageRow(page, 'Trashed avocet')).toHaveCount(1)
 
   // Restored from Trash
-  await row(page, 'Trashed avocet').click()
+  await messageRow(page, 'Trashed avocet').click()
   await page.getByRole('button', { name: 'Delete', exact: true }).click()
   await page.getByRole('button', { name: 'Trash', exact: true }).click()
   await expect(page).toHaveURL(/#alice\/trash$/)
-  await row(page, 'Trashed avocet').click()
+  await messageRow(page, 'Trashed avocet').click()
   await page.getByRole('button', { name: 'Restore', exact: true }).click()
-  await expect(row(page, 'Trashed avocet')).toHaveCount(0)
+  await expect(messageRow(page, 'Trashed avocet')).toHaveCount(0)
   await openMail(page, 'avocet')
   await expect(page.getByTestId('subject')).toHaveText('Trashed avocet')
 
   // Deleted for good, once confirmed
   await page.getByRole('button', { name: 'Delete', exact: true }).click()
   await page.getByRole('button', { name: 'Trash', exact: true }).click()
-  await row(page, 'Trashed avocet').click()
+  await messageRow(page, 'Trashed avocet').click()
   page.once('dialog', (dialog) => dialog.accept())
   await page
     .getByRole('button', { name: 'Delete forever', exact: true })
     .click()
-  await expect(row(page, 'Trashed avocet')).toHaveCount(0)
+  await expect(messageRow(page, 'Trashed avocet')).toHaveCount(0)
   const alice = await asAlice()
-  for (const folder of [0n, 1n, 2n]) {
+  for (const folder of [FOLDER_INBOX, FOLDER_TRASH, FOLDER_SPAM]) {
     const { items } = await alice.mail_search('alice', {
       query: 'avocet',
       folder,
@@ -2782,9 +2787,8 @@ test('ticked messages are read, unread, starred and deleted together, and Trash 
   }
   await waitDrained()
   const { context, page } = await signedIn(browser, USER_A)
-  await page.getByLabel('Search mail').fill('sanderling')
-  await page.getByLabel('Search mail').press('Enter')
-  await expect(row(page, 'Ticked sanderling')).toHaveCount(3)
+  await search(page, 'sanderling')
+  await expect(messageRow(page, 'Ticked sanderling')).toHaveCount(3)
   const bulk = page.getByRole('toolbar', { name: 'Selected messages' })
 
   await bulk.getByLabel('Select all').check()
@@ -2803,11 +2807,11 @@ test('ticked messages are read, unread, starred and deleted together, and Trash 
   ).toHaveAttribute('aria-pressed', 'true')
 
   // An action of the row's own, shown on hover
-  await row(page, 'Ticked sanderling 2').hover()
+  await messageRow(page, 'Ticked sanderling 2').hover()
   await page
     .getByRole('button', { name: 'Delete: Ticked sanderling 2' })
     .click()
-  await expect(row(page, 'Ticked sanderling')).toHaveCount(2)
+  await expect(messageRow(page, 'Ticked sanderling')).toHaveCount(2)
   await expect(page.getByTestId('toast')).toHaveText(/Message moved to Trash/)
 
   await bulk.getByLabel('Select all').check()
@@ -2818,7 +2822,7 @@ test('ticked messages are read, unread, starred and deleted together, and Trash 
   await expect(page.getByText('No matches.')).toBeVisible()
 
   await page.getByRole('button', { name: 'Trash', exact: true }).click()
-  await expect(row(page, 'Ticked sanderling')).toHaveCount(3)
+  await expect(messageRow(page, 'Ticked sanderling')).toHaveCount(3)
   page.once('dialog', (dialog) => dialog.accept())
   await page.getByRole('button', { name: 'Empty Trash' }).click()
   await expect(page.getByText('Nothing in Trash.')).toBeVisible()
@@ -2838,14 +2842,14 @@ test('a blocked sender goes to Spam, until Not spam and Unblock bring the mail b
   await expect(page.getByTestId('toast')).toHaveText(
     /Blocked pushy@sender.example/
   )
-  await expect(row(page, 'Pushy grebe')).toHaveCount(0)
+  await expect(messageRow(page, 'Pushy grebe')).toHaveCount(0)
 
   // New mail from the address goes to Spam, by its From address
   deliver({ subject: 'Pushy grebe again', body: '<p>Last chance.</p>', from })
   await waitDrained()
   await page.getByRole('button', { name: 'Spam', exact: true }).click()
   await expect(page).toHaveURL(/#alice\/spam$/)
-  await expect(row(page, 'Pushy grebe')).toHaveCount(2)
+  await expect(messageRow(page, 'Pushy grebe')).toHaveCount(2)
 
   await page.getByRole('button', { name: 'Blocked senders' }).click()
   const blocked = page.getByRole('region', { name: 'Blocked senders' })
@@ -2855,7 +2859,7 @@ test('a blocked sender goes to Spam, until Not spam and Unblock bring the mail b
   await expect(blocked).toContainText('No one is blocked.')
 
   await page.getByRole('button', { name: 'Spam', exact: true }).click()
-  await row(page, 'Pushy grebe again').click()
+  await messageRow(page, 'Pushy grebe again').click()
   await page.getByRole('button', { name: 'Not spam', exact: true }).click()
   await openMail(page, 'Pushy grebe again')
   await expect(page.getByTestId('subject')).toHaveText('Pushy grebe again')

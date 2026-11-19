@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import { errorText, type Blocked, type Mailbox } from './api'
-import { formatTime, memberName } from './format'
+import { formatNs, memberName } from './format'
 
 // The senders whose new mail goes to Spam, for every member of the mailbox
 export function BlockedSenders({
@@ -14,18 +14,15 @@ export function BlockedSenders({
   const [list, setList] = useState<Blocked[] | null>(null)
   const [error, setError] = useState('')
 
-  const load = useCallback(async () => {
-    try {
-      setList(await backend.mail_blocked())
-      setError('')
-    } catch (e) {
-      setError(errorText(e))
-    }
-  }, [backend])
-
   useEffect(() => {
-    load()
-  }, [load])
+    backend.mail_blocked().then(
+      (blocked) => {
+        setList(blocked)
+        setError('')
+      },
+      (e) => setError(errorText(e))
+    )
+  }, [backend])
 
   const unblock = async (address: string) => {
     try {
@@ -52,13 +49,13 @@ export function BlockedSenders({
         </p>
       )}
       {list?.length === 0 && <p className="hint">No one is blocked.</p>}
-      <ul>
+      <ul className="members">
         {list?.map((b) => (
           <li key={b.address}>
-            <span className="address">{b.address}</span>
+            <span className="blocked-address">{b.address}</span>
             <span className="hint">
               by {memberName(b.blocked_by.toText(), b.name, principal)},{' '}
-              {formatTime(Number(b.at_ns / 1_000_000n))}
+              {formatNs(b.at_ns)}
             </span>
             <button onClick={() => unblock(b.address)}>Unblock</button>
           </li>

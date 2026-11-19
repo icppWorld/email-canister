@@ -15,7 +15,7 @@ import {
   type Summary,
 } from './api'
 import type { Draft } from './Compose'
-import { formatTime, memberName } from './format'
+import { formatNs, formatTime, memberName } from './format'
 import { Icon, type IconName } from './Icon'
 import { MessageBody } from './MessageBody'
 import { deliveredVia, parseMail, saveFile, type ParsedMail } from './mime'
@@ -24,7 +24,7 @@ import type { Toast } from './Toast'
 const PAGE_SIZE = 50n
 const REFRESH_MS = 20_000
 // The most messages the canister lists, flags, moves or deletes in one call
-const BATCH = 100n
+const BATCH = 100
 
 export type Folder = 'inbox' | 'trash' | 'spam'
 
@@ -34,19 +34,69 @@ const FOLDERS: Record<Folder, { number: bigint; name: string }> = {
   spam: { number: FOLDER_SPAM, name: 'Spam' },
 }
 
+export const isFolder = (view: string): view is Folder =>
+  Object.hasOwn(FOLDERS, view)
+
 // What can be done to a message, by the folder it is in
 type Action = {
   label: string
   icon: IconName
+  danger?: true // it cannot be undone
   run: (uids: bigint[]) => Promise<unknown>
 }
 
+// Runs an action, showing a refusal with onError
+async function attempt(
+  run: () => Promise<unknown>,
+  onError: (text: string) => void
+): Promise<void> {
+  try {
+    await run()
+  } catch (e) {
+    onError(errorText(e))
+  }
+}
+
+// A call for many messages, in parts the canister takes
+async function inBatches(
+  uids: bigint[],
+  call: (part: bigint[]) => Promise<unknown>
+): Promise<void> {
+  for (let at = 0; at < uids.length; at += BATCH) {
+    await call(uids.slice(at, at + BATCH))
+  }
+}
+
+// "Message", "this message" or "3 messages"
+const messages = (count: number, one: string) =>
+  count === 1 ? one : `${count} messages`
+
+// The flags that star a message, or take its star off
+const starring = (flags: bigint): [bigint, bigint] =>
+  flags & FLAG_FLAGGED ? [0n, FLAG_FLAGGED] : [FLAG_FLAGGED, 0n]
+
+// Brings messages back to the folder they left, and unblocks an address. Made
+// here, so the toast holds only what it needs.
+function undo(
+  backend: Mailbox,
+  uids: bigint[],
+  from: bigint,
+  unblock?: string
+): NonNullable<Toast['action']> {
+  return {
+    label: 'Undo',
+    reload: true,
+    run: async () => {
+      if (unblock) await backend.mail_unblock(unblock)
+      await inBatches(uids, (part) => backend.mail_move(part, from))
+    },
+  }
+}
+
 function when(summary: Summary): string {
-  const ms =
-    summary.sent_at > 0n
-      ? Number(summary.sent_at) * 1000
-      : Number(summary.received_ns / 1_000_000n)
-  return formatTime(ms)
+  return summary.sent_at > 0n
+    ? formatTime(Number(summary.sent_at) * 1000)
+    : formatNs(summary.received_ns)
 }
 
 function senderOf(summary: Summary): string {
@@ -184,13 +234,7 @@ function Reader({
   }, [raw, plain])
 
   // A refusal stays beside the message
-  const act = async (run: () => Promise<unknown>) => {
-    try {
-      await run()
-    } catch (e) {
-      setActionError(errorText(e))
-    }
-  }
+  const act = (run: () => Promise<unknown>) => attempt(run, setActionError)
 
   // The From address once the message is read, else the envelope's; none
   // while it loads, so a quick click cannot block the wrong one
@@ -208,9 +252,7 @@ function Reader({
   }
 
   const toggleFlag = async () => {
-    const flagged = (summary.flags & FLAG_FLAGGED) !== 0n
-    const set = flagged ? 0n : FLAG_FLAGGED
-    const clear = flagged ? FLAG_FLAGGED : 0n
+    const [set, clear] = starring(summary.flags)
     changed.current |= FLAG_FLAGGED
     try {
       await backend.mail_set_flags([summary.uid], set, clear)
@@ -246,7 +288,7 @@ function Reader({
         {actions.map((action) => (
           <button
             key={action.label}
-            className={action.icon === 'trash' ? 'danger' : undefined}
+            className={action.danger ? 'danger' : undefined}
             onClick={() => act(() => action.run([summary.uid]))}
           >
             {action.label}
@@ -267,9 +309,7 @@ function Reader({
                 return (
                   <li key={who}>
                     <span>{memberName(who, seen.name, principal)}</span>
-                    <span className="date">
-                      {formatTime(Number(seen.at_ns / 1_000_000n))}
-                    </span>
+                    <span className="date">{formatNs(seen.at_ns)}</span>
                   </li>
                 )
               })}
@@ -405,13 +445,6 @@ export function Inbox({
         setItems((previous) =>
           append ? [...previous, ...page.items] : page.items
         )
-        // A message that left the list since cannot stay ticked
-        const listed = new Set(page.items.map((m) => m.uid))
-        if (!append) {
-          setChecked(
-            (ticked) => new Set([...ticked].filter((uid) => listed.has(uid)))
-          )
-        }
         setCursor(page.cursor)
         setError('')
       } catch (e) {
@@ -449,40 +482,41 @@ export function Inbox({
     )
   }
 
-  const anyUnread = (uids: bigint[]) =>
-    items.some((m) => uids.includes(m.uid) && (m.flags & FLAG_SEEN) === 0n)
+  const anyUnread = (uids: bigint[]) => {
+    const asked = new Set(uids)
+    return items.some((m) => asked.has(m.uid) && (m.flags & FLAG_SEEN) === 0n)
+  }
 
-  const counted = (uids: bigint[]) =>
-    uids.length === 1 ? 'Message' : `${uids.length} messages`
-
-  // Out of this folder, with an Undo that brings the messages back
-  const move = async (uids: bigint[], to: Folder) => {
-    await backend.mail_move(uids, FOLDERS[to].number)
+  // Out of this folder, for the caller to say so
+  const moveOut = async (uids: bigint[], to: bigint) => {
+    await inBatches(uids, (part) => backend.mail_move(part, to))
     if (anyUnread(uids)) onCounts()
     drop(uids)
+  }
+
+  const move = async (uids: bigint[], to: Folder) => {
+    await moveOut(uids, FOLDERS[to].number)
     notify({
-      text: `${counted(uids)} moved to ${FOLDERS[to].name}`,
-      action: {
-        label: 'Undo',
-        run: async () => {
-          await backend.mail_move(uids, here)
-          onCounts()
-        },
-      },
+      text: `${messages(uids.length, 'Message')} moved to ${FOLDERS[to].name}`,
+      action: undo(backend, uids, here),
     })
   }
 
   // For good, once confirmed
   const deleteForever = async (uids: bigint[]) => {
-    const what = uids.length === 1 ? 'this message' : `${uids.length} messages`
-    if (!window.confirm(`Delete ${what} forever?`)) return
-    await backend.mail_delete(uids)
+    if (
+      !window.confirm(
+        `Delete ${messages(uids.length, 'this message')} forever?`
+      )
+    )
+      return
+    await inBatches(uids, (part) => backend.mail_delete(part))
     if (anyUnread(uids)) onCounts()
     drop(uids)
   }
 
   const flag = async (uids: bigint[], set: bigint, clear: bigint) => {
-    await backend.mail_set_flags(uids, set, clear)
+    await inBatches(uids, (part) => backend.mail_set_flags(part, set, clear))
     updateFlags(uids, set, clear)
     if ((set | clear) & FLAG_SEEN) onCounts()
   }
@@ -499,7 +533,7 @@ export function Inbox({
       const page = await backend.mail_list({
         folder: here,
         cursor: [],
-        limit: BATCH,
+        limit: BigInt(BATCH),
       })
       if (page.items.length === 0) break
       // None of them could go: stop rather than ask again forever
@@ -510,59 +544,55 @@ export function Inbox({
     await load([], false, activeQuery)
   }
 
-  // A refusal in the list shows above it
-  const act = async (run: () => Promise<unknown>) => {
-    try {
-      await run()
-    } catch (e) {
-      setError(errorText(e))
-    }
+  // Blocked first, then out to Spam: a refused block moves nothing
+  const block = async (uid: bigint, address: string) => {
+    await backend.mail_block(address)
+    const filed = folder === 'spam' ? [] : [uid]
+    if (filed.length > 0) await moveOut(filed, FOLDER_SPAM)
+    notify({
+      text: `Blocked ${address}`,
+      action: undo(backend, filed, here, address),
+    })
   }
 
-  const forever: Action = {
-    label: 'Delete forever',
+  // A refusal in the list shows above it
+  const act = (run: () => Promise<unknown>) => attempt(run, setError)
+
+  const toTrash: Action = {
+    label: 'Delete',
     icon: 'trash',
-    run: deleteForever,
+    run: (uids) => move(uids, 'trash'),
+  }
+  const toSpam: Action = {
+    label: 'Spam',
+    icon: 'spam',
+    run: (uids) => move(uids, 'spam'),
   }
   const restore: Action = {
     label: folder === 'spam' ? 'Not spam' : 'Restore',
     icon: folder === 'spam' ? 'inbox' : 'undo',
     run: (uids) => move(uids, 'inbox'),
   }
-  const actions: Action[] =
-    folder === 'inbox'
-      ? [
-          {
-            label: 'Delete',
-            icon: 'trash',
-            run: (uids) => move(uids, 'trash'),
-          },
-          { label: 'Spam', icon: 'spam', run: (uids) => move(uids, 'spam') },
-        ]
-      : [restore, forever]
-
-  const block = async (summary: Summary, address: string) => {
-    await backend.mail_block(address)
-    const filed = folder !== 'spam'
-    if (filed) {
-      await backend.mail_move([summary.uid], FOLDER_SPAM)
-      if ((summary.flags & FLAG_SEEN) === 0n) onCounts()
-      drop([summary.uid])
-    }
-    notify({
-      text: `Blocked ${address}`,
-      action: {
-        label: 'Undo',
-        run: async () => {
-          await backend.mail_unblock(address)
-          if (filed) {
-            await backend.mail_move([summary.uid], here)
-            onCounts()
-          }
-        },
-      },
-    })
+  const forever: Action = {
+    label: 'Delete forever',
+    icon: 'trash',
+    danger: true,
+    run: deleteForever,
   }
+  const markRead: Action = {
+    label: 'Mark read',
+    icon: 'mailOpen',
+    run: (uids) => flag(uids, FLAG_SEEN, 0n),
+  }
+  const markUnread: Action = {
+    label: 'Mark unread',
+    icon: 'mail',
+    run: (uids) => flag(uids, 0n, FLAG_SEEN),
+  }
+  // A message's own, in the reader; the ticked ones can also be read or not
+  const actions = folder === 'inbox' ? [toTrash, toSpam] : [restore, forever]
+  const bulkActions =
+    folder === 'inbox' ? [...actions, markRead, markUnread] : actions
 
   const tick = (uid: bigint, on: boolean) =>
     setChecked((ticked) => {
@@ -573,10 +603,10 @@ export function Inbox({
     })
   const ticked = items.filter((m) => checked.has(m.uid)).map((m) => m.uid)
   const allTicked = items.length > 0 && ticked.length === items.length
+  const someTicked = ticked.length > 0 && !allTicked
   useEffect(() => {
-    if (allBox.current)
-      allBox.current.indeterminate = ticked.length > 0 && !allTicked
-  })
+    if (allBox.current) allBox.current.indeterminate = someTicked
+  }, [someTicked])
 
   return (
     <div className="split">
@@ -629,33 +659,20 @@ export function Inbox({
               {ticked.length > 0 ? (
                 <>
                   <span className="hint">{ticked.length} selected</span>
-                  {actions.map((action) => (
+                  {bulkActions.map((action) => (
                     <button
                       key={action.label}
+                      className="small"
                       onClick={() => act(() => action.run(ticked))}
                     >
                       {action.label}
                     </button>
                   ))}
-                  {folder === 'inbox' && (
-                    <>
-                      <button
-                        onClick={() => act(() => flag(ticked, FLAG_SEEN, 0n))}
-                      >
-                        Mark read
-                      </button>
-                      <button
-                        onClick={() => act(() => flag(ticked, 0n, FLAG_SEEN))}
-                      >
-                        Mark unread
-                      </button>
-                    </>
-                  )}
                 </>
               ) : (
                 folder !== 'inbox' &&
                 !activeQuery && (
-                  <button onClick={() => act(empty)}>
+                  <button className="small" onClick={() => act(empty)}>
                     Empty {FOLDERS[folder].name}
                   </button>
                 )
@@ -685,25 +702,12 @@ export function Inbox({
                 : m.subject || '(no subject)'
             const flagged = (m.flags & FLAG_FLAGGED) !== 0n
             const unread = (m.flags & FLAG_SEEN) === 0n
-            const rowActions: Action[] =
+            const rowActions =
               folder === 'inbox'
-                ? [
-                    actions[0],
-                    unread
-                      ? {
-                          label: 'Mark read',
-                          icon: 'mailOpen',
-                          run: (uids) => flag(uids, FLAG_SEEN, 0n),
-                        }
-                      : {
-                          label: 'Mark unread',
-                          icon: 'mail',
-                          run: (uids) => flag(uids, 0n, FLAG_SEEN),
-                        },
-                  ]
+                ? [toTrash, unread ? markRead : markUnread]
                 : actions
             return (
-              <li key={m.uid.toString()} className="row">
+              <li key={m.uid.toString()} className="message-row">
                 <input
                   type="checkbox"
                   className="pick"
@@ -712,19 +716,11 @@ export function Inbox({
                   onChange={(e) => tick(m.uid, e.target.checked)}
                 />
                 <button
-                  className={flagged ? 'star on' : 'star'}
+                  className={flagged ? 'bare star on' : 'bare star'}
                   aria-label={flagged ? `Unstar ${title}` : `Star ${title}`}
                   aria-pressed={flagged}
                   title={flagged ? 'Starred' : 'Not starred'}
-                  onClick={() =>
-                    act(() =>
-                      flag(
-                        [m.uid],
-                        flagged ? 0n : FLAG_FLAGGED,
-                        flagged ? FLAG_FLAGGED : 0n
-                      )
-                    )
-                  }
+                  onClick={() => act(() => flag([m.uid], ...starring(m.flags)))}
                 >
                   <Icon name="star" />
                 </button>
@@ -751,6 +747,7 @@ export function Inbox({
                   {rowActions.map((action) => (
                     <button
                       key={action.label}
+                      className="bare"
                       aria-label={`${action.label}: ${title}`}
                       title={action.label}
                       onClick={() => act(() => action.run([m.uid]))}
@@ -784,7 +781,7 @@ export function Inbox({
           onBlock={
             folder === 'trash'
               ? undefined
-              : (address) => block(selected, address)
+              : (address) => block(selected.uid, address)
           }
           onReply={onReply}
           onFlags={(set, clear) => updateFlags([selected.uid], set, clear)}

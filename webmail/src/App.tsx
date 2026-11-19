@@ -9,14 +9,20 @@ import { formatBytes } from './format'
 import { Icon } from './Icon'
 import { Compose, type Draft } from './Compose'
 import { Download } from './Download'
-import { Inbox } from './Inbox'
+import { Inbox, isFolder } from './Inbox'
 import { Sent } from './Sent'
 import { deployment } from './settings'
 import { ToastBar, type Toast } from './Toast'
 
 // A mailbox's folders and pages, each with an address of its own
-const PAGES = ['inbox', 'sent', 'spam', 'trash', 'blocked'] as const
-type Page = (typeof PAGES)[number]
+const PAGES = {
+  inbox: 'Inbox',
+  sent: 'Sent',
+  spam: 'Spam',
+  trash: 'Trash',
+  blocked: 'Blocked senders',
+} as const
+type Page = keyof typeof PAGES
 type View = Page | 'admin'
 
 // How long a note about what was just done stays shown
@@ -30,7 +36,7 @@ const MAILBOXES_REFRESH_MS = 30_000
 // can be bookmarked or shared
 function route(): { local: string | null; view: Page } {
   const [local, folder] = window.location.hash.slice(1).split('/')
-  const view = PAGES.find((page) => page === folder) ?? 'inbox'
+  const view = Object.hasOwn(PAGES, folder ?? '') ? (folder as Page) : 'inbox'
   return { local: local || null, view }
 }
 
@@ -224,16 +230,18 @@ export function App() {
     return () => window.clearTimeout(timer)
   }, [toast])
 
-  // A toast's action, such as Undo; the list and the counts load again after
-  const runToast = async (run: () => Promise<void> | void) => {
+  // A toast's action, such as Undo
+  const runToast = async (action: NonNullable<Toast['action']>) => {
     setToast(null)
     try {
-      await run()
+      await action.run()
     } catch (e) {
       setToast({ text: errorText(e) })
     } finally {
-      setRefresh((count) => count + 1)
-      reloadMailboxes()
+      if (action.reload) {
+        setRefresh((count) => count + 1)
+        reloadMailboxes()
+      }
     }
   }
 
@@ -376,22 +384,17 @@ export function App() {
           <Icon name="refresh" />
         </button>
       </div>
-      {(
-        [
-          ['sent', 'Sent'],
-          ['spam', 'Spam'],
-          ['trash', 'Trash'],
-          ['blocked', 'Blocked senders'],
-        ] as const
-      ).map(([page, label]) => (
-        <button
-          key={page}
-          aria-current={current === page}
-          onClick={() => setView(page)}
-        >
-          {label}
-        </button>
-      ))}
+      {(Object.keys(PAGES) as Page[])
+        .filter((page) => page !== 'inbox')
+        .map((page) => (
+          <button
+            key={page}
+            aria-current={current === page}
+            onClick={() => setView(page)}
+          >
+            {PAGES[page]}
+          </button>
+        ))}
     </div>
   )
 
@@ -480,24 +483,22 @@ export function App() {
         )}
       </nav>
       <div className="content">
-        {(current === 'inbox' || current === 'spam' || current === 'trash') &&
-          box &&
-          shown && (
-            <Inbox
-              key={`${shown.local}/${current}`}
-              backend={box}
-              principal={principal}
-              shared={shared}
-              folder={current}
-              notify={setToast}
-              onReply={(reply) =>
-                setDraft((open) => open ?? { ...reply, from: shown.local })
-              }
-              onCounts={reloadMailboxes}
-              refresh={refresh}
-              onLoaded={onLoaded}
-            />
-          )}
+        {isFolder(current) && box && shown && (
+          <Inbox
+            key={`${shown.local}/${current}`}
+            backend={box}
+            principal={principal}
+            shared={shared}
+            folder={current}
+            notify={setToast}
+            onReply={(reply) =>
+              setDraft((open) => open ?? { ...reply, from: shown.local })
+            }
+            onCounts={reloadMailboxes}
+            refresh={refresh}
+            onLoaded={onLoaded}
+          />
+        )}
         {current === 'sent' && box && (
           <Sent
             key={local}
