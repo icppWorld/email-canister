@@ -68,7 +68,7 @@ bool valid_local(const std::string &local) {
 int64_t g_upgraded_at = 0;
 
 std::string newer_than_release(int64_t version) {
-  return "the file has schema version " + std::to_string(version) +
+  return store::k_newer_than_release + std::to_string(version) +
          ", newer than this release's " + std::to_string(db::mailbox_version());
 }
 
@@ -378,36 +378,51 @@ bool upgrade_pending() {
          select.failed();
 }
 
-bool upgrade_file(int64_t id) {
+Upgraded upgrade_file(int64_t id, std::string &problem) {
   const int64_t current = db::mailbox_version();
   {
     db::Stmt select(db::control(),
                     "SELECT 1 FROM mailboxes WHERE id = ?2 AND "
                     "retry_after_ns <= ?3 AND " WAITS_FOR_UPGRADE("?1"));
-    if (!select) return false;
+    if (!select) return Upgraded::Wait;
     const auto now = static_cast<int64_t>(IC_API::time());
     if (!select.integer(1, current).integer(2, id).integer(3, now).row())
-      return !select.failed(); // purged, held, or upgraded meanwhile
+      // purged, held, or upgraded meanwhile
+      return select.failed() ? Upgraded::Wait : Upgraded::Done;
   }
   sqlite3 *file = db::mailbox(id, true);
-  if (file == nullptr) return false;
+  if (file == nullptr) return Upgraded::Wait;
   const int64_t version = db::file_version(file);
-  if (version < 0) return false;
-  std::string problem;
+  if (version < 0) return Upgraded::Wait;
   if (version > current) {
-    problem = newer_than_release(version);
-  } else {
-    MailboxWrite write(Mailbox{id, file});
-    if (!write) return false;
-    if (db::upgrade_mailbox(file, version, problem)) {
-      db::Stmt record(db::control(),
-                      "UPDATE mailboxes SET schema = ? WHERE id = ?");
-      return record && record.integer(1, current).integer(2, id).done() &&
-             write.commit();
-    }
-    problem = k_upgrade_failed + problem;
-  } // a failed step rolls back here
-  return set_needs_repair(id, problem);
+    return set_needs_repair(id, newer_than_release(version)) ? Upgraded::Done
+                                                             : Upgraded::Wait;
+  }
+  MailboxWrite write(Mailbox{id, file});
+  if (!write) return Upgraded::Wait;
+  if (!db::upgrade_mailbox(file, version, problem))
+    return Upgraded::Failed; // the write rolls the step back
+  db::Stmt record(db::control(),
+                  "UPDATE mailboxes SET schema = ? WHERE id = ?");
+  return record && record.integer(1, current).integer(2, id).done() &&
+                 write.commit()
+             ? Upgraded::Done
+             : Upgraded::Wait;
+}
+
+bool release_newer_holds() {
+  // Schema 0 waits for an upgrade, which reads the file's own version. A
+  // download's hold stays, as set_needs_repair leaves it.
+  db::Stmt release(db::control(),
+                   "UPDATE mailboxes SET needs_repair = '', schema = 0, "
+                   "retry_after_ns = iif(retry_after_ns = ?1, export_until_ns, "
+                   "retry_after_ns) WHERE substr(needs_repair, 1, ?2) = ?3");
+  g_upgraded_at = 0;
+  const std::string prefix = k_newer_than_release;
+  return release && release.integer(1, k_held_ns)
+                        .integer(2, static_cast<int64_t>(prefix.size()))
+                        .text(3, prefix)
+                        .done();
 }
 
 bool set_needs_repair(int64_t id, const std::string &why) {

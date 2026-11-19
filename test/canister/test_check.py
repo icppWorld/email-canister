@@ -36,6 +36,7 @@ from .support import (
     wait_until_drained,
 )
 from .test_mailbox import seed
+from .test_storage import upgrade
 from .test_storage import nat, stat
 
 
@@ -125,6 +126,54 @@ def test__a_failed_query_does_not_end_the_upgrades() -> None:
         not in call("dev_file_exec", '("bob", "INSERT INTO later VALUES(1)")'),
         "bob's upgrade",
     )
+
+
+def test__upgrades_take_turns_with_mail_for_upgraded_mailboxes() -> None:
+    # Mailboxes enough that their upgrades outlast a few rounds of the pump
+    waiting = [f"turn{n}" for n in range(30)]
+    for n, local in enumerate(waiting, start=10):
+        add_mailbox(local, fake_principal(n))
+    call("dev_pause", "(true)")
+    try:
+        assert re.search(OK, deliver("Turn lemming", "<lemming@x.example>", to="alice"))
+        call("dev_schema_step", '("CREATE TABLE turn(x)")')
+    finally:
+        call("dev_pause", "(false)")
+    # alice's file is upgraded first, and her mail need not wait for the rest
+    wait_until(lambda: len(search("lemming")) == 1, "alice's delivery")
+    assert "Failed" in call(
+        "dev_file_exec", f'("{waiting[-1]}", "INSERT INTO turn VALUES(1)")'
+    ), "every file was upgraded before alice's mail went in"
+    wait_until(
+        lambda: "Failed"
+        not in call(
+            "dev_file_exec", f'("{waiting[-1]}", "INSERT INTO turn VALUES(1)")'
+        ),
+        "the last upgrade",
+    )
+
+
+def test__a_mailbox_held_as_newer_is_freed_once_a_release_knows_its_version(
+    identity: str,
+) -> None:
+    # The steps the earlier tests added are on the heap, so an upgrade to this
+    # same build is a rollback to a release that knows none of them
+    steps = 3  # extra, later, turn
+    assert upgrade(identity) == ""
+    wait_until(
+        lambda: "the file has schema version" in entry_line("alice"),
+        "alice's hold as newer than the release",
+    )
+    assert search("lemming") == [], "a held mailbox is not searched"
+    # A release that knows the files' version again
+    for _ in range(steps):
+        call("dev_schema_step", '("SELECT 1")')
+    wait_until(
+        lambda: len(search("lemming")) == 1 and len(search("pika")) == 2,
+        "the releases of alice and bob",
+    )
+    assert "needs_repair = null" in entry_line("alice")
+    assert check("alice") == "ok"
 
 
 def test__a_check_of_a_large_mailbox_fits_in_one_call() -> None:

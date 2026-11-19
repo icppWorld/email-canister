@@ -36,7 +36,6 @@ email-canister grows in small releases, driven by running it for real mailboxes.
 - A paged rebuild of a mailbox's search index.
 - A scheduled check that a domain's MX records still match the gateway's hosts.
 - A consistency check of a mailbox file too large for one call: a whole-file check covers about 2.6 GB, the search index's own check about 0.8 GB.
-- Before the first release with a mailbox schema step, the upgrade path that v0.2.0 ships unused: a rejected upgrade call holds a mailbox only after repeated failures, not when the canister was low on cycles; upgrades take turns with moves and parses, so mailboxes already upgraded keep receiving; and a mailbox held as "newer than this release" is released once a release that knows its version runs again.
 - Upstream: a stable-fs that looks up a missing name without scanning its directory. Until then mailbox files fan out over small directories.
 - Upstream: a choice of stable-fs chunk size, through the build toolchain, for new deployments, if its measurements favour another size for both empty mailboxes and files of 1 to 3 GB.
 

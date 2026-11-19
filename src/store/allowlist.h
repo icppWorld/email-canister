@@ -135,16 +135,28 @@ Claim claim_upgrade(int64_t now_ns, int64_t defer_ns, int64_t &id);
 // Whether any mailbox's file waits for a schema upgrade, or the registry
 // cannot tell
 bool upgrade_pending();
-// Takes the mailbox's file to the current schema version. Returns false when
-// that has to wait: the file cannot be opened or written now. A file newer
-// than this code, or a step that fails, holds the mailbox for repair.
-bool upgrade_file(int64_t id);
+// What an upgrade of a mailbox's file came to
+enum class Upgraded {
+  Done,  // nothing more to do now; a file newer than this code is held
+  Wait,  // the file cannot be opened or written now
+  Failed // a step failed, and the file is as it was
+};
+// Takes the mailbox's file to the current schema version. A failed step
+// describes itself in `problem`; the caller decides whether that holds the
+// mailbox.
+Upgraded upgrade_file(int64_t id, std::string &problem);
+// Lets the file of every mailbox held as newer than its release decide
+// again, as a new release starts: a version this release knows is upgraded
+// or used, any other is held again
+bool release_newer_holds();
 // Holds the mailbox for repair, for `why`, or with an empty `why` releases it.
 // Nothing may use the file meanwhile, and the pumps keep away: its
 // retry_after_ns is k_held_ns.
 bool set_needs_repair(int64_t id, const std::string &why);
 // Begins the reason of every hold that a failed schema upgrade set
 const char *const k_upgrade_failed = "the schema upgrade failed: ";
+// Begins the reason of every hold for a file newer than the release
+const char *const k_newer_than_release = "the file has schema version ";
 // A check of the mailbox's file: db::quick_check of one table, or of the
 // whole file on a db::CheckConnection, with the file's version and counters
 // against the registry. The problems found, or nullopt when the file cannot be opened.

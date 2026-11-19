@@ -4,6 +4,8 @@
 #include <string>
 
 #include "api.h"
+#include "ic0.h"
+#include "ic_api.h"
 #include "support.h"
 
 using namespace native;
@@ -31,10 +33,18 @@ void file_exec(const std::string &test, const std::string &local,
   CALL(test, dev_file_exec, "(\"" + local + "\", \"" + sql + "\")", CONTROLLER);
 }
 
-// Natively no timer runs the pump: each mailbox's upgrade is called by hand
-void upgrade_every_file(const std::string &test) {
+// Natively no timer runs the pump: each mailbox's upgrade is called by hand.
+// The clock then moves past the wait that a failed upgrade leaves.
+void upgrade_round(const std::string &test) {
   for (int id = 1; id <= 20; ++id)
     CALL(test, ingest_upgrade_file, "(" + std::to_string(id) + ")", SELF);
+  ic0mock_set_time_override(IC_API::time() + 61'000'000'000);
+}
+
+// As many rounds as a step that fails takes to hold its mailbox
+void upgrade_every_file(const std::string &test) {
+  for (int round = 0; round < 3; ++round)
+    upgrade_round(test);
 }
 
 const std::string k_list = "(record { cursor = null; limit = 10 })";
@@ -160,13 +170,21 @@ void test_check(MockIC &) {
     file_exec(test, "cleo", "PRAGMA user_version = 9");
     // A step that fails on every file that has the table already
     CALL(test, dev_schema_step, "(\"CREATE TABLE extra(x)\")", CONTROLLER);
-    upgrade_every_file(test);
+    upgrade_round(test);
     expect(test, entry(test, "cleo"),
            "needs_repair = opt \"the file has schema version 9, newer than "
            "this release\\'s 3");
   }
   {
-    const std::string test = "a step that fails holds the mailbox";
+    const std::string test = "a step that fails holds the mailbox on its third "
+                             "failure";
+    // A canister low on cycles fails every upgrade for a while
+    for (int failures = 1; failures < 3; ++failures) {
+      expect(test, entry(test, "alice"), "needs_repair = null");
+      TRAPS("a failed upgrade is tried again later", mail_list,
+            in("alice", k_list), USER_A, "busy: the mailbox is being upgraded");
+      upgrade_round(test);
+    }
     expect(test, entry(test, "alice"),
            "needs_repair = opt \"the schema upgrade failed: the step to "
            "schema version 3 failed");
@@ -185,4 +203,19 @@ void test_check(MockIC &) {
            "needs_repair = opt \"the schema upgrade failed: the step to "
            "schema version 3 failed");
   }
+  {
+    const std::string test = "a file newer than its release is freed once a "
+                             "release knows its version";
+    // As after a rollback: cleo's file is one version ahead of this release
+    file_exec(test, "cleo", "PRAGMA user_version = 4");
+    CALL(test, dev_schema_step, "(\"SELECT 1\")", CONTROLLER);
+    expect(test, entry(test, "cleo"), "needs_repair = null");
+    upgrade_every_file(test);
+    CALL(test, mail_list, in("cleo", k_list), USER_C);
+    expect(test, inspect(test, "cleo"), "result = \"ok\"");
+    // A hold for anything else stays
+    expect(test, entry(test, "alice"),
+           "needs_repair = opt \"the schema upgrade failed");
+  }
+  ic0mock_clear_time_override();
 }
