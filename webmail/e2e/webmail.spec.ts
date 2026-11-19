@@ -3534,7 +3534,7 @@ test('a block refused after Spam shows why, and its Undo still brings the messag
     timeout: 60_000,
   })
   await expect(note).toHaveText(
-    /gannet@sender\.example was not blocked: .*The message is in Spam\./
+    /Blocking gannet@sender\.example failed: .*The message is in Spam\./
   )
   await expect(note.getByRole('button', { name: 'Block sender' })).toHaveCount(
     0

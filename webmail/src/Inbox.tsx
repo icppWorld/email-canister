@@ -659,11 +659,12 @@ export function Inbox({
         ? (done) => ({
             label: 'Block sender',
             title: `Block ${sender}`,
-            // A refusal says what it leaves, and still offers the move's Undo
+            // A failure (its outcome unknown when the reply was lost) says where the
+            // message is, and still offers the move's Undo
             run: () =>
               block(sender, done).catch((e) =>
                 notify({
-                  text: `${sender} was not blocked: ${errorText(e)}. The message is in Spam.`,
+                  text: `Blocking ${sender} failed: ${errorText(e)}. The message is in Spam.`,
                   actions: [undo(backend, done, here)],
                 })
               ),
