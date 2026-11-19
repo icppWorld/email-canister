@@ -173,8 +173,8 @@ export type Mailbox = {
   // that members who change different flags at once keep both. Setting the
   // seen flag records that the caller opened the message.
   mail_set_flags(uids: bigint[], set: bigint, clear: bigint): Promise<void>
-  // For good: mail_move puts mail in Trash
-  mail_delete(uids: bigint[]): Promise<bigint>
+  // For good, the messages still in `folder`: mail_move puts mail in Trash
+  mail_delete(uids: bigint[], folder: bigint): Promise<bigint>
   mail_move(uids: bigint[], folder: bigint): Promise<bigint>
   mail_block(address: string): Promise<void>
   mail_unblock(address: string): Promise<void>

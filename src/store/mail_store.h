@@ -104,8 +104,10 @@ struct SeenBy {
 // Who opened the message, first first
 std::vector<SeenBy> seen_by(const Mailbox &box, int64_t uid);
 
-// Returns how many of the messages were deleted, or -1 on failure
-int64_t delete_messages(const Mailbox &box, const std::vector<uint64_t> &uids);
+// Deletes the messages still in `folder`, and returns how many, or -1 on
+// failure. One that left it meanwhile, as another member restored it, stays.
+int64_t delete_messages(const Mailbox &box, const std::vector<uint64_t> &uids,
+                        int64_t folder);
 
 // Moves the messages to `folder`, and deletes some of the mail that has been
 // in Trash or Spam too long. Returns how many moved, or -1 on failure.

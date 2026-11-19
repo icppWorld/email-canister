@@ -166,7 +166,11 @@ export const idlFactory: IDL.InterfaceFactory = ({ IDL }) => {
       [],
       []
     ),
-    mail_delete: IDL.Func([IDL.Text, IDL.Vec(IDL.Nat64)], [IDL.Nat64], []),
+    mail_delete: IDL.Func(
+      [IDL.Text, IDL.Vec(IDL.Nat64), IDL.Nat64],
+      [IDL.Nat64],
+      []
+    ),
     mail_move: IDL.Func(
       [IDL.Text, IDL.Vec(IDL.Nat64), IDL.Nat64],
       [IDL.Nat64],

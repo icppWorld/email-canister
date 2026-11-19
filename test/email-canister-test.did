@@ -190,7 +190,8 @@ service : () -> {
     // uids, the flags to set, the flags to clear. Setting seen records who
     // opened the message.
     "mail_set_flags" : (text, vec nat64, nat64, nat64) -> ();
-    "mail_delete" : (text, vec nat64) -> (nat64); // for good
+    // for good: uids and the folder they are in; one that left it stays
+    "mail_delete" : (text, vec nat64, nat64) -> (nat64);
     // uids and the folder to move them to; Trash and Spam keep mail 30 days
     "mail_move" : (text, vec nat64, nat64) -> (nat64);
     "mail_block" : (text, text) -> ();

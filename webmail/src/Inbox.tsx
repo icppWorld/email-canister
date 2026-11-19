@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type RefObject,
+} from 'react'
 import { Principal } from '@icp-sdk/core/principal'
 
 import {
@@ -6,6 +13,8 @@ import {
   FLAG_FLAGGED,
   FLAG_SEEN,
   FOLDER_INBOX,
+  FOLDER_SPAM,
+  FOLDER_TRASH,
   MESSAGE_QUARANTINED,
   MESSAGE_QUEUED,
   type Mailbox,
@@ -13,20 +22,99 @@ import {
   type Summary,
 } from './api'
 import type { Draft } from './Compose'
-import { formatTime, memberName } from './format'
-import { Icon } from './Icon'
+import { formatNs, formatTime, memberName } from './format'
+import { Icon, type IconName } from './Icon'
 import { MessageBody } from './MessageBody'
 import { deliveredVia, parseMail, saveFile, type ParsedMail } from './mime'
+import type { Toast } from './Toast'
 
 const PAGE_SIZE = 50n
 const REFRESH_MS = 20_000
+// The most messages the canister lists, flags, moves or deletes in one call
+const BATCH = 100
+
+export type Folder = 'inbox' | 'trash' | 'spam'
+
+const FOLDERS: Record<Folder, { number: bigint; name: string }> = {
+  inbox: { number: FOLDER_INBOX, name: 'the Inbox' },
+  trash: { number: FOLDER_TRASH, name: 'Trash' },
+  spam: { number: FOLDER_SPAM, name: 'Spam' },
+}
+
+export const isFolder = (view: string): view is Folder =>
+  Object.hasOwn(FOLDERS, view)
+
+// What can be done to a message, by the folder it is in
+type Action = {
+  label: string
+  icon: IconName
+  danger?: true // it cannot be undone
+  run: (uids: bigint[]) => Promise<unknown>
+}
+
+// Runs an action, showing a refusal with onError. A new action clears the
+// refusal shown before, and keeps one its own work shows.
+async function attempt(
+  run: () => Promise<unknown>,
+  onError: (text: string) => void
+): Promise<void> {
+  onError('')
+  try {
+    await run()
+  } catch (e) {
+    onError(errorText(e))
+  }
+}
+
+// A call for many messages, in parts the canister takes. Returns the uids it
+// got through, and the refusal that stopped it.
+async function inBatches(
+  uids: bigint[],
+  call: (part: bigint[]) => Promise<unknown>
+): Promise<{ done: bigint[]; error?: unknown }> {
+  for (let at = 0; at < uids.length; at += BATCH) {
+    try {
+      await call(uids.slice(at, at + BATCH))
+    } catch (error) {
+      return { done: uids.slice(0, at), error }
+    }
+  }
+  return { done: uids }
+}
+
+// "Message", "this message" or "3 messages"
+const messages = (count: number, one: string) =>
+  count === 1 ? one : `${count} messages`
+
+// The flags that star a message, or take its star off
+const starring = (flags: bigint): [bigint, bigint] =>
+  flags & FLAG_FLAGGED ? [0n, FLAG_FLAGGED] : [FLAG_FLAGGED, 0n]
+
+// Brings messages back to the folder they left, and unblocks an address. Made
+// here, so the toast holds only what it needs.
+function undo(
+  backend: Mailbox,
+  uids: bigint[],
+  from: bigint,
+  unblock?: string
+): NonNullable<Toast['action']> {
+  return {
+    label: 'Undo',
+    reload: true,
+    run: async () => {
+      if (unblock) await backend.mail_unblock(unblock)
+      const { error } = await inBatches(uids, (part) =>
+        backend.mail_move(part, from)
+      )
+      if (error) throw error
+    },
+  }
+}
 
 function when(summary: Summary): string {
-  const ms =
-    summary.sent_at > 0n
-      ? Number(summary.sent_at) * 1000
-      : Number(summary.received_ns / 1_000_000n)
-  return formatTime(ms)
+  return summary.sent_at > 0n
+    ? formatTime(Number(summary.sent_at) * 1000)
+    : formatNs(summary.received_ns)
 }
 
 function senderOf(summary: Summary): string {
@@ -48,7 +136,9 @@ function Reader({
   principal,
   shared,
   summary,
-  onDeleted,
+  touched,
+  actions,
+  onBlock,
   onReply,
   onFlags,
   onCounts,
@@ -58,7 +148,12 @@ function Reader({
   shared: boolean // the mailbox has other members, or had
   onCounts: () => void // the mailbox's unread count may have changed
   summary: Summary
-  onDeleted: () => void
+  // The flags changed on this page since each message started loading, here
+  // or in the list: its reply must not undo them
+  touched: RefObject<Map<bigint, bigint>>
+  actions: Action[] // the folder's, for this message
+  // Blocks the address and files the message in Spam; absent in Trash
+  onBlock?: (address: string) => Promise<void>
   onReply: (draft: Omit<Draft, 'from'>) => void // from the mailbox shown
   // The flags set and cleared, applied to the latest state: another change
   // may have landed while this one was under way
@@ -77,9 +172,6 @@ function Reader({
   const [state, setState] = useState(summary.state)
   // Who opened the message, and when each first did
   const [seenBy, setSeenBy] = useState<SeenBy[]>([])
-  // The flags changed here since the message started loading: its reply must
-  // not undo them
-  const changed = useRef(0n)
   const quarantined = state === MESSAGE_QUARANTINED
   const [formatted, setFormatted] = useState(false)
   const plain = quarantined && !formatted
@@ -92,6 +184,7 @@ function Reader({
   useEffect(() => {
     let current = true
     const listed = summary.flags
+    touched.current.set(summary.uid, 0n)
     ;(async () => {
       try {
         const full = await backend.mail_get(summary.uid)
@@ -102,7 +195,7 @@ function Reader({
           // Only what changed since the list loaded, as when another member
           // flagged or read it, so a change made here meanwhile stays
           const flags = full.summary.flags
-          const mine = changed.current
+          const mine = touched.current.get(summary.uid) ?? 0n
           onFlags(flags & ~listed & ~mine, listed & ~flags & ~mine)
         }
         // Every member who opens a message is recorded once, also after
@@ -111,7 +204,10 @@ function Reader({
           (seen) => seen.principal.toText() === principal
         )
         const unread = (full.summary.flags & FLAG_SEEN) === 0n
-        if (unread || !recorded) {
+        // Marked read or unread by hand while it loaded: that choice stays
+        const byHand =
+          ((touched.current.get(summary.uid) ?? 0n) & FLAG_SEEN) !== 0n
+        if ((unread || !recorded) && !byHand) {
           try {
             await backend.mail_set_flags([summary.uid], FLAG_SEEN, 0n)
             // A message already read by another member counts no differently
@@ -160,22 +256,28 @@ function Reader({
     }
   }, [raw, plain])
 
-  const remove = async () => {
-    if (!window.confirm('Delete this message permanently?')) return
-    try {
-      await backend.mail_delete([summary.uid])
-      if ((summary.flags & FLAG_SEEN) === 0n) onCounts()
-      onDeleted()
-    } catch (e) {
-      setActionError(errorText(e))
-    }
+  // A refusal stays beside the message
+  const act = (run: () => Promise<unknown>) => attempt(run, setActionError)
+
+  // The From address once the message is read, else the envelope's; none
+  // while it loads, so a quick click cannot block the wrong one
+  const sender = mail
+    ? mail.fromAddress || summary.envelope_from
+    : rawText
+      ? summary.envelope_from
+      : ''
+  const block = () => {
+    if (!onBlock || !sender) return
+    const asked =
+      `Block ${sender}? New mail from this address goes to Spam, for ` +
+      'everyone in this mailbox, and this message moves there now.'
+    if (window.confirm(asked)) act(() => onBlock(sender))
   }
 
   const toggleFlag = async () => {
-    const flagged = (summary.flags & FLAG_FLAGGED) !== 0n
-    const set = flagged ? 0n : FLAG_FLAGGED
-    const clear = flagged ? FLAG_FLAGGED : 0n
-    changed.current |= FLAG_FLAGGED
+    const [set, clear] = starring(summary.flags)
+    const uid = summary.uid
+    touched.current.set(uid, (touched.current.get(uid) ?? 0n) | FLAG_FLAGGED)
     try {
       await backend.mail_set_flags([summary.uid], set, clear)
       setActionError('')
@@ -207,9 +309,20 @@ function Reader({
         <button onClick={toggleFlag}>
           {summary.flags & FLAG_FLAGGED ? 'Unflag' : 'Flag'}
         </button>
-        <button className="danger" onClick={remove}>
-          Delete
-        </button>
+        {actions.map((action) => (
+          <button
+            key={action.label}
+            className={action.danger ? 'danger' : undefined}
+            onClick={() => act(() => action.run([summary.uid]))}
+          >
+            {action.label}
+          </button>
+        ))}
+        {onBlock && (
+          <button onClick={block} disabled={!sender}>
+            Block sender
+          </button>
+        )}
         {(shared ||
           seenBy.some((seen) => seen.principal.toText() !== principal)) && (
           <details className="seen-by">
@@ -220,9 +333,7 @@ function Reader({
                 return (
                   <li key={who}>
                     <span>{memberName(who, seen.name, principal)}</span>
-                    <span className="date">
-                      {formatTime(Number(seen.at_ns / 1_000_000n))}
-                    </span>
+                    <span className="date">{formatNs(seen.at_ns)}</span>
                   </li>
                 )
               })}
@@ -306,6 +417,8 @@ export function Inbox({
   backend,
   principal,
   shared,
+  folder,
+  notify,
   onReply,
   onCounts,
   refresh,
@@ -314,37 +427,50 @@ export function Inbox({
   backend: Mailbox
   principal: string
   shared: boolean
+  folder: Folder
+  notify: (toast: Toast) => void
   onCounts: () => void
   onReply: (draft: Omit<Draft, 'from'>) => void
   refresh: number
   onLoaded: () => void
 }) {
+  const here = FOLDERS[folder].number
   const [items, setItems] = useState<Summary[]>([])
   const [cursor, setCursor] = useState<[] | [bigint]>([])
   const [selected, setSelected] = useState<Summary | null>(null)
+  // The messages ticked for an action on all of them
+  const [checked, setChecked] = useState<ReadonlySet<bigint>>(new Set())
   const [query, setQuery] = useState('')
   const [activeQuery, setActiveQuery] = useState('')
   const [error, setError] = useState('')
   // Replies can arrive out of order, and only the newest may be shown
   const latestLoad = useRef(0)
+  // Flags set and mail moved here, which a reply read before them would undo
+  const changes = useRef(0)
   const olderShown = useRef(false)
+  const allBox = useRef<HTMLInputElement>(null)
+  const touched = useRef(new Map<bigint, bigint>())
 
   const load = useCallback(
     async (from: [] | [bigint], append: boolean, search: string) => {
       const request = ++latestLoad.current
-      try {
-        const page = search
-          ? await backend.mail_search({
+      const readPage = () =>
+        search
+          ? backend.mail_search({
               query: search,
-              folder: FOLDER_INBOX,
+              folder: here,
               cursor: from,
               limit: PAGE_SIZE,
             })
-          : await backend.mail_list({
-              folder: FOLDER_INBOX,
-              cursor: from,
-              limit: PAGE_SIZE,
-            })
+          : backend.mail_list({ folder: here, cursor: from, limit: PAGE_SIZE })
+      try {
+        let read = changes.current
+        let page = await readPage()
+        // Read before a change made here: read again, so the change stays
+        while (request === latestLoad.current && read !== changes.current) {
+          read = changes.current
+          page = await readPage()
+        }
         if (request !== latestLoad.current) return
         olderShown.current = append
         setItems((previous) =>
@@ -356,7 +482,7 @@ export function Inbox({
         if (request === latestLoad.current) setError(errorText(e))
       }
     },
-    [backend]
+    [backend, here]
   )
 
   useEffect(() => {
@@ -369,83 +495,338 @@ export function Inbox({
     return () => window.clearInterval(timer)
   }, [load, activeQuery, refresh, onLoaded])
 
-  const updateFlags = (uid: bigint, set: bigint, clear: bigint) => {
+  // A list load under way began before this change: its reply must not undo it
+  const updateFlags = (uids: bigint[], set: bigint, clear: bigint) => {
+    if (uids.length === 0 || (set | clear) === 0n) return
+    changes.current++
+    const changed = new Set(uids)
     const apply = (m: Summary) =>
-      m.uid === uid ? { ...m, flags: (m.flags | set) & ~clear } : m
+      changed.has(m.uid) ? { ...m, flags: (m.flags | set) & ~clear } : m
     setItems((previous) => previous.map(apply))
     setSelected((previous) => previous && apply(previous))
   }
 
+  // Takes messages that moved or were deleted off the list and the reader
+  const drop = (uids: bigint[]) => {
+    if (uids.length === 0) return
+    changes.current++
+    const gone = new Set(uids)
+    setItems((previous) => previous.filter((m) => !gone.has(m.uid)))
+    setChecked((ticked) => new Set([...ticked].filter((uid) => !gone.has(uid))))
+    setSelected((previous) =>
+      previous && gone.has(previous.uid) ? null : previous
+    )
+  }
+
+  const anyUnread = (uids: bigint[]) => {
+    const asked = new Set(uids)
+    return items.some((m) => asked.has(m.uid) && (m.flags & FLAG_SEEN) === 0n)
+  }
+
+  // Out of this folder, for the caller to say so. What moved before a
+  // refusal leaves the list.
+  const moveOut = async (uids: bigint[], to: bigint) => {
+    const result = await inBatches(uids, (part) => backend.mail_move(part, to))
+    if (anyUnread(result.done)) onCounts()
+    drop(result.done)
+    return result
+  }
+
+  const move = async (uids: bigint[], to: Folder) => {
+    const { done, error } = await moveOut(uids, FOLDERS[to].number)
+    if (done.length > 0) {
+      notify({
+        text: `${messages(done.length, 'Message')} moved to ${FOLDERS[to].name}`,
+        action: undo(backend, done, here),
+      })
+    }
+    if (error) throw error
+  }
+
+  // For good, once confirmed
+  const deleteForever = async (uids: bigint[]) => {
+    if (
+      !window.confirm(
+        `Delete ${messages(uids.length, 'this message')} forever?`
+      )
+    )
+      return
+    const { done, error } = await inBatches(uids, (part) =>
+      backend.mail_delete(part, here)
+    )
+    if (anyUnread(done)) onCounts()
+    drop(done)
+    if (error) throw error
+  }
+
+  const flag = async (uids: bigint[], set: bigint, clear: bigint) => {
+    // Before the call, so a message loading in the reader keeps the change
+    for (const uid of uids) {
+      if (touched.current.has(uid))
+        touched.current.set(uid, touched.current.get(uid)! | set | clear)
+    }
+    const { done, error } = await inBatches(uids, (part) =>
+      backend.mail_set_flags(part, set, clear)
+    )
+    updateFlags(done, set, clear)
+    if ((set | clear) & FLAG_SEEN) onCounts()
+    if (error) throw error
+  }
+
+  // Every message in Trash or Spam, page by page
+  const empty = async () => {
+    if (
+      !window.confirm(
+        `Delete every message in ${FOLDERS[folder].name} forever?`
+      )
+    )
+      return
+    try {
+      for (;;) {
+        const page = await backend.mail_list({
+          folder: here,
+          cursor: [],
+          limit: BigInt(BATCH),
+        })
+        if (page.items.length === 0) break
+        // None of them could go: stop rather than ask again forever
+        const uids = page.items.map((m) => m.uid)
+        if ((await backend.mail_delete(uids, here)) === 0n) break
+      }
+    } finally {
+      // Also after a refusal: what went before is gone from the list
+      setSelected(null)
+      await load([], false, activeQuery)
+    }
+  }
+
+  // Blocked first, then out to Spam: a refused block moves nothing. Undo
+  // leaves a block made before alone.
+  const block = async (uid: bigint, address: string) => {
+    const before = await backend.mail_blocked()
+    // As the canister keeps it: only A to Z in lower case
+    const kept = address.replace(/[A-Z]/g, (c) => c.toLowerCase())
+    const already = before.some((b) => b.address === kept)
+    await backend.mail_block(address)
+    // A refused move leaves the block in place, for Undo to take back
+    const { done, error } =
+      folder === 'spam'
+        ? { done: [], error: undefined }
+        : await moveOut([uid], FOLDER_SPAM)
+    notify({
+      text: already ? `${address} was blocked already` : `Blocked ${address}`,
+      action:
+        already && done.length === 0
+          ? undefined
+          : undo(backend, done, here, already ? undefined : address),
+    })
+    if (error) throw error
+  }
+
+  // A refusal in the list shows above it
+  const act = (run: () => Promise<unknown>) => attempt(run, setError)
+
+  const toTrash: Action = {
+    label: 'Delete',
+    icon: 'trash',
+    run: (uids) => move(uids, 'trash'),
+  }
+  const toSpam: Action = {
+    label: 'Report spam',
+    icon: 'spam',
+    run: (uids) => move(uids, 'spam'),
+  }
+  const restore: Action = {
+    label: folder === 'spam' ? 'Not spam' : 'Restore',
+    icon: folder === 'spam' ? 'inbox' : 'undo',
+    run: (uids) => move(uids, 'inbox'),
+  }
+  const forever: Action = {
+    label: 'Delete forever',
+    icon: 'trash',
+    danger: true,
+    run: deleteForever,
+  }
+  const markRead: Action = {
+    label: 'Mark read',
+    icon: 'mailOpen',
+    run: (uids) => flag(uids, FLAG_SEEN, 0n),
+  }
+  const markUnread: Action = {
+    label: 'Mark unread',
+    icon: 'mail',
+    run: (uids) => flag(uids, 0n, FLAG_SEEN),
+  }
+  // A message's own, in the reader; the ticked ones can also be read or not
+  const actions = folder === 'inbox' ? [toTrash, toSpam] : [restore, forever]
+  const bulkActions =
+    folder === 'inbox' ? [...actions, markRead, markUnread] : actions
+
+  const tick = (uid: bigint, on: boolean) =>
+    setChecked((ticked) => {
+      const next = new Set(ticked)
+      if (on) next.add(uid)
+      else next.delete(uid)
+      return next
+    })
+  const ticked = items.filter((m) => checked.has(m.uid)).map((m) => m.uid)
+  const allTicked = items.length > 0 && ticked.length === items.length
+  const someTicked = ticked.length > 0 && !allTicked
+  useEffect(() => {
+    if (allBox.current) allBox.current.indeterminate = someTicked
+  }, [someTicked])
+
   return (
     <div className="split">
       <section className="list" aria-label="Messages">
-        <form
-          className="search"
-          role="search"
-          onSubmit={(e) => {
-            e.preventDefault()
-            setSelected(null)
-            setActiveQuery(query.trim())
-          }}
-        >
-          <input
-            aria-label="Search mail"
-            placeholder="Search mail"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
-          {activeQuery && (
-            <button
-              type="button"
-              onClick={() => {
-                setQuery('')
-                setActiveQuery('')
-              }}
-            >
-              Clear
-            </button>
+        <div className="list-head">
+          <form
+            className="search"
+            role="search"
+            onSubmit={(e) => {
+              e.preventDefault()
+              setSelected(null)
+              setActiveQuery(query.trim())
+            }}
+          >
+            <input
+              aria-label="Search mail"
+              placeholder={
+                folder === 'inbox'
+                  ? 'Search mail'
+                  : `Search ${FOLDERS[folder].name}`
+              }
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+            {activeQuery && (
+              <button
+                type="button"
+                onClick={() => {
+                  setQuery('')
+                  setActiveQuery('')
+                }}
+              >
+                Clear
+              </button>
+            )}
+          </form>
+          {items.length > 0 && (
+            <div className="bulk" role="toolbar" aria-label="Selected messages">
+              <input
+                ref={allBox}
+                type="checkbox"
+                aria-label="Select all"
+                checked={allTicked}
+                onChange={(e) =>
+                  setChecked(
+                    new Set(e.target.checked ? items.map((m) => m.uid) : [])
+                  )
+                }
+              />
+              {ticked.length > 0 ? (
+                <>
+                  <span className="hint">{ticked.length} selected</span>
+                  {bulkActions.map((action) => (
+                    <button
+                      key={action.label}
+                      className="small"
+                      onClick={() => act(() => action.run(ticked))}
+                    >
+                      {action.label}
+                    </button>
+                  ))}
+                </>
+              ) : (
+                folder !== 'inbox' &&
+                !activeQuery && (
+                  <button className="small" onClick={() => act(empty)}>
+                    Empty {FOLDERS[folder].name}
+                  </button>
+                )
+              )}
+            </div>
           )}
-        </form>
+        </div>
         {error && (
           <p className="error" role="alert">
             {error}
           </p>
         )}
         {items.length === 0 && !error && (
-          <p className="hint">{activeQuery ? 'No matches.' : 'No mail yet.'}</p>
+          <p className="hint">
+            {activeQuery
+              ? 'No matches.'
+              : folder === 'inbox'
+                ? 'No mail yet.'
+                : `Nothing in ${FOLDERS[folder].name}.`}
+          </p>
         )}
         <ul>
-          {items.map((m) => (
-            <li key={m.uid.toString()}>
-              <button
-                className={
-                  (m.flags & FLAG_SEEN) === 0n ? 'message unread' : 'message'
-                }
-                aria-current={selected?.uid === m.uid}
-                onClick={() => setSelected(m)}
-              >
-                <span className="who">
-                  {m.flags & FLAG_FLAGGED ? (
-                    <Icon name="star" label="Flagged" />
-                  ) : null}
-                  {senderOf(m)}
+          {items.map((m) => {
+            const title =
+              m.state === MESSAGE_QUEUED
+                ? 'Arriving…'
+                : m.subject || '(no subject)'
+            const flagged = (m.flags & FLAG_FLAGGED) !== 0n
+            const unread = (m.flags & FLAG_SEEN) === 0n
+            const rowActions =
+              folder === 'inbox'
+                ? [toTrash, unread ? markRead : markUnread]
+                : actions
+            return (
+              <li key={m.uid.toString()} className="message-row">
+                <input
+                  type="checkbox"
+                  className="pick"
+                  aria-label={`Select ${title}`}
+                  checked={checked.has(m.uid)}
+                  onChange={(e) => tick(m.uid, e.target.checked)}
+                />
+                <button
+                  className={flagged ? 'bare star on' : 'bare star'}
+                  aria-label={flagged ? `Unstar ${title}` : `Star ${title}`}
+                  aria-pressed={flagged}
+                  title={flagged ? 'Starred' : 'Not starred'}
+                  onClick={() => act(() => flag([m.uid], ...starring(m.flags)))}
+                >
+                  <Icon name="star" />
+                </button>
+                <button
+                  className={unread ? 'message unread' : 'message'}
+                  aria-current={selected?.uid === m.uid}
+                  onClick={() => setSelected(m)}
+                >
+                  <span className="who">{senderOf(m)}</span>
+                  <span className="date">{when(m)}</span>
+                  <span className="subject">
+                    {title}
+                    {m.attachments > 0n ? (
+                      <Icon name="paperclip" label="Has attachments" />
+                    ) : null}
+                    {m.state === MESSAGE_QUARANTINED
+                      ? ' (could not be processed)'
+                      : ''}
+                  </span>
+                  <span className="preview">{m.preview}</span>
+                </button>
+                {/* On hover, for a pointer; the boxes and the reader do the same */}
+                <span className="row-actions">
+                  {rowActions.map((action) => (
+                    <button
+                      key={action.label}
+                      className="bare"
+                      aria-label={`${action.label}: ${title}`}
+                      title={action.label}
+                      onClick={() => act(() => action.run([m.uid]))}
+                    >
+                      <Icon name={action.icon} />
+                    </button>
+                  ))}
                 </span>
-                <span className="date">{when(m)}</span>
-                <span className="subject">
-                  {m.state === MESSAGE_QUEUED
-                    ? 'Arriving…'
-                    : m.subject || '(no subject)'}
-                  {m.attachments > 0n ? (
-                    <Icon name="paperclip" label="Has attachments" />
-                  ) : null}
-                  {m.state === MESSAGE_QUARANTINED
-                    ? ' (could not be processed)'
-                    : ''}
-                </span>
-                <span className="preview">{m.preview}</span>
-              </button>
-            </li>
-          ))}
+              </li>
+            )
+          })}
         </ul>
         {cursor.length > 0 && (
           <button
@@ -464,12 +845,15 @@ export function Inbox({
           key={selected.uid.toString()}
           backend={backend}
           summary={selected}
-          onDeleted={() => {
-            setSelected(null)
-            load([], false, activeQuery)
-          }}
+          touched={touched}
+          actions={actions}
+          onBlock={
+            folder === 'trash'
+              ? undefined
+              : (address) => block(selected.uid, address)
+          }
           onReply={onReply}
-          onFlags={(set, clear) => updateFlags(selected.uid, set, clear)}
+          onFlags={(set, clear) => updateFlags([selected.uid], set, clear)}
         />
       ) : (
         <div className="reader empty">Select a message to read it.</div>

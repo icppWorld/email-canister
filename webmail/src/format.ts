@@ -24,3 +24,8 @@ const timeFormat = new Intl.DateTimeFormat(undefined, {
 export function formatTime(ms: number): string {
   return timeFormat.format(ms)
 }
+
+// A time the canister gives, in nanoseconds
+export function formatNs(ns: bigint): string {
+  return formatTime(Number(ns / 1_000_000n))
+}
