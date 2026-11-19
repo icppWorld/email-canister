@@ -508,6 +508,9 @@ test('refuses an unknown role, a missing token, a path outside the brand and uns
     brand({ brand: editBrand({ roles: { accent: '#000000' } }) }).output
   ).toContain('unknown role "accent"')
   expect(
+    brand({ brand: editBrand({ roles: { 'action-text': null } }) }).output
+  ).toContain('role action-text is null')
+  expect(
     brand({ brand: editBrand({ roles: { action: '{nope}' } }) }).output
   ).toContain('token {nope} is not in tokens.json')
   expect(

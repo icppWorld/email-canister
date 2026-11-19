@@ -3537,13 +3537,81 @@ test('a block refused after Spam shows why, and its Undo still brings the messag
   await expect(note.getByRole('button', { name: 'Block sender' })).toHaveCount(
     0
   )
-  const alice = await asAlice()
-  expect(await blockedAddresses(alice)).not.toContain('gannet@sender.example')
-
+  // Undo first, before the note's time runs out
   await undo(page)
   await expect(messageRow(page, 'Refused gannet')).toHaveCount(1)
+  const alice = await asAlice()
+  expect(await blockedAddresses(alice)).not.toContain('gannet@sender.example')
   await openMail(page, 'gannet')
   await expect(page.getByTestId('subject')).toHaveText('Refused gannet')
+  await context.close()
+})
+
+test("a refused note action leaves a newer note's Undo out of its own note", async ({
+  browser,
+}) => {
+  for (const [subject, from] of [
+    ['Late shag', 'Shag <shag@sender.example>'],
+    ['Later smew', 'Smew <smew@sender.example>'],
+  ]) {
+    deliver({ subject, body: '<p>A bird.</p>', from })
+  }
+  await waitDrained()
+  const { context, page } = await signedIn(browser, USER_A)
+  // The block fails, but only once the test lets it. The list of blocked
+  // addresses it reads first goes through; its name holds mail_block too.
+  let refuse = () => {}
+  const refused = new Promise<void>((resolve) => (refuse = resolve))
+  let reached = () => {}
+  const blocking = new Promise<void>((resolve) => (reached = resolve))
+  await page.route('**/api/*/canister/*/*', async (route) => {
+    if (
+      !callsTo(route.request(), 'mail_block') ||
+      callsTo(route.request(), 'mail_blocked')
+    )
+      return route.fallback()
+    reached()
+    await refused
+    await route.abort('failed')
+  })
+  await openMail(page, 'shag')
+  await expect(page.getByTestId('subject')).toHaveText('Late shag')
+  await spamFromReader(page)
+  await toastButton(page, 'Block sender')
+  await blocking
+  // Meanwhile another message goes to Trash, with a note of its own
+  await openMail(page, 'smew')
+  await expect(page.getByTestId('subject')).toHaveText('Later smew')
+  await reader(page).getByRole('button', { name: 'Delete' }).click()
+  const note = page.getByTestId('toast')
+  await expect(note).toHaveText(/Trash/)
+  // Held under the pointer, so it is still shown when the refusal comes
+  await note.hover()
+  refuse()
+  // The refusal shows, without the Spam move's Undo, which a person would
+  // take for the newer note's
+  await expect(note).not.toHaveText(/Trash/, { timeout: 60_000 })
+  await expect(note.getByRole('button', { name: 'Undo' })).toHaveCount(0)
+  await context.close()
+})
+
+test("the reader's Mark unread waits until its own mark as read has landed", async ({
+  browser,
+}) => {
+  deliver({ subject: 'Waiting merlin', body: '<p>A merlin.</p>' })
+  await waitDrained()
+  const { context, page } = await signedIn(browser, USER_A)
+  const marked = await hold(page, 'mail_set_flags')
+  await openMail(page, 'merlin')
+  await expect(page.getByTestId('subject')).toHaveText('Waiting merlin')
+  await marked.seen
+  await openMenu(page, 'More actions')
+  const item = menu(page, 'More actions').getByRole('button', {
+    name: 'Mark unread',
+  })
+  await expect(item).toBeDisabled()
+  marked.release()
+  await expect(item).toBeEnabled()
   await context.close()
 })
 
@@ -3644,11 +3712,40 @@ test('a menu gives the focus back to its button, and closes when the focus leave
   await expect(blockedItem).toBeHidden()
   await expect(last).not.toBeFocused()
 
-  // A window that changes size leaves no list behind
+  // A window that changes width leaves no list behind
   await openMenu(page, 'More')
   await expect(blockedItem).toBeVisible()
   await page.setViewportSize({ width: 900, height: 700 })
   await expect(blockedItem).toBeHidden()
+  // Only the height, as a phone's keyboard or toolbar changes it: it stays
+  await openMenu(page, 'More')
+  await page.setViewportSize({ width: 900, height: 500 })
+  await page.waitForTimeout(200)
+  await expect(blockedItem).toBeVisible()
+  await context.close()
+})
+
+test('the compose window lies above an open menu', async ({ browser }) => {
+  const { context, page } = await signedIn(browser, USER_A)
+  await page.setViewportSize({ width: 1280, height: 420 })
+  await expect(page.getByTestId('address')).toHaveText(`alice@${DOMAIN}`)
+  await compose(page, 'Over the menu')
+  await openMenu(page, 'More')
+  const list = menu(page, 'More').locator('.menu-items')
+  await expect(list).toBeVisible()
+  const box = (await list.boundingBox())!
+  const dialog = (await page.locator('.dialog').boundingBox())!
+  // A point of the list that the compose window covers
+  const x = Math.max(box.x, dialog.x) + 4
+  const y = Math.max(box.y, dialog.y) + 4
+  expect(x).toBeLessThan(box.x + box.width)
+  expect(y).toBeLessThan(box.y + box.height)
+  expect(
+    await page.evaluate(
+      ([x, y]) => !!document.elementFromPoint(x, y)?.closest('.dialog'),
+      [x, y]
+    )
+  ).toBe(true)
   await context.close()
 })
 

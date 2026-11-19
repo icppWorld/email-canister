@@ -253,11 +253,13 @@ export function loadBrand(folder) {
     return resolve(target, [...seen, alias])
   }
 
-  for (const role of Object.keys(own.roles ?? {})) {
+  for (const [role, value] of Object.entries(own.roles ?? {})) {
     if (!(role in defaults.roles))
       fail(
         `unknown role "${role}"; the roles are ${Object.keys(defaults.roles).join(', ')}`
       )
+    if (value === null)
+      fail(`role ${role} is null: leave it out to use the default`)
   }
   // A brand without a dark theme stays light, rather than mixing with grey dark defaults
   const hasDark =
@@ -275,7 +277,7 @@ export function loadBrand(folder) {
     })
   )
   for (const [role, leader] of Object.entries(FOLLOWS)) {
-    if (own.roles?.[role] == null) roles[role] = roles[leader]
+    if (own.roles?.[role] === undefined) roles[role] = roles[leader]
   }
   // A family may name one of the tokens file's type families, as "{body}"
   const families = Object.fromEntries(

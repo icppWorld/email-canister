@@ -1,6 +1,6 @@
 // A ⋮ button that opens a short list of buttons. Choosing one, a click
-// elsewhere (the message's frame included), focus moving out, a resize, or
-// Escape closes it.
+// elsewhere (the message's frame included), focus moving out, a change of
+// width, or Escape closes it.
 
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 
@@ -36,15 +36,20 @@ export function Menu({
     }
     // A click in the message's frame reaches the page only as a blur
     const away = () => close()
+    // A phone's keyboard and toolbar change only the height
+    const width = window.innerWidth
+    const resized = () => {
+      if (window.innerWidth !== width) close()
+    }
     document.addEventListener('pointerdown', outside)
     document.addEventListener('keydown', escape)
     window.addEventListener('blur', away)
-    window.addEventListener('resize', away)
+    window.addEventListener('resize', resized)
     return () => {
       document.removeEventListener('pointerdown', outside)
       document.removeEventListener('keydown', escape)
       window.removeEventListener('blur', away)
-      window.removeEventListener('resize', away)
+      window.removeEventListener('resize', resized)
     }
   }, [open])
 

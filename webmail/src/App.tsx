@@ -252,8 +252,13 @@ export function App() {
     try {
       await action.run()
     } catch (e) {
+      // Unless a newer note took its place meanwhile, whose own actions the
+      // older ones must not stand in for
       if (session === latestBackend.current)
-        setToast({ text: errorText(e), actions: others })
+        setToast((shown) => ({
+          text: errorText(e),
+          actions: shown === null ? others : undefined,
+        }))
     } finally {
       if (action.reload && session === latestBackend.current) {
         setRefresh((count) => count + 1)

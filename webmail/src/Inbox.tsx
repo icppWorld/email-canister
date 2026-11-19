@@ -54,11 +54,12 @@ type Action = {
   run: (uids: bigint[]) => Promise<unknown>
 }
 
-// One in the reader's ⋮ menu. needsSender: it waits until the sender's address
-// is known.
+// One in the reader's ⋮ menu. waits: it waits until the message has loaded,
+// with its sender's address known and its own mark as read made, so that the
+// mark cannot land after it.
 type MoreAction = {
   label: string
-  needsSender?: true
+  waits?: true
   run: (sender: string) => Promise<unknown>
 }
 
@@ -187,6 +188,8 @@ function Reader({
   const [state, setState] = useState(summary.state)
   // Who opened the message, and when each first did
   const [seenBy, setSeenBy] = useState<SeenBy[]>([])
+  // Its mark as read is made, or was not needed
+  const [settled, setSettled] = useState(false)
   const quarantined = state === MESSAGE_QUARANTINED
   const [formatted, setFormatted] = useState(false)
   const plain = quarantined && !formatted
@@ -245,6 +248,8 @@ function Reader({
         }
       } catch (e) {
         if (current) setError(errorText(e))
+      } finally {
+        if (current) setSettled(true)
       }
     })()
     return () => {
@@ -335,7 +340,7 @@ function Reader({
             {more.map((action) => (
               <button
                 key={action.label}
-                disabled={action.needsSender && !sender}
+                disabled={action.waits && (!sender || !settled)}
                 onClick={() => act(() => action.run(sender))}
               >
                 {action.label}
@@ -663,6 +668,7 @@ export function Inbox({
       ? [
           {
             label: 'Mark unread',
+            waits: true,
             // Back to the list, unless another message opened meanwhile
             run: async () => {
               await markUnread.run([uid])
@@ -674,7 +680,7 @@ export function Inbox({
         ? [
             {
               label: 'Block sender',
-              needsSender: true,
+              waits: true,
               run: (sender) => block(sender, []),
             },
           ]
