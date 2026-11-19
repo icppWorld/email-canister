@@ -25,6 +25,7 @@ email-canister grows in small releases, driven by running it for real mailboxes.
 - The user's mailbox experience, further:
   - plain mail from more mail services in the brand's colours;
   - keyboard shortcuts, and the focus kept inside the compose window in full screen;
+  - a note when a new webmail version is deployed, with a button to reload, so a tab left open never calls a backend whose interface changed under it;
   - at phone width, the device's back gesture returning from a message to the list;
   - the smaller webmail and Admin panel items noted during v0.2.0 and v0.3.0, among them every row action checking that the Admin panel's list is current, and errors shown without the agent's call details.
 - Provisioner principals that may create and suspend mailboxes without being admins, for automated onboarding.
