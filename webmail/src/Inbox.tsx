@@ -52,15 +52,15 @@ type Action = {
   run: (uids: bigint[]) => Promise<unknown>
 }
 
-// Runs an action, showing a refusal with onError, and clearing one shown
-// before once it goes through
+// Runs an action, showing a refusal with onError. A new action clears the
+// refusal shown before, and keeps one its own work shows.
 async function attempt(
   run: () => Promise<unknown>,
   onError: (text: string) => void
 ): Promise<void> {
+  onError('')
   try {
     await run()
-    onError('')
   } catch (e) {
     onError(errorText(e))
   }
@@ -601,20 +601,23 @@ export function Inbox({
   // leaves a block made before alone.
   const block = async (uid: bigint, address: string) => {
     const before = await backend.mail_blocked()
-    const already = before.some((b) => b.address === address.toLowerCase())
+    // As the canister keeps it: only A to Z in lower case
+    const kept = address.replace(/[A-Z]/g, (c) => c.toLowerCase())
+    const already = before.some((b) => b.address === kept)
     await backend.mail_block(address)
-    const filed = folder === 'spam' ? [] : [uid]
-    if (filed.length > 0) {
-      const { error } = await moveOut(filed, FOLDER_SPAM)
-      if (error) throw error
-    }
+    // A refused move leaves the block in place, for Undo to take back
+    const { done, error } =
+      folder === 'spam'
+        ? { done: [], error: undefined }
+        : await moveOut([uid], FOLDER_SPAM)
     notify({
       text: already ? `${address} was blocked already` : `Blocked ${address}`,
       action:
-        already && filed.length === 0
+        already && done.length === 0
           ? undefined
-          : undo(backend, filed, here, already ? undefined : address),
+          : undo(backend, done, here, already ? undefined : address),
     })
+    if (error) throw error
   }
 
   // A refusal in the list shows above it

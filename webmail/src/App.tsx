@@ -153,6 +153,8 @@ export function App() {
   const onLoaded = useCallback(() => setRefreshing(false), [])
   const [draft, setDraft] = useState<Draft | null>(null)
   const [toast, setToast] = useState<Toast | null>(null)
+  // Under the pointer or holding the focus, the note stays until let go
+  const [toastHeld, setToastHeld] = useState(false)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
   // Whose sign-in ended while the page was open, so only they get the draft back
@@ -224,11 +226,13 @@ export function App() {
     return () => window.clearInterval(timer)
   }, [backend, reloadMailboxes])
 
+  // A note that closed while held, as by its own button, lets go
+  useEffect(() => setToastHeld(false), [toast])
   useEffect(() => {
-    if (!toast) return
+    if (!toast || toastHeld) return
     const timer = window.setTimeout(() => setToast(null), TOAST_MS)
     return () => window.clearTimeout(timer)
-  }, [toast])
+  }, [toast, toastHeld])
 
   // A toast's action, such as Undo
   const runToast = async (action: NonNullable<Toast['action']>) => {
@@ -548,6 +552,7 @@ export function App() {
         toast={toast}
         onAction={runToast}
         onClose={() => setToast(null)}
+        onHold={setToastHeld}
       />
     </div>
   )

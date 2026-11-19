@@ -3190,5 +3190,96 @@ test('Empty Trash refused part way leaves only what is still there', async ({
   await expect(page.locator('button.message')).toHaveCount(20, {
     timeout: 2_000,
   })
+
+  // The rest goes, but the list cannot load again: that refusal stays shown
+  await page.unrouteAll({ behavior: 'wait' })
+  let lists = 0
+  await page.route('**/api/*/canister/*/*', (route) =>
+    callsTo(route.request(), 'mail_list') && ++lists > 2
+      ? route.abort('failed')
+      : route.fallback()
+  )
+  page.once('dialog', (dialog) => dialog.accept())
+  await page.getByRole('button', { name: 'Empty Trash' }).click()
+  // The reload and the agent's 3 tries more, then at once, not at the next
+  // timed refresh
+  await expect.poll(() => lists, { timeout: 60_000 }).toBe(6)
+  await expect(
+    page.getByRole('region', { name: 'Messages' }).getByRole('alert')
+  ).toBeVisible({ timeout: 2_000 })
+  await context.close()
+})
+
+test('a block whose move is refused still offers Undo', async ({ browser }) => {
+  deliver({
+    subject: 'Stubborn dipper',
+    body: '<p>A dipper.</p>',
+    from: 'Dipper <dipper@sender.example>',
+  })
+  await waitDrained()
+  const { context, page } = await signedIn(browser, USER_A)
+  await openMail(page, 'dipper')
+  await expect(page.getByTestId('subject')).toHaveText('Stubborn dipper')
+  await page.route('**/api/*/canister/*/*', (route) =>
+    callsTo(route.request(), 'mail_move')
+      ? route.abort('failed')
+      : route.fallback()
+  )
+  page.once('dialog', (dialog) => dialog.accept())
+  await page.getByRole('button', { name: 'Block sender' }).click()
+  const note = page.getByTestId('toast')
+  await expect(note).toHaveText(/Blocked dipper@sender.example/, {
+    timeout: 60_000,
+  })
+  await page.unrouteAll({ behavior: 'wait' })
+  await note.getByRole('button', { name: 'Undo' }).click()
+  const alice = await asAlice()
+  await expect
+    .poll(async () => (await alice.mail_blocked('alice')).map((b) => b.address))
+    .not.toContain('dipper@sender.example')
+  await context.close()
+})
+
+test('a block made before of an address with letters beyond A to Z is not undone', async ({
+  browser,
+}) => {
+  const alice = await asAlice()
+  // The canister keeps it as given, past A to Z
+  await alice.mail_block('alice', 'Ärla@sender.example')
+  deliver({
+    subject: 'Foreign grosbeak',
+    body: '<p>A grosbeak.</p>',
+    from: 'Ärla <Ärla@sender.example>',
+  })
+  await waitDrained()
+  const { context, page } = await signedIn(browser, USER_A)
+  await folder(page, 'Spam')
+  await messageRow(page, 'Foreign grosbeak').click()
+  page.once('dialog', (dialog) => dialog.accept())
+  await page.getByRole('button', { name: 'Block sender' }).click()
+  const note = page.getByTestId('toast')
+  await expect(note).toHaveText(/Ärla@sender.example was blocked already/)
+  await expect(note.getByRole('button', { name: 'Undo' })).toHaveCount(0)
+  await alice.mail_unblock('alice', 'Ärla@sender.example')
+  await context.close()
+})
+
+test('a note holding the focus stays until the focus leaves', async ({
+  browser,
+}) => {
+  deliver({ subject: 'Lingering tanager', body: '<p>A tanager.</p>' })
+  await waitDrained()
+  const { context, page } = await signedIn(browser, USER_A)
+  await search(page, 'tanager')
+  await messageRow(page, 'Lingering tanager').hover()
+  await page.getByRole('button', { name: 'Delete: Lingering tanager' }).click()
+  const note = page.getByTestId('toast')
+  await expect(note).toHaveText(/moved to Trash/)
+  await note.getByRole('button', { name: 'Undo' }).focus()
+  // Longer than a note stays by itself
+  await page.waitForTimeout(9_000)
+  await expect(note.getByRole('button', { name: 'Undo' })).toBeVisible()
+  await note.getByRole('button', { name: 'Undo' }).click()
+  await expect(messageRow(page, 'Lingering tanager')).toHaveCount(1)
   await context.close()
 })

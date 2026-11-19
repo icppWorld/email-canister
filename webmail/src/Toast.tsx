@@ -11,15 +11,28 @@ export function ToastBar({
   toast,
   onAction,
   onClose,
+  onHold,
 }: {
   toast: Toast | null
   onAction: (action: NonNullable<Toast['action']>) => void
   onClose: () => void
+  // True while the pointer is over it or the focus is in it
+  onHold: (held: boolean) => void
 }) {
   const action = toast?.action
   // The live region stays on the page, so a new note is announced
   return (
-    <div className="toast" role="status" data-testid="toast">
+    <div
+      className="toast"
+      role="status"
+      data-testid="toast"
+      onMouseEnter={() => onHold(true)}
+      onMouseLeave={() => onHold(false)}
+      onFocus={() => onHold(true)}
+      onBlur={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget)) onHold(false)
+      }}
+    >
       {toast && (
         <>
           <span>{toast.text}</span>
