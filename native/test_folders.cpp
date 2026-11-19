@@ -94,13 +94,23 @@ void test_folders(MockIC &) {
   }
   {
     const std::string test = "a delete in Trash leaves the count alone";
-    expect(test, CALL(test, mail_delete, "(\"fox\", vec { 3 })", USER_A),
+    expect(test, CALL(test, mail_delete, "(\"fox\", vec { 3 }, 1)", USER_A),
            "(1 : nat64)");
     expect(test, fox(test), "unseen = 2 : ");
     expect(test, fox(test), "message_count = 3 : ");
     expect(test, CALL(test, admin_check, "(\"fox\", null)", CONTROLLER),
            "result = \"ok\"");
   }
+  {
+    const std::string test = "a delete leaves mail that is in another folder";
+    // uid 4 is in the Inbox, as when another member restored it meanwhile
+    expect(test, CALL(test, mail_delete, "(\"fox\", vec { 4 }, 1)", USER_A),
+           "(0 : nat64)");
+    expect(test, fox(test), "message_count = 3 : ");
+    expect(test, listed(test, 0), "uid = 4 : ");
+  }
+  TRAPS("a delete names a folder there is", mail_delete,
+        "(\"fox\", vec { 4 }, 3)", USER_A, "no such folder");
   TRAPS("a list names a folder there is", mail_list,
         in("fox", list_args("50", 3)), USER_A, "no such folder");
   TRAPS("a move names a folder there is", mail_move, "(\"fox\", vec { 1 }, 3)",

@@ -26,12 +26,18 @@ export function ToastBar({
       className="toast"
       role="status"
       data-testid="toast"
+      // Held while either the pointer or the focus is in it
       onMouseEnter={() => onHold(true)}
-      onMouseLeave={() => onHold(false)}
+      onMouseLeave={(e) =>
+        onHold(e.currentTarget.contains(document.activeElement))
+      }
       onFocus={() => onHold(true)}
-      onBlur={(e) => {
-        if (!e.currentTarget.contains(e.relatedTarget)) onHold(false)
-      }}
+      onBlur={(e) =>
+        onHold(
+          e.currentTarget.matches(':hover') ||
+            e.currentTarget.contains(e.relatedTarget)
+        )
+      }
     >
       {toast && (
         <>

@@ -7,22 +7,33 @@ import { formatNs, memberName } from './format'
 export function BlockedSenders({
   backend,
   principal,
+  refresh,
 }: {
   backend: Mailbox
   principal: string
+  // Changes when mail or blocks changed elsewhere, as by Undo
+  refresh: number
 }) {
   const [list, setList] = useState<Blocked[] | null>(null)
   const [error, setError] = useState('')
 
   useEffect(() => {
+    // Only the newest load shows
+    let current = true
     backend.mail_blocked().then(
       (blocked) => {
+        if (!current) return
         setList(blocked)
         setError('')
       },
-      (e) => setError(errorText(e))
+      (e) => {
+        if (current) setError(errorText(e))
+      }
     )
-  }, [backend])
+    return () => {
+      current = false
+    }
+  }, [backend, refresh])
 
   const unblock = async (address: string) => {
     try {

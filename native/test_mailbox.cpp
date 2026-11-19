@@ -22,7 +22,7 @@ const OwnerCall k_owner_calls[] = {
     {mail_search, "mail_search",
      "(record { \"query\" = \"hello\"; folder = 0; cursor = null; limit = 10 })"},
     {mail_set_flags, "mail_set_flags", "(vec { 1 }, 1, 0)"},
-    {mail_delete, "mail_delete", "(vec { 1 })"},
+    {mail_delete, "mail_delete", "(vec { 1 }, 0)"},
     {mail_move, "mail_move", "(vec { 1 }, 1)"},
     {mail_block, "mail_block", "(\"x@example.com\")"},
     {mail_unblock, "mail_unblock", "(\"x@example.com\")"},
@@ -119,12 +119,12 @@ void test_mailbox(MockIC &) {
   }
 
   TRAPS("201 messages are too many to delete at once", mail_delete,
-        in("alice", "(" + uid_vec(1, 201) + ")"), USER_A,
+        in("alice", "(" + uid_vec(1, 201) + ", 0)"), USER_A,
         "too many messages at once");
   {
     const std::string test = "200 messages are deleted at once";
     expect(test,
-           CALL(test, mail_delete, in("alice", "(" + uid_vec(1, 200) + ")"),
+           CALL(test, mail_delete, in("alice", "(" + uid_vec(1, 200) + ", 0)"),
                 USER_A),
            "(150 : nat64)");
     expect(test, CALL(test, mail_me, "()", USER_A), "message_count = 0");
@@ -202,7 +202,7 @@ void test_mailbox(MockIC &) {
   {
     const std::string test = "a deleted message takes its record with it";
     CALL(test, mail_set_flags, "(\"team\", vec { 2 }, 1, 0)", USER_A);
-    CALL(test, mail_delete, "(\"team\", vec { 1; 2 })", USER_B);
+    CALL(test, mail_delete, "(\"team\", vec { 1; 2 }, 0)", USER_B);
     expect(test, me_of(test, USER_A, "team"), "unseen = 1");
     expect(test,
            CALL(test, admin_check, "(\"team\", opt \"seen_by\")", CONTROLLER),

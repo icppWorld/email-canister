@@ -204,7 +204,10 @@ function Reader({
           (seen) => seen.principal.toText() === principal
         )
         const unread = (full.summary.flags & FLAG_SEEN) === 0n
-        if (unread || !recorded) {
+        // Marked read or unread by hand while it loaded: that choice stays
+        const byHand =
+          ((touched.current.get(summary.uid) ?? 0n) & FLAG_SEEN) !== 0n
+        if ((unread || !recorded) && !byHand) {
           try {
             await backend.mail_set_flags([summary.uid], FLAG_SEEN, 0n)
             // A message already read by another member counts no differently
@@ -549,7 +552,7 @@ export function Inbox({
     )
       return
     const { done, error } = await inBatches(uids, (part) =>
-      backend.mail_delete(part)
+      backend.mail_delete(part, here)
     )
     if (anyUnread(done)) onCounts()
     drop(done)
@@ -587,8 +590,8 @@ export function Inbox({
         })
         if (page.items.length === 0) break
         // None of them could go: stop rather than ask again forever
-        if ((await backend.mail_delete(page.items.map((m) => m.uid))) === 0n)
-          break
+        const uids = page.items.map((m) => m.uid)
+        if ((await backend.mail_delete(uids, here)) === 0n) break
       }
     } finally {
       // Also after a refusal: what went before is gone from the list

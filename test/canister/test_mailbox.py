@@ -73,7 +73,7 @@ MAILBOX_CALLS = {
     "mail_search": '(record { "query" = "x"; folder = 0 : nat64; cursor = null; '
     "limit = 10 : nat64 })",
     "mail_set_flags": "(vec { 1 : nat64 }, 1 : nat64, 0 : nat64)",
-    "mail_delete": "(vec { 1 : nat64 })",
+    "mail_delete": "(vec { 1 : nat64 }, 0 : nat64)",
     "mail_move": "(vec { 1 : nat64 }, 1 : nat64)",
     "mail_block": '("x@example.com")',
     "mail_unblock": '("x@example.com")',
@@ -392,7 +392,10 @@ def test__a_shared_mailbox_has_one_read_state_and_records_each_opening(
     open_as(USER_A, "pond", first)
     assert unread(USER_B, "pond") == 1
     mail(
-        "mail_delete", "pond", f"(vec {{ {first} : nat64; {second} : nat64 }})", USER_B
+        "mail_delete",
+        "pond",
+        f"(vec {{ {first} : nat64; {second} : nat64 }}, 0 : nat64)",
+        USER_B,
     )
     assert unread(USER_A, "pond") == 0
     assert re.search(r'result = "ok"', call("admin_check", '("pond", null)'))
@@ -469,7 +472,10 @@ def test__mailboxes_are_isolated_although_uids_overlap() -> None:
     assert re.search(
         r"\(0\b",
         mail(
-            "mail_delete", MAILBOX[USER_B], f"(vec {{ {only_alice} : nat64 }})", USER_B
+            "mail_delete",
+            MAILBOX[USER_B],
+            f"(vec {{ {only_alice} : nat64 }}, 0 : nat64)",
+            USER_B,
         ),
     )
     assert only_alice in uids(page(USER_A))
@@ -583,7 +589,7 @@ def test__delete_removes_mail_index_and_usage() -> None:
     uid = uids(hit)[0]
     size = number(hit, "raw_bytes")
     assert "1" in mail(
-        "mail_delete", MAILBOX[USER_B], f"(vec {{ {uid} : nat64 }})", USER_B
+        "mail_delete", MAILBOX[USER_B], f"(vec {{ {uid} : nat64 }}, 0 : nat64)", USER_B
     )
     assert uids(found(USER_B, "jackal")) == []
     assert uid not in uids(page(USER_B))

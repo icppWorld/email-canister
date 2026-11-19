@@ -541,10 +541,24 @@ static int64_t remove_messages(const Mailbox &box,
   return ok ? deleted : -1;
 }
 
-int64_t delete_messages(const Mailbox &box, const std::vector<uint64_t> &uids) {
+int64_t delete_messages(const Mailbox &box, const std::vector<uint64_t> &uids,
+                        int64_t folder) {
   MailboxWrite write(box);
   if (!write) return -1;
-  const int64_t deleted = remove_messages(box, uids);
+  // In the same write as the delete, so the folder cannot change between
+  std::vector<uint64_t> in_folder;
+  {
+    db::Stmt find(box.file, "SELECT 1 FROM messages WHERE uid = ? AND "
+                            "folder = ?");
+    if (!find) return -1;
+    for (const uint64_t uid : uids) {
+      find.reset();
+      if (find.integer(1, static_cast<int64_t>(uid)).integer(2, folder).row())
+        in_folder.push_back(uid);
+      else if (find.failed()) return -1;
+    }
+  }
+  const int64_t deleted = remove_messages(box, in_folder);
   return deleted >= 0 && write.commit() ? deleted : -1;
 }
 

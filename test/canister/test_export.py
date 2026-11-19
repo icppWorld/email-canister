@@ -144,7 +144,7 @@ def test__nothing_changes_the_file_while_it_is_downloaded() -> None:
     size, started, _ = freeze(USER_A)
     for method, argument in [
         ("mail_set_flags", "(vec { 1 : nat64 }, 1 : nat64, 0 : nat64)"),
-        ("mail_delete", "(vec { 1 : nat64 })"),
+        ("mail_delete", "(vec { 1 : nat64 }, 0 : nat64)"),
         ("mail_move", "(vec { 1 : nat64 }, 1 : nat64)"),
         ("mail_block", '("x@example.com")'),
         ("mail_unblock", '("x@example.com")'),
@@ -248,7 +248,7 @@ def test__removing_a_member_ends_their_download_and_mail_moves_at_once(
     # Well before the download's own hold would have ended
     wait_for("crew", "gannet", 20)
     assert "downloading:" not in mail(
-        "mail_delete", "crew", "(vec { 999 : nat64 })", USER_A
+        "mail_delete", "crew", "(vec { 999 : nat64 }, 0 : nat64)", USER_A
     )
 
 
@@ -265,7 +265,7 @@ def test__in_a_shared_mailbox_a_download_is_its_members_alone(
             "mail_export_freeze", "team", "(null)", USER_B
         )
         assert "downloading:" in mail(
-            "mail_delete", "team", "(vec { 1 : nat64 })", USER_B
+            "mail_delete", "team", "(vec { 1 : nat64 }, 0 : nat64)", USER_B
         )
         thaw(USER_B, started, "team")  # ends nothing
         assert number(chunk(USER_A, 0, 10, "team"), "started_ns") == started

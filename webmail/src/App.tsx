@@ -226,8 +226,11 @@ export function App() {
     return () => window.clearInterval(timer)
   }, [backend, reloadMailboxes])
 
-  // A note that closed while held, as by its own button, lets go
-  useEffect(() => setToastHeld(false), [toast])
+  // A note that closed while held, as by its own button, lets go. One that
+  // takes the place of a held note stays held.
+  useEffect(() => {
+    if (!toast) setToastHeld(false)
+  }, [toast])
   useEffect(() => {
     if (!toast || toastHeld) return
     const timer = window.setTimeout(() => setToast(null), TOAST_MS)
@@ -517,7 +520,12 @@ export function App() {
           />
         )}
         {current === 'blocked' && box && (
-          <BlockedSenders key={local} backend={box} principal={principal} />
+          <BlockedSenders
+            key={local}
+            backend={box}
+            principal={principal}
+            refresh={refresh}
+          />
         )}
         {current === 'admin' && <AdminPanel backend={backend} />}
       </div>

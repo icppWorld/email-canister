@@ -3276,10 +3276,101 @@ test('a note holding the focus stays until the focus leaves', async ({
   const note = page.getByTestId('toast')
   await expect(note).toHaveText(/moved to Trash/)
   await note.getByRole('button', { name: 'Undo' }).focus()
+  // The pointer passing over and away leaves the focus's hold in place
+  await note.hover()
+  await page.mouse.move(600, 400)
   // Longer than a note stays by itself
   await page.waitForTimeout(9_000)
   await expect(note.getByRole('button', { name: 'Undo' })).toBeVisible()
   await note.getByRole('button', { name: 'Undo' }).click()
   await expect(messageRow(page, 'Lingering tanager')).toHaveCount(1)
+  await context.close()
+})
+
+test('a note that takes the place of a held note stays held', async ({
+  browser,
+}) => {
+  deliver({ subject: 'Held limpkin', body: '<p>A limpkin.</p>' })
+  deliver({ subject: 'Held coot', body: '<p>A coot.</p>' })
+  await waitDrained()
+  const { context, page } = await signedIn(browser, USER_A)
+  await search(page, 'limpkin')
+  await messageRow(page, 'Held limpkin').hover()
+  await page.getByRole('button', { name: 'Delete: Held limpkin' }).click()
+  const note = page.getByTestId('toast')
+  await expect(note).toHaveText(/moved to Trash/)
+  await search(page, 'coot')
+  const moving = await hold(page, 'mail_move')
+  await messageRow(page, 'Held coot').hover()
+  await page.getByRole('button', { name: 'Delete: Held coot' }).click()
+  await moving.seen
+  // The pointer rests on the first note when the second takes its place
+  await note.hover()
+  moving.release()
+  await expect(messageRow(page, 'Held coot')).toHaveCount(0)
+  await page.waitForTimeout(9_000)
+  await expect(note.getByRole('button', { name: 'Undo' })).toBeVisible({
+    timeout: 1_000,
+  })
+  await context.close()
+})
+
+test('Undo of a block shows on the Blocked senders page', async ({
+  browser,
+}) => {
+  deliver({
+    subject: 'Hasty jay',
+    body: '<p>A jay.</p>',
+    from: 'Hasty <hasty@sender.example>',
+  })
+  await waitDrained()
+  const { context, page } = await signedIn(browser, USER_A)
+  await openMail(page, 'jay')
+  await expect(page.getByTestId('subject')).toHaveText('Hasty jay')
+  page.once('dialog', (dialog) => dialog.accept())
+  await page.getByRole('button', { name: 'Block sender' }).click()
+  const note = page.getByTestId('toast')
+  await expect(note).toHaveText(/Blocked hasty@sender.example/)
+  await folder(page, 'Blocked senders')
+  const blocked = page.getByRole('region', { name: 'Blocked senders' })
+  await expect(blocked).toContainText('hasty@sender.example')
+  await note.getByRole('button', { name: 'Undo' }).click()
+  await expect(blocked).not.toContainText('hasty@sender.example')
+  await context.close()
+})
+
+test('a message marked unread while it loads stays unread', async ({
+  browser,
+}) => {
+  joinTeam(USER_C, USER_D)
+  deliver({ subject: 'Shared jacana', body: '<p>A jacana.</p>', to: 'team' })
+  const other = await asUser(USER_D, env.url, env.backend)
+  const uid = await uidOf(other, 'team', 'Shared jacana')
+  // Read by the other member: shown read, but this member has not opened it
+  await other.mail_set_flags('team', [uid], FLAG_SEEN, 0n)
+  const { context, page } = await signedIn(browser, USER_C)
+  await search(page, 'jacana')
+  await expect(messageRow(page, 'Shared jacana')).toHaveCount(1)
+  const loading = await hold(page, 'mail_get')
+  await messageRow(page, 'Shared jacana').click()
+  await loading.seen
+  await messageRow(page, 'Shared jacana').hover()
+  await page.getByRole('button', { name: 'Mark unread: Shared jacana' }).click()
+  const unread = page.locator('button.message.unread', {
+    hasText: 'Shared jacana',
+  })
+  await expect(unread).toHaveCount(1)
+  loading.release()
+  await expect(page.getByTestId('subject')).toHaveText('Shared jacana')
+  // A moment more, for a write that would mark it read to show
+  await page.waitForTimeout(2_000)
+  await expect(unread).toHaveCount(1, { timeout: 1_000 })
+  const { items } = await other.mail_search('team', {
+    query: 'jacana',
+    folder: FOLDER_INBOX,
+    cursor: [],
+    limit: 1n,
+  })
+  expect(items[0].flags & FLAG_SEEN).toBe(0n)
   await context.close()
 })

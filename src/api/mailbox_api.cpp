@@ -200,14 +200,16 @@ void mail_set_flags() {
   ic_api.to_wire();
 }
 
-// Returns how many messages were deleted. Deletion is permanent.
+// Deletes the messages that are still in the folder, and returns how many.
+// Deletion is permanent.
 void mail_delete() {
   IC_API ic_api(CanisterUpdate{std::string(__func__)}, false);
   std::vector<uint64_t> uids;
-  const store::Mailbox box =
-      require_writable_file(read_mailbox(ic_api, {CandidTypeVecNat64{&uids}}));
+  uint64_t folder = 0;
+  const store::Mailbox box = require_writable_file(read_mailbox(
+      ic_api, {CandidTypeVecNat64{&uids}, CandidTypeNat64{&folder}}));
   require_batch(uids);
-  const int64_t deleted = store::delete_messages(box, uids);
+  const int64_t deleted = store::delete_messages(box, uids, to_folder(folder));
   if (deleted < 0) IC_API::trap("the delete failed");
   ic_api.to_wire(nat64(deleted));
 }
