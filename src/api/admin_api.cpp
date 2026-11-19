@@ -630,15 +630,13 @@ void dev_hide_file() {
   ic_api.to_wire();
 }
 
-// Adds a step to the mailbox schema, which every file then waits for. Like a
-// new release, it frees the files held as newer than the old one.
+// Adds a step to the mailbox schema, which every file then waits for
 void dev_schema_step() {
   IC_API ic_api(CanisterUpdate{std::string(__func__)}, false);
   require_controller(ic_api);
   std::string sql;
   ic_api.from_wire(CandidTypeText{&sql});
   db::add_schema_step(sql);
-  store::release_newer_holds();
   ingest::arm();
   ic_api.to_wire();
 }

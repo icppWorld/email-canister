@@ -116,9 +116,10 @@ std::string unusable(const Entry &entry);
 // The retry time of a mailbox held for repair, which keeps every pump away
 const int64_t k_held_ns = INT64_MAX;
 // A mailbox whose file waits for its schema upgrade, where `version` is the
-// parameter that holds the current version. A vacant row has no file.
+// parameter that holds the current version. A vacant row has no file. A file
+// newer than this release waits for the release that knows its version.
 #define WAITS_FOR_UPGRADE(version)                                             \
-  "(schema != " version " AND vacant = 0 AND purging = 0)"
+  "(schema < " version " AND vacant = 0 AND purging = 0)"
 
 // Opens a mailbox's file for a pump: Claimed with the file, or Again when it
 // cannot be opened, after which every pump leaves the mailbox alone until
@@ -137,26 +138,22 @@ Claim claim_upgrade(int64_t now_ns, int64_t defer_ns, int64_t &id);
 bool upgrade_pending();
 // What an upgrade of a mailbox's file came to
 enum class Upgraded {
-  Done,  // nothing more to do now; a file newer than this code is held
-  Wait,  // the file cannot be opened or written now
-  Failed // a step failed, and the file is as it was
+  Done,   // upgraded, or a file newer than this code recorded as it is
+  NotDue, // purged, held, deferred, or upgraded meanwhile
+  Wait,   // the file cannot be opened or written now
+  Failed  // a step failed, and the file is as it was
 };
-// Takes the mailbox's file to the current schema version. A failed step
-// describes itself in `problem`; the caller decides whether that holds the
-// mailbox.
+// Takes the mailbox's file to the current schema version. A file newer than
+// this code keeps its version, which the registry records: nothing uses it
+// until a release that knows that version runs. A failed step describes
+// itself in `problem`; the caller decides whether that holds the mailbox.
 Upgraded upgrade_file(int64_t id, std::string &problem);
-// Lets the file of every mailbox held as newer than its release decide
-// again, as a new release starts: a version this release knows is upgraded
-// or used, any other is held again
-bool release_newer_holds();
 // Holds the mailbox for repair, for `why`, or with an empty `why` releases it.
 // Nothing may use the file meanwhile, and the pumps keep away: its
 // retry_after_ns is k_held_ns.
 bool set_needs_repair(int64_t id, const std::string &why);
 // Begins the reason of every hold that a failed schema upgrade set
 const char *const k_upgrade_failed = "the schema upgrade failed: ";
-// Begins the reason of every hold for a file newer than the release
-const char *const k_newer_than_release = "the file has schema version ";
 // A check of the mailbox's file: db::quick_check of one table, or of the
 // whole file on a db::CheckConnection, with the file's version and counters
 // against the registry. The problems found, or nullopt when the file cannot be opened.

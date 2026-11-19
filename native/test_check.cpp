@@ -33,12 +33,18 @@ void file_exec(const std::string &test, const std::string &local,
   CALL(test, dev_file_exec, "(\"" + local + "\", \"" + sql + "\")", CONTROLLER);
 }
 
-// Natively no timer runs the pump: each mailbox's upgrade is called by hand.
-// The clock then moves past the wait that a failed upgrade leaves.
-void upgrade_round(const std::string &test) {
+// Natively no timer runs the pump: each mailbox's upgrade is called by hand
+void upgrade_now(const std::string &test) {
   for (int id = 1; id <= 20; ++id)
     CALL(test, ingest_upgrade_file, "(" + std::to_string(id) + ")", SELF);
-  ic0mock_set_time_override(IC_API::time() + 61'000'000'000);
+}
+
+// The clock moves past the wait that a failed upgrade leaves
+void later() { ic0mock_set_time_override(IC_API::time() + 61'000'000'000); }
+
+void upgrade_round(const std::string &test) {
+  upgrade_now(test);
+  later();
 }
 
 // As many rounds as a step that fails takes to hold its mailbox
@@ -160,31 +166,37 @@ void test_check(MockIC &) {
     expect(test, result,
            "the schema version is 7 in the file, 2 in the "
            "registry");
-    // didc escapes the apostrophe
-    expect(test, result, "newer than this release\\'s 2");
     TRAPS("a newer file refuses its owner", mail_list, in("bob", k_list),
           USER_B, "this mailbox needs repair");
   }
   {
-    const std::string test = "an upgrade holds a file newer than this release";
-    file_exec(test, "cleo", "PRAGMA user_version = 9");
+    const std::string test = "a file newer than this release waits for one "
+                             "that knows its version";
+    // As after a rollback: cleo's file is one version ahead
+    file_exec(test, "cleo", "PRAGMA user_version = 4");
     // A step that fails on every file that has the table already
     CALL(test, dev_schema_step, "(\"CREATE TABLE extra(x)\")", CONTROLLER);
     upgrade_round(test);
-    expect(test, entry(test, "cleo"),
-           "needs_repair = opt \"the file has schema version 9, newer than "
-           "this release\\'s 3");
+    TRAPS("a newer file is not used", mail_list, in("cleo", k_list), USER_C,
+          "this mailbox needs a newer release");
+    // It is not damage
+    expect(test, entry(test, "cleo"), "needs_repair = null");
+    expect(test, inspect(test, "cleo"), "result = \"ok\"");
   }
   {
     const std::string test = "a step that fails holds the mailbox on its third "
                              "failure";
-    // A canister low on cycles fails every upgrade for a while
-    for (int failures = 1; failures < 3; ++failures) {
-      expect(test, entry(test, "alice"), "needs_repair = null");
-      TRAPS("a failed upgrade is tried again later", mail_list,
-            in("alice", k_list), USER_A, "busy: the mailbox is being upgraded");
-      upgrade_round(test);
-    }
+    // A canister low on cycles fails every upgrade for a while. alice's
+    // first failure came with the round above; this is her second.
+    upgrade_now(test);
+    // Within the minute after a failure, no upgrade is tried
+    upgrade_now(test);
+    upgrade_now(test);
+    expect(test, entry(test, "alice"), "needs_repair = null");
+    TRAPS("a failed upgrade is tried again later", mail_list,
+          in("alice", k_list), USER_A, "busy: the mailbox is being upgraded");
+    later();
+    upgrade_now(test); // the third
     expect(test, entry(test, "alice"),
            "needs_repair = opt \"the schema upgrade failed: the step to "
            "schema version 3 failed");
@@ -204,14 +216,12 @@ void test_check(MockIC &) {
            "schema version 3 failed");
   }
   {
-    const std::string test = "a file newer than its release is freed once a "
+    const std::string test = "a file newer than its release is used once a "
                              "release knows its version";
-    // As after a rollback: cleo's file is one version ahead of this release
-    file_exec(test, "cleo", "PRAGMA user_version = 4");
     CALL(test, dev_schema_step, "(\"SELECT 1\")", CONTROLLER);
-    expect(test, entry(test, "cleo"), "needs_repair = null");
-    upgrade_every_file(test);
+    // cleo's file is at this version already, so it needs no upgrade
     CALL(test, mail_list, in("cleo", k_list), USER_C);
+    upgrade_every_file(test);
     expect(test, inspect(test, "cleo"), "result = \"ok\"");
     // A hold for anything else stays
     expect(test, entry(test, "alice"),

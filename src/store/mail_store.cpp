@@ -180,14 +180,14 @@ Claim claim_parse(int64_t max_attempts, int64_t now_ns, int64_t defer_ns,
   int64_t attempts = 0;
   std::string error;
   {
-    // A purge sets unparsed to 0. A file waiting for its upgrade is left
-    // to the upgrade.
+    // A purge sets unparsed to 0. A file of another version waits for its
+    // upgrade or its release.
     db::Stmt select(
         db::control(),
         "SELECT id, parse_id, parse_attempts, parse_error "
         "FROM mailboxes WHERE unparsed > 0 AND retry_after_ns <= ?1 "
-        "AND NOT " WAITS_FOR_UPGRADE("?3") " "
-                                           "ORDER BY id <= ?2, id LIMIT 1");
+        "AND schema = ?3 "
+        "ORDER BY id <= ?2, id LIMIT 1");
     if (!select) return Claim::Failed;
     if (!select.integer(1, now_ns)
              .integer(2, g_parsed_last)

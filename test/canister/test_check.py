@@ -153,26 +153,20 @@ def test__upgrades_take_turns_with_mail_for_upgraded_mailboxes() -> None:
     )
 
 
-def test__a_mailbox_held_as_newer_is_freed_once_a_release_knows_its_version(
+def test__a_file_newer_than_its_release_waits_for_one_that_knows_its_version(
     identity: str,
 ) -> None:
     # The steps the earlier tests added are on the heap, so an upgrade to this
     # same build is a rollback to a release that knows none of them
-    steps = 3  # extra, later, turn
     assert upgrade(identity) == ""
-    wait_until(
-        lambda: "the file has schema version" in entry_line("alice"),
-        "alice's hold as newer than the release",
-    )
-    assert search("lemming") == [], "a held mailbox is not searched"
-    # A release that knows the files' version again
-    for _ in range(steps):
+    assert search("lemming") == [], "a newer file is used"
+    assert "needs_repair = null" in entry_line("alice"), "a newer file is not damage"
+    # Each step stands for a later release, until one knows the files' version
+    for _ in range(10):
         call("dev_schema_step", '("SELECT 1")')
-    wait_until(
-        lambda: len(search("lemming")) == 1 and len(search("pika")) == 2,
-        "the releases of alice and bob",
-    )
-    assert "needs_repair = null" in entry_line("alice")
+        if len(search("lemming")) == 1:
+            break
+    wait_until(lambda: len(search("pika")) == 2, "alice's and bob's mail")
     assert check("alice") == "ok"
 
 

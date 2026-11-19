@@ -183,13 +183,13 @@ Claim claim_move(int64_t max_attempts, int64_t now_ns, int64_t defer_ns,
   int64_t attempts = 0;
   int64_t mailbox = 0;
   {
-    // A file waiting for its upgrade is left to the upgrade
+    // A file of another version waits for its upgrade or its release
     db::Stmt select(db::control(),
                     "SELECT q.id, q.attempts, q.mailbox_id FROM queue q "
                     "JOIN mailboxes m ON m.id = q.mailbox_id "
                     "WHERE q.quarantined = 0 AND m.retry_after_ns <= ?1 "
-                    "AND NOT " WAITS_FOR_UPGRADE("?2") " "
-                                                       "ORDER BY q.id LIMIT 1");
+                    "AND m.schema = ?2 "
+                    "ORDER BY q.id LIMIT 1");
     if (!select) return Claim::Failed;
     if (!select.integer(1, now_ns).integer(2, db::mailbox_version()).row()) {
       return select.failed() ? Claim::Failed : Claim::Empty;

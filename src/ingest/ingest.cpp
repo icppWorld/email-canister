@@ -20,6 +20,9 @@ const int64_t k_max_attempts = 3;
 // A file's failed upgrades before its mailbox is held: a canister low on
 // cycles fails every upgrade for a while
 const int64_t k_max_upgrade_failures = 3;
+// Failures further apart than this count afresh, so a mailbox freed or
+// created again long after starts over
+const uint64_t k_upgrade_failure_memory_ns = 600'000'000'000;
 const int64_t k_merge_every = 64;
 const int64_t k_merge_pages =
     2000; // about 10B instructions, measured (docs/design.md)
@@ -40,9 +43,13 @@ bool g_pumping = false;
 uint64_t g_pumping_since = 0;
 uint64_t g_pump_generation = 0; // a pump the watchdog gave up on ends quietly
 bool g_paused = false;
+struct UpgradeFailures {
+  int64_t count = 0;
+  uint64_t last_ns = 0;
+};
 // By mailbox; the heap does not survive an upgrade, so a new release starts
 // counting afresh
-std::map<int64_t, int64_t> g_upgrade_failures;
+std::map<int64_t, UpgradeFailures> g_upgrade_failures;
 // Upgrades take turns with parses and moves
 bool g_upgrade_turn = true;
 #ifdef EMAIL_CANISTER_TEST_HOOKS
@@ -103,9 +110,12 @@ bool running(IC_API &ic_api) {
 // Holds the mailbox for `why` once its file's upgrade failed
 // k_max_upgrade_failures times, else leaves it to wait before the next try
 void upgrade_failed(int64_t mailbox, const std::string &why) {
-  if (++g_upgrade_failures[mailbox] < k_max_upgrade_failures) {
-    const auto now = static_cast<int64_t>(IC_API::time());
-    store::defer_pump(mailbox, now + static_cast<int64_t>(k_defer_ns));
+  const uint64_t now = IC_API::time();
+  UpgradeFailures &failures = g_upgrade_failures[mailbox];
+  if (now - failures.last_ns > k_upgrade_failure_memory_ns) failures.count = 0;
+  failures.last_ns = now;
+  if (++failures.count < k_max_upgrade_failures) {
+    store::defer_pump(mailbox, static_cast<int64_t>(now + k_defer_ns));
     return;
   }
   g_upgrade_failures.erase(mailbox);
@@ -282,6 +292,8 @@ void ingest_upgrade_file() {
     g_upgrade_failures.erase(id);
     outbox::arm(); // the outbox leaves a file alone until its upgrade
     break;
+  case store::Upgraded::NotDue:
+    break;
   case store::Upgraded::Failed:
     upgrade_failed(id, problem);
     break;
@@ -315,8 +327,6 @@ bool may_have_run(const IC_CallError &error, bool running) {
 
 void start(const std::string &canister_self) {
   g_self = canister_self;
-  // A release that knows a newer file's version may run now
-  store::release_newer_holds();
   const auto now = static_cast<int64_t>(IC_API::time());
   int64_t deferred = 0;
   // -1, a failed count, arms too
