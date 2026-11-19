@@ -177,7 +177,7 @@ def test__a_file_newer_than_its_release_waits_for_one_that_knows_its_version(
     try:
         for n in range(2):
             assert re.search(
-                OK, deliver(f"Newer marmot{n}", f"<marmot{n}@x.example>", to="alice")
+                OK, deliver(f"Newer marmot {n}", f"<marmot{n}@x.example>", to="alice")
             )
     finally:
         call("dev_set_backlog_cap", "(100 : nat64, 1000 : nat64)")
