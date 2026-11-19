@@ -3295,12 +3295,17 @@ test('a note that takes the place of a held note stays held', async ({
   deliver({ subject: 'Held coot', body: '<p>A coot.</p>' })
   await waitDrained()
   const { context, page } = await signedIn(browser, USER_A)
+  // Each search's own list, before the hover: one that lands later moves the
+  // row away from the pointer
+  const rows = page.locator('li.message-row')
   await search(page, 'limpkin')
+  await expect(rows).toHaveCount(1)
   await messageRow(page, 'Held limpkin').hover()
   await page.getByRole('button', { name: 'Delete: Held limpkin' }).click()
   const note = page.getByTestId('toast')
   await expect(note).toHaveText(/moved to Trash/)
   await search(page, 'coot')
+  await expect(rows).toHaveCount(1)
   const moving = await hold(page, 'mail_move')
   await messageRow(page, 'Held coot').hover()
   await page.getByRole('button', { name: 'Delete: Held coot' }).click()
