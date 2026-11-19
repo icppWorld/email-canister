@@ -3535,6 +3535,28 @@ test('on a touch screen the row box and star are large enough to tap', async ({
   expect(drawn.width).toBeLessThan(32)
   await row.locator('.pick-area').tap({ position: { x: 40, y: 40 } })
   await expect(pick).toBeChecked()
+  // The compose window's buttons, and its minimised bar still covers nothing
+  await page.getByRole('button', { name: 'Compose' }).click()
+  const window = page.getByRole('dialog', { name: 'New message' })
+  for (const name of ['Minimise', 'Close']) {
+    const box = await window.getByRole('button', { name }).boundingBox()
+    if (!box) throw new Error(`no ${name}`)
+    expect(box.width).toBeGreaterThanOrEqual(44)
+    expect(box.height).toBeGreaterThanOrEqual(44)
+  }
+  await window.getByRole('button', { name: 'Minimise' }).click()
+  const restore = await window
+    .getByRole('button', { name: 'Restore' })
+    .boundingBox()
+  if (!restore) throw new Error('no Restore')
+  expect(restore.width).toBeGreaterThanOrEqual(44)
+  expect(restore.height).toBeGreaterThanOrEqual(44)
+  const bar = await window.boundingBox()
+  const list = await page
+    .getByRole('region', { name: 'Messages' })
+    .boundingBox()
+  if (!bar || !list) throw new Error('no bar or list')
+  expect(list.y + list.height).toBeLessThanOrEqual(bar.y + 1)
   await context.close()
 })
 
@@ -3667,5 +3689,65 @@ test('a send refused while the window is minimised opens it to show why', async 
   release()
   await expect(window.getByRole('alert')).toBeVisible()
   await expect(window.getByLabel('Subject')).toHaveValue('Refused bunting')
+  await context.close()
+})
+
+const QUAIL = '50'.repeat(32)
+
+test('a failed reload of Sent is tried again after Older mail goes through', async ({
+  browser,
+}) => {
+  await fullSent('quail', QUAIL)
+  const { context, page } = await signedIn(browser, QUAIL)
+  await folder(page, 'Sent')
+  const sent = page.getByRole('region', { name: 'Sent mail' })
+  await expect(page.getByRole('button', { name: 'Older mail' })).toBeVisible()
+  // The first page alone, every attempt: the agent tries a failed call again,
+  // and Older mail, which names a cursor, goes through
+  let firstPage: Buffer | undefined
+  const refuse = (route: Route) => {
+    if (!callsTo(route.request(), 'mail_outbox_list')) return route.fallback()
+    const arg = argOf(route.request())
+    firstPage ??= arg
+    return arg.equals(firstPage) ? route.abort() : route.fallback()
+  }
+  await page.route('**/api/*/canister/*/*', refuse)
+  await compose(page, 'Retried quail')
+  await send(page)
+  await expect(sent.getByRole('alert')).toBeVisible()
+  // Older mail waits while a retry of the first page is under way: it goes
+  // through between two
+  const older = page.getByRole('button', { name: 'Older mail' })
+  await expect(async () => {
+    // Gone once an earlier click went through
+    if (await older.isVisible()) await older.click()
+    await expect(sent.getByRole('listitem')).toHaveCount(51, { timeout: 1_000 })
+  }).toPass({ timeout: 30_000 })
+  await page.unroute('**/api/*/canister/*/*', refuse)
+  // The next refresh, at most 5 seconds on
+  await expect(sent).toContainText('Retried quail', { timeout: 10_000 })
+  await context.close()
+})
+
+test('a Sent list slower to answer than its refresh still shows a send', async ({
+  browser,
+}) => {
+  const { context, page } = await signedIn(browser, USER_A)
+  await folder(page, 'Sent')
+  const sent = page.getByRole('region', { name: 'Sent mail' })
+  await expect(sent.getByRole('listitem').first()).toBeVisible()
+  // Each reply 6 seconds late, past the 5-second refresh
+  await page.route('**/api/*/canister/*/*', async (route) => {
+    if (!callsTo(route.request(), 'mail_outbox_list')) return route.fallback()
+    const url = new URL(route.request().url())
+    url.hostname = '127.0.0.1'
+    const response = await route.fetch({ url: url.toString() })
+    await new Promise((resolve) => setTimeout(resolve, 6_000))
+    await route.fulfill({ response }).catch(() => {})
+  })
+  await compose(page, 'Slow grebe')
+  await send(page)
+  await expect(sent).toContainText('Slow grebe', { timeout: 20_000 })
+  await page.unrouteAll({ behavior: 'ignoreErrors' })
   await context.close()
 })

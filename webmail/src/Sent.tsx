@@ -191,6 +191,9 @@ export function Sent({
   const olderShown = useRef(false)
   // The first page is loading: Older mail waits, or it would drop that load
   const loading = useRef(false)
+  // A first-page load failed, as after a send: refreshes try it again until
+  // one succeeds, also while older mail is shown
+  const failed = useRef(false)
 
   const load = useCallback(async () => {
     const request = ++latestLoad.current
@@ -199,15 +202,14 @@ export function Sent({
       const page = await backend.mail_outbox_list({ cursor: [], limit: 50n })
       if (request !== latestLoad.current) return
       olderShown.current = false
+      failed.current = false
       setItems(page.items)
       setCursor(page.cursor)
       setError('')
     } catch (e) {
       if (request !== latestLoad.current) return
       setError(errorText(e))
-      // A reload that failed, as after a send, is tried again by the next
-      // refresh, also while older mail is shown
-      olderShown.current = false
+      failed.current = true
     } finally {
       if (request === latestLoad.current) loading.current = false
     }
@@ -217,7 +219,10 @@ export function Sent({
     load()
     // Refreshing replaces the list with its first page, so not while reading older mail
     const timer = window.setInterval(() => {
-      if (!olderShown.current) load()
+      // One at a time: a load slower than this would otherwise be replaced
+      // by the next before its reply could show
+      if (loading.current) return
+      if (!olderShown.current || failed.current) load()
     }, REFRESH_MS)
     return () => window.clearInterval(timer)
   }, [load, refresh])

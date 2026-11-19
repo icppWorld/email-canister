@@ -888,4 +888,16 @@ button.small {
     min-height: 44px;
     padding: 9px 0 0;
   }
+  /* The compose window's buttons too; the bar keeps its height for them */
+  .compose-bar {
+    padding-top: 0;
+    padding-bottom: 0;
+  }
+  .compose-bar button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 44px;
+    min-height: 44px;
+  }
 }
