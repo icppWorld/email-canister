@@ -103,13 +103,15 @@ bool running(IC_API &ic_api) {
 // Holds the mailbox for `why` once its file's upgrade failed
 // k_max_upgrade_failures times, else leaves it to wait before the next try
 void upgrade_failed(int64_t mailbox, const std::string &why) {
-  if (++g_upgrade_failures[mailbox] < k_max_upgrade_failures) {
-    const auto now = static_cast<int64_t>(IC_API::time());
-    store::defer_pump(mailbox, now + static_cast<int64_t>(k_defer_ns));
+  int64_t &failures = g_upgrade_failures[mailbox];
+  if (++failures >= k_max_upgrade_failures &&
+      store::set_needs_repair(mailbox, store::k_upgrade_failed + why)) {
+    g_upgrade_failures.erase(mailbox);
     return;
   }
-  g_upgrade_failures.erase(mailbox);
-  store::set_needs_repair(mailbox, store::k_upgrade_failed + why);
+  // A hold that could not be written is tried again after the wait
+  const auto now = static_cast<int64_t>(IC_API::time());
+  store::defer_pump(mailbox, now + static_cast<int64_t>(k_defer_ns));
 }
 
 void require_self(IC_API &ic_api) {

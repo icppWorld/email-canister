@@ -392,13 +392,13 @@ Upgraded upgrade_file(int64_t id, std::string &problem) {
   if (file == nullptr) return Upgraded::Wait;
   const int64_t version = db::file_version(file);
   if (version < 0) return Upgraded::Wait;
-  if (version > registered) {
-    // An upgrade records the file's version with the file, and a rollback
-    // leaves both ahead of the release: a file ahead of its registry is
-    // damage.
-    return set_needs_repair(id, "the file has schema version " +
-                                    std::to_string(version) +
-                                    ", newer than its registry's")
+  if (version != registered) {
+    // Creating a mailbox and upgrading its file record the file's version
+    // with the file, and a rollback leaves both ahead of the release: a file
+    // out of step with its registry is damage
+    return set_needs_repair(
+               id, "the file has schema version " + std::to_string(version) +
+                       ", its registry " + std::to_string(registered))
                ? Upgraded::Done
                : Upgraded::Wait;
   }

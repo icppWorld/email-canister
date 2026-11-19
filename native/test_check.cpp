@@ -170,17 +170,22 @@ void test_check(MockIC &) {
           USER_B, "this mailbox needs repair");
   }
   {
-    const std::string test = "an upgrade holds a file ahead of its registry";
+    const std::string test = "an upgrade holds a file out of step with its "
+                             "registry";
     file_exec(test, "cleo", "PRAGMA user_version = 4");
+    file_exec(test, "erin", "PRAGMA user_version = 1");
     // A step that fails on every file that has the table already
     CALL(test, dev_schema_step, "(\"CREATE TABLE extra(x)\")", CONTROLLER);
     upgrade_round(test);
-    // didc escapes the apostrophe
-    expect(test, entry(test, "cleo"),
-           "needs_repair = opt \"the file has schema version 4, newer than its "
-           "registry\\'s");
+    expect(
+        test, entry(test, "cleo"),
+        "needs_repair = opt \"the file has schema version 4, its registry 2");
     TRAPS("a file ahead of its registry is not used", mail_list,
           in("cleo", k_list), USER_C, "this mailbox needs repair");
+    // Not upgraded from its own version, where its step would fail
+    expect(
+        test, entry(test, "erin"),
+        "needs_repair = opt \"the file has schema version 1, its registry 2");
   }
   {
     const std::string test = "a step that fails holds the mailbox on its third "
