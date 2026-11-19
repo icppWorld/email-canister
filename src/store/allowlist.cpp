@@ -390,17 +390,23 @@ Upgraded upgrade_file(int64_t id, std::string &problem) {
   if (file == nullptr) return Upgraded::Wait;
   const int64_t version = db::file_version(file);
   if (version < 0) return Upgraded::Wait;
-  db::Stmt record(db::control(),
-                  "UPDATE mailboxes SET schema = ? WHERE id = ?");
-  if (!record) return Upgraded::Wait;
-  if (version > current) // as after a rollback
-    return record.integer(1, version).integer(2, id).done() ? Upgraded::Done
-                                                            : Upgraded::Wait;
+  if (version > current) {
+    // After a rollback the registry has the file's version, and the file
+    // does not wait for an upgrade. A file ahead of its registry is damage.
+    return set_needs_repair(id, "the file has schema version " +
+                                    std::to_string(version) +
+                                    ", newer than its registry's")
+               ? Upgraded::Done
+               : Upgraded::Wait;
+  }
   MailboxWrite write(Mailbox{id, file});
   if (!write) return Upgraded::Wait;
   if (!db::upgrade_mailbox(file, version, problem))
     return Upgraded::Failed; // the write rolls the step back
-  return record.integer(1, current).integer(2, id).done() && write.commit()
+  db::Stmt record(db::control(),
+                  "UPDATE mailboxes SET schema = ? WHERE id = ?");
+  return record && record.integer(1, current).integer(2, id).done() &&
+                 write.commit()
              ? Upgraded::Done
              : Upgraded::Wait;
 }

@@ -170,18 +170,17 @@ void test_check(MockIC &) {
           USER_B, "this mailbox needs repair");
   }
   {
-    const std::string test = "a file newer than this release waits for one "
-                             "that knows its version";
-    // As after a rollback: cleo's file is one version ahead
+    const std::string test = "an upgrade holds a file ahead of its registry";
     file_exec(test, "cleo", "PRAGMA user_version = 4");
     // A step that fails on every file that has the table already
     CALL(test, dev_schema_step, "(\"CREATE TABLE extra(x)\")", CONTROLLER);
     upgrade_round(test);
-    TRAPS("a newer file is not used", mail_list, in("cleo", k_list), USER_C,
-          "this mailbox needs a newer release");
-    // It is not damage
-    expect(test, entry(test, "cleo"), "needs_repair = null");
-    expect(test, inspect(test, "cleo"), "result = \"ok\"");
+    // didc escapes the apostrophe
+    expect(test, entry(test, "cleo"),
+           "needs_repair = opt \"the file has schema version 4, newer than its "
+           "registry\\'s");
+    TRAPS("a file ahead of its registry is not used", mail_list,
+          in("cleo", k_list), USER_C, "this mailbox needs repair");
   }
   {
     const std::string test = "a step that fails holds the mailbox on its third "
@@ -214,18 +213,6 @@ void test_check(MockIC &) {
     expect(test, entry(test, "alice"),
            "needs_repair = opt \"the schema upgrade failed: the step to "
            "schema version 3 failed");
-  }
-  {
-    const std::string test = "a file newer than its release is used once a "
-                             "release knows its version";
-    CALL(test, dev_schema_step, "(\"SELECT 1\")", CONTROLLER);
-    // cleo's file is at this version already, so it needs no upgrade
-    CALL(test, mail_list, in("cleo", k_list), USER_C);
-    upgrade_every_file(test);
-    expect(test, inspect(test, "cleo"), "result = \"ok\"");
-    // A hold for anything else stays
-    expect(test, entry(test, "alice"),
-           "needs_repair = opt \"the schema upgrade failed");
   }
   ic0mock_clear_time_override();
 }

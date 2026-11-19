@@ -171,6 +171,7 @@ def test__a_file_newer_than_its_release_waits_for_one_that_knows_its_version(
     assert upgrade(identity) == ""
     assert search("lemming") == [], "a newer file is used"
     assert "needs_repair = null" in entry_line("alice"), "a newer file is not damage"
+    assert "needs a newer release" in call("admin_check", '("alice", null)')
     # Its mail waits, and does not count toward the canister-wide backlog cap
     call("dev_set_backlog_cap", "(100 : nat64, 1 : nat64)")
     try:

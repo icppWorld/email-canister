@@ -138,15 +138,14 @@ Claim claim_upgrade(int64_t now_ns, int64_t defer_ns, int64_t &id);
 bool upgrade_pending();
 // What an upgrade of a mailbox's file came to
 enum class Upgraded {
-  Done,   // upgraded, or a file newer than this code recorded as it is
+  Done,   // upgraded, or held: the file is ahead of its registry
   NotDue, // purged, held, deferred, or upgraded meanwhile
   Wait,   // the file cannot be opened or written now
   Failed  // a step failed, and the file is as it was
 };
-// Takes the mailbox's file to the current schema version. A file newer than
-// this code keeps its version, which the registry records: nothing uses it
-// until a release that knows that version runs. A failed step describes
-// itself in `problem`; the caller decides whether that holds the mailbox.
+// Takes the mailbox's file to the current schema version. A failed step
+// describes itself in `problem`; the caller decides whether that holds the
+// mailbox.
 Upgraded upgrade_file(int64_t id, std::string &problem);
 // Holds the mailbox for repair, for `why`, or with an empty `why` releases it.
 // Nothing may use the file meanwhile, and the pumps keep away: its
