@@ -150,13 +150,18 @@ Insert queue_message(int64_t mailbox, const IncomingMessage &message,
 }
 
 int64_t backlog(int64_t at_ns) {
+  // A file newer than this release waits for another release, as a held one
+  // waits for its repair
   db::Stmt count(
       db::control(),
       "SELECT (SELECT count(*) FROM queue q JOIN mailboxes m ON m.id = q.mailbox_id "
-      "WHERE q.quarantined = 0 AND m.retry_after_ns <= ?1) + "
+      "WHERE q.quarantined = 0 AND m.retry_after_ns <= ?1 AND m.schema <= ?2) + "
       "(SELECT coalesce(sum(unparsed), 0) FROM mailboxes "
-      "WHERE unparsed > 0 AND retry_after_ns <= ?1)");
-  return count && count.integer(1, at_ns).row() ? count.column_integer(0) : -1;
+      "WHERE unparsed > 0 AND retry_after_ns <= ?1 AND schema <= ?2)");
+  return count &&
+                 count.integer(1, at_ns).integer(2, db::mailbox_version()).row()
+             ? count.column_integer(0)
+             : -1;
 }
 
 bool deferred_until(int64_t now_ns, int64_t &at_ns) {
