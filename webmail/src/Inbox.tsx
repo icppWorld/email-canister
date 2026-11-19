@@ -54,12 +54,11 @@ type Action = {
   run: (uids: bigint[]) => Promise<unknown>
 }
 
-// One in the reader's ⋮ menu. waits: it waits until the message has loaded,
-// with its sender's address known and its own mark as read made, so that the
-// mark cannot land after it.
+// One in the reader's ⋮ menu. needs: what it waits for, the sender's address
+// or the reader's own mark as read, which must not land after it.
 type MoreAction = {
   label: string
-  waits?: true
+  needs?: 'sender' | 'mark'
   run: (sender: string) => Promise<unknown>
 }
 
@@ -340,7 +339,10 @@ function Reader({
             {more.map((action) => (
               <button
                 key={action.label}
-                disabled={action.waits && (!sender || !settled)}
+                disabled={
+                  (action.needs === 'sender' && !sender) ||
+                  (action.needs === 'mark' && !settled)
+                }
                 onClick={() => act(() => action.run(sender))}
               >
                 {action.label}
@@ -657,7 +659,14 @@ export function Inbox({
         ? (done) => ({
             label: 'Block sender',
             title: `Block ${sender}`,
-            run: () => block(sender, done),
+            // A refusal says what it leaves, and still offers the move's Undo
+            run: () =>
+              block(sender, done).catch((e) =>
+                notify({
+                  text: `${sender} was not blocked: ${errorText(e)}. The message is in Spam.`,
+                  actions: [undo(backend, done, here)],
+                })
+              ),
           })
         : undefined
     )
@@ -668,7 +677,7 @@ export function Inbox({
       ? [
           {
             label: 'Mark unread',
-            waits: true,
+            needs: 'mark',
             // Back to the list, unless another message opened meanwhile
             run: async () => {
               await markUnread.run([uid])
@@ -680,7 +689,7 @@ export function Inbox({
         ? [
             {
               label: 'Block sender',
-              waits: true,
+              needs: 'sender',
               run: (sender) => block(sender, []),
             },
           ]
