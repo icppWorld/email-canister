@@ -658,7 +658,7 @@ button.star.on .icon {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-dialog);
-  z-index: 2; /* above the reader's popups */
+  z-index: 3; /* above the menus and the reader's popups */
 }
 .dialog label {
   display: grid;
@@ -725,7 +725,7 @@ button.star.on .icon {
 .backdrop {
   position: fixed;
   inset: 0;
-  z-index: 2;
+  z-index: 3;
   background: rgb(0 0 0 / 40%);
 }
 /* Back to the list: only at phone width, where the reader takes its place */

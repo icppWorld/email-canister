@@ -243,13 +243,17 @@ export function App() {
 
   // A toast's action, such as Undo
   const runToast = async (action: ToastAction) => {
+    // A refusal keeps the note's other actions, such as the Undo of the move
+    // a failed block came with
+    const others = toast?.actions?.filter((other) => other !== action)
     setToast(null)
     // Its end belongs to the session it began in
     const session = latestBackend.current
     try {
       await action.run()
     } catch (e) {
-      if (session === latestBackend.current) setToast({ text: errorText(e) })
+      if (session === latestBackend.current)
+        setToast({ text: errorText(e), actions: others })
     } finally {
       if (action.reload && session === latestBackend.current) {
         setRefresh((count) => count + 1)

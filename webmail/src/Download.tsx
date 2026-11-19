@@ -15,7 +15,8 @@ const RETRY_MS = 1_000
 const INTERRUPTED = 'The download was interrupted. Please start it again.'
 
 // The download of the mailbox shown: start() and what to show while it runs.
-// A new session, as at sign-out, ends it; another mailbox opening does not.
+// A new session, as at sign-out, ends it, and so does losing every mailbox;
+// another mailbox opening does not.
 export function useDownload(
   backend: Mailbox | null,
   address: string,
@@ -23,15 +24,17 @@ export function useDownload(
 ) {
   const [progress, setProgress] = useState('')
   const [error, setError] = useState('')
-  // Raised when the session ends, which ends the download under way
+  // Raised when the session ends or no mailbox is left, which ends the
+  // download under way
   const generation = useRef(0)
+  const hasMailbox = backend !== null
   useEffect(
     () => () => {
       generation.current += 1
       setProgress('')
       setError('')
     },
-    [session]
+    [session, hasMailbox]
   )
 
   const start = async () => {

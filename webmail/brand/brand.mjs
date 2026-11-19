@@ -275,7 +275,7 @@ export function loadBrand(folder) {
     })
   )
   for (const [role, leader] of Object.entries(FOLLOWS)) {
-    if (own.roles?.[role] === undefined) roles[role] = roles[leader]
+    if (own.roles?.[role] == null) roles[role] = roles[leader]
   }
   // A family may name one of the tokens file's type families, as "{body}"
   const families = Object.fromEntries(

@@ -18,6 +18,7 @@
     "action": "{action}",
     "action-hover": "{action-hover}",
     "on-action": "{on-action}",
+    "action-text": { "light": "#0b4a75", "dark": "#9ccff3" },
     "selected": "{tint}",
     "radius-md": "{radius-md}",
     "control-height": "36px"

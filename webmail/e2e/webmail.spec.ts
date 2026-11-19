@@ -326,19 +326,23 @@ test("shows the deployment's brand, from e2e/brand", async ({ page }) => {
   expect(
     await logo.evaluate((image: HTMLImageElement) => image.currentSrc)
   ).toMatch(/logo-light\.svg$/)
-  const action = () =>
-    page.evaluate(() =>
-      getComputedStyle(document.documentElement)
-        .getPropertyValue('--action')
-        .trim()
+  const role = (name: string) =>
+    page.evaluate(
+      (role) =>
+        getComputedStyle(document.documentElement)
+          .getPropertyValue(role)
+          .trim(),
+      name
     )
-  expect(await action()).toBe('#1d5e8c')
+  expect(await role('--action')).toBe('#1d5e8c')
+  expect(await role('--action-text')).toBe('#0b4a75')
 
   await page.emulateMedia({ colorScheme: 'dark' })
   await expect
     .poll(() => logo.evaluate((image: HTMLImageElement) => image.currentSrc))
     .toMatch(/logo-dark\.svg$/)
-  expect(await action()).toBe('#7fc1f0')
+  expect(await role('--action')).toBe('#7fc1f0')
+  expect(await role('--action-text')).toBe('#9ccff3')
 
   const icon = await page.evaluate(async () => {
     const reply = await fetch(
@@ -577,11 +581,12 @@ for (const [colorScheme, word, body] of [
       'color',
       await roleColour(page, '--ink')
     )
-    if (word === 'wren')
-      await expect(bodyOf(page).locator('a')).toHaveCSS(
-        'color',
-        await roleColour(page, '--action')
-      )
+    if (word === 'wren') {
+      // e2e/brand gives links a colour apart from the button's
+      const link = await roleColour(page, '--action-text')
+      expect(link).not.toBe(await roleColour(page, '--action'))
+      await expect(bodyOf(page).locator('a')).toHaveCSS('color', link)
+    }
     await expect(page.getByTestId('via')).toHaveCount(0)
     await context.close()
   })
@@ -1468,7 +1473,9 @@ test('the Download button waits until the download has ended', async ({
   await context.close()
 })
 
-test('signing out ends a download under way', async ({ browser }) => {
+test('signing out ends a download under way, and the next sign-in shows none', async ({
+  browser,
+}) => {
   const { context, page } = await signedIn(browser, USER_A)
   const chunk = await hold(page, 'mail_export_chunk')
   const thaws = watch(page, 'mail_export_thaw')
@@ -1477,10 +1484,51 @@ test('signing out ends a download under way', async ({ browser }) => {
   await downloadCopy(page)
   await chunk.seen
   await page.getByRole('button', { name: 'Sign out' }).click()
+  // Signed in again before the old download's chunk comes back, so that
+  // anything it shows late lands on the new sign-in
+  await signInAgain(page, USER_A)
+  await expect(page.getByTestId('address')).toHaveText(`alice@${DOMAIN}`)
   chunk.release()
   await expect.poll(() => thaws.length, { timeout: 30_000 }).toBe(1)
   // The thaw was sent; it may not have ended yet
   await expect(noDownloadHeld).toPass({ timeout: 10_000 })
+  expect(downloaded).toBe(false)
+
+  // Nothing of it is left on the new sign-in: a new download can start
+  await expect(downloadStatus(page)).toHaveCount(0)
+  await expect(nav(page).getByRole('alert')).toHaveCount(0)
+  await openMenu(page, 'More')
+  await expect(
+    menu(page, 'More').getByRole('button', { name: 'Download a copy' })
+  ).toBeEnabled()
+  await context.close()
+})
+
+const LARK = '51'.repeat(32)
+
+test('a download ends when its person no longer has a mailbox, saving nothing', async ({
+  browser,
+}) => {
+  joinMailbox('scaup', LARK)
+  const { context, page } = await signedIn(browser, LARK)
+  await expect(page.getByTestId('address')).toHaveText(`scaup@${DOMAIN}`)
+  // Answered while lark is a member, so the chunk is whole: a download that
+  // went on would save it
+  const chunk = await hold(page, 'mail_export_chunk', { late: true })
+  const thaws = watch(page, 'mail_export_thaw')
+  let downloaded = false
+  page.on('download', () => (downloaded = true))
+  await downloadCopy(page)
+  await chunk.seen
+  backend('admin_remove_member', `("scaup", principal "${principalOf(LARK)}")`)
+  await page.getByRole('button', { name: 'Refresh' }).click()
+  await expect(
+    page.getByRole('heading', { name: 'Not activated yet' })
+  ).toBeVisible()
+  chunk.release()
+  await expect.poll(() => thaws.length, { timeout: 30_000 }).toBe(1)
+  // Time for a save to reach the page, had the download made one
+  await page.waitForTimeout(500)
   expect(downloaded).toBe(false)
   await context.close()
 })
@@ -3456,6 +3504,49 @@ test("Spam in the reader offers to block the sender, and that block's Undo bring
   await context.close()
 })
 
+test('a block refused after Spam shows why, and its Undo still brings the message back', async ({
+  browser,
+}) => {
+  deliver({
+    subject: 'Refused gannet',
+    body: '<p>A gannet.</p>',
+    from: 'Gannet <gannet@sender.example>',
+  })
+  await waitDrained()
+  const { context, page } = await signedIn(browser, USER_A)
+  await openMail(page, 'gannet')
+  await expect(page.getByTestId('subject')).toHaveText('Refused gannet')
+  // The block itself fails; the list of blocked addresses it reads first
+  // goes through. Its name holds mail_block too.
+  await page.route('**/api/*/canister/*/*', (route) =>
+    callsTo(route.request(), 'mail_block') &&
+    !callsTo(route.request(), 'mail_blocked')
+      ? route.abort('failed')
+      : route.fallback()
+  )
+  await spamFromReader(page)
+  const note = page.getByTestId('toast')
+  await expect(note).toHaveText(/Message moved to Spam/)
+  await expect(messageRow(page, 'Refused gannet')).toHaveCount(0)
+  await toastButton(page, 'Block sender')
+  // The refusal, after the agent's own retries, with the move's Undo
+  await expect(note.getByRole('button', { name: 'Undo' })).toBeVisible({
+    timeout: 60_000,
+  })
+  await expect(note).not.toHaveText(/Blocked|moved to Spam/)
+  await expect(note.getByRole('button', { name: 'Block sender' })).toHaveCount(
+    0
+  )
+  const alice = await asAlice()
+  expect(await blockedAddresses(alice)).not.toContain('gannet@sender.example')
+
+  await undo(page)
+  await expect(messageRow(page, 'Refused gannet')).toHaveCount(1)
+  await openMail(page, 'gannet')
+  await expect(page.getByTestId('subject')).toHaveText('Refused gannet')
+  await context.close()
+})
+
 test("the reader's Mark unread marks the message unread and closes it", async ({
   browser,
 }) => {
@@ -3531,6 +3622,61 @@ test('the header menu holds Blocked senders, Download a copy and, for a controll
   await admin.context.close()
 })
 
+test('a menu gives the focus back to its button, and closes when the focus leaves it or the window changes size', async ({
+  browser,
+}) => {
+  const { context, page } = await signedIn(browser, USER_A)
+  await expect(page.getByTestId('address')).toHaveText(`alice@${DOMAIN}`)
+  const more = menu(page, 'More')
+  const button = page.getByLabel('More', { exact: true })
+  const blockedItem = more.getByRole('button', { name: 'Blocked senders' })
+
+  // The item chosen hands the focus back to the ⋮
+  await menuItem(page, 'More', 'Blocked senders')
+  await expect(blockedItem).toBeHidden()
+  await expect(button).toBeFocused()
+
+  // Tab past the last item leaves the menu, which closes behind it
+  await openMenu(page, 'More')
+  const last = more.getByRole('button', { name: 'Download a copy' })
+  await last.focus()
+  await page.keyboard.press('Tab')
+  await expect(blockedItem).toBeHidden()
+  await expect(last).not.toBeFocused()
+
+  // A window that changes size leaves no list behind
+  await openMenu(page, 'More')
+  await expect(blockedItem).toBeVisible()
+  await page.setViewportSize({ width: 900, height: 700 })
+  await expect(blockedItem).toBeHidden()
+  await context.close()
+})
+
+test("a click in the message's frame closes the reader's menu", async ({
+  browser,
+}) => {
+  // Long enough that its last line lies well below the menu's list
+  const lines = Array.from({ length: 12 }, (_, i) => `<p>Line ${i + 1}</p>`)
+  deliver({
+    subject: 'Framed shearwater',
+    body: `${lines.join('')}<p>The shearwater's last line</p>`,
+  })
+  await waitDrained()
+  const { context, page } = await signedIn(browser, USER_A)
+  await openMail(page, 'shearwater')
+  await expect(page.getByTestId('subject')).toHaveText('Framed shearwater')
+  await openMenu(page, 'More actions')
+  const item = menu(page, 'More actions').getByRole('button', {
+    name: 'Mark unread',
+  })
+  await expect(item).toBeVisible()
+  // The frame's own document: a click there never reaches the page's
+  await bodyOf(page).getByText("The shearwater's last line").click()
+  await expect(item).toBeHidden()
+  await expect(reader(page)).toBeVisible()
+  await context.close()
+})
+
 test('the selected folder is bold, with a bar in the action-text colour, and a hovered one is not', async ({
   browser,
 }) => {
@@ -3547,7 +3693,9 @@ test('the selected folder is bold, with a bar in the action-text colour, and a h
         background: computed.backgroundColor,
       }
     })
+  // e2e/brand gives the bar a colour apart from the button's
   const bar = await roleColour(page, '--action-text')
+  expect(bar).not.toBe(await roleColour(page, '--action'))
   const selected = await style(inbox)
   expect(selected.weight).toBe('700')
   expect(selected.shadow).toContain(bar)
@@ -3608,6 +3756,48 @@ test("at phone width the reader's actions keep to one row, and its menu opens on
     const button = reader(page).getByRole('button', { name, exact: true })
     expect(Math.abs((await middle(button)) - more), name).toBeLessThan(2)
   }
+  await context.close()
+})
+
+test('at phone width a ⋮ in the left half opens its list from the left', async ({
+  browser,
+}) => {
+  deliver({ subject: 'Wrapped skua', body: '<p>A skua.</p>' })
+  await waitDrained()
+  const alice = await asAlice()
+  const uid = await uidOf(alice, 'alice', 'Wrapped skua')
+  await alice.mail_move('alice', [uid], FOLDER_SPAM)
+  const viewport = { width: 390, height: 844 }
+  const { context, page } = await signedIn(browser, USER_A, { viewport })
+  await folder(page, 'Spam')
+  await messageRow(page, 'Wrapped skua').click()
+  await expect(page.getByTestId('subject')).toHaveText('Wrapped skua')
+  // Spam's actions take more than one row: the ⋮ starts the second, at the
+  // left
+  const button = page.getByLabel('More actions', { exact: true })
+  const at = await button.boundingBox()
+  if (!at) throw new Error('no menu button')
+  expect(at.x + at.width / 2).toBeLessThan(viewport.width / 2)
+  // Its first frame on screen too: where the list lies once the click and
+  // React's render after it are done, before any later task, such as the
+  // toggle event, has run
+  const first = await button.evaluate(async (summary) => {
+    ;(summary as HTMLElement).click()
+    for (let i = 0; i < 3; i++) await Promise.resolve()
+    const items = summary.parentElement?.querySelector('.menu-items')
+    if (!items) throw new Error('no menu list')
+    const { left, right } = items.getBoundingClientRect()
+    return { left, right }
+  })
+  expect(first.left).toBeGreaterThanOrEqual(0)
+  expect(first.right).toBeLessThanOrEqual(viewport.width)
+  // and once it has settled
+  const list = menu(page, 'More actions').locator('.menu-items')
+  await expect(list).toBeVisible()
+  const box = await list.boundingBox()
+  if (!box) throw new Error('no menu list')
+  expect(box.x).toBeGreaterThanOrEqual(0)
+  expect(box.x + box.width).toBeLessThanOrEqual(viewport.width)
   await context.close()
 })
 

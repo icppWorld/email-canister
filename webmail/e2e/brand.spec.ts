@@ -456,26 +456,23 @@ test("action-text follows the brand's action unless set, and is checked on its g
     readFileSync(path.join(webmail, 'e2e', 'brand', 'brand.json'), 'utf8')
   )
 
-  // e2e/brand sets action, not action-text: links and the bar take its action
-  const follows = brand({ brand: 'e2e/brand' })
+  // Without action-text, links and the bar take the brand's action
+  const { 'action-text': _, ...withoutText } = roles
+  const follows = brand({ brand: editBrand({ roles: withoutText }) })
   expect(follows.ok, follows.output).toBe(true)
   const followsCss = brandCss(follows.out)
   expect(followsCss).toContain('--action-text: #1d5e8c;')
   expect(followsCss).toContain('--action-text: #7fc1f0;')
 
-  const own = brand({
-    brand: editBrand({
-      roles: {
-        ...roles,
-        'action-text': { light: '#0b4a75', dark: '#9ccff3' },
-      },
-    }),
-  })
+  // e2e/brand sets an action-text of its own, which leaves action alone
+  const own = brand({ brand: 'e2e/brand' })
   expect(own.ok, own.output).toBe(true)
+  expect(own.output).not.toContain('below')
   const ownCss = brandCss(own.out)
   expect(ownCss).toContain('--action-text: #0b4a75;')
   expect(ownCss).toContain('--action-text: #9ccff3;')
   expect(ownCss).toContain('--action: #1d5e8c;')
+  expect(ownCss).toContain('--action: #7fc1f0;')
 
   // Too faint for the bar beside the selected folder
   const faint = brand({
