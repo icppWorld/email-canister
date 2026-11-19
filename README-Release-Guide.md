@@ -4,7 +4,7 @@ A release is a zip that a deployment vendors: the backend wasm built reproducibl
 
 ## Version numbers
 
-- `vX.Y.Z` for a release, `vX.Y.ZrcN` for a release candidate. A tag containing `rc` is published as a prerelease.
+- `vX.Y.Z` for a release, `vX.Y.ZrcN` for a release candidate. A tag containing `rc` is published as a prerelease. So is every release while `STAGE` in `.github/workflows/release.yml` is set, now `alpha`, which also goes into the release's name.
 - Raise the minor version for new features or a changed Candid API, the patch version for fixes only.
 - A release that needs a data migration says so in its upgrade notes, and its migration is tested across an upgrade with mail in the canister.
 
