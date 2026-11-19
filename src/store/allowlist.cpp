@@ -377,22 +377,25 @@ bool upgrade_pending() {
 
 Upgraded upgrade_file(int64_t id, std::string &problem) {
   const int64_t current = db::mailbox_version();
+  int64_t registered = 0;
   {
     db::Stmt select(db::control(),
-                    "SELECT 1 FROM mailboxes WHERE id = ?2 AND "
+                    "SELECT schema FROM mailboxes WHERE id = ?2 AND "
                     "retry_after_ns <= ?3 AND " WAITS_FOR_UPGRADE("?1"));
     if (!select) return Upgraded::Wait;
     const auto now = static_cast<int64_t>(IC_API::time());
     if (!select.integer(1, current).integer(2, id).integer(3, now).row())
       return select.failed() ? Upgraded::Wait : Upgraded::NotDue;
+    registered = select.column_integer(0);
   }
   sqlite3 *file = db::mailbox(id, true);
   if (file == nullptr) return Upgraded::Wait;
   const int64_t version = db::file_version(file);
   if (version < 0) return Upgraded::Wait;
-  if (version > current) {
-    // After a rollback the registry has the file's version, and the file
-    // does not wait for an upgrade. A file ahead of its registry is damage.
+  if (version > registered) {
+    // An upgrade records the file's version with the file, and a rollback
+    // leaves both ahead of the release: a file ahead of its registry is
+    // damage.
     return set_needs_repair(id, "the file has schema version " +
                                     std::to_string(version) +
                                     ", newer than its registry's")
