@@ -189,9 +189,12 @@ export function Sent({
   // Replies can arrive out of order, and only the newest may be shown
   const latestLoad = useRef(0)
   const olderShown = useRef(false)
+  // The first page is loading: Older mail waits, or it would drop that load
+  const loading = useRef(false)
 
   const load = useCallback(async () => {
     const request = ++latestLoad.current
+    loading.current = true
     try {
       const page = await backend.mail_outbox_list({ cursor: [], limit: 50n })
       if (request !== latestLoad.current) return
@@ -200,7 +203,13 @@ export function Sent({
       setCursor(page.cursor)
       setError('')
     } catch (e) {
-      if (request === latestLoad.current) setError(errorText(e))
+      if (request !== latestLoad.current) return
+      setError(errorText(e))
+      // A reload that failed, as after a send, is tried again by the next
+      // refresh, also while older mail is shown
+      olderShown.current = false
+    } finally {
+      if (request === latestLoad.current) loading.current = false
     }
   }, [backend])
 
@@ -214,6 +223,7 @@ export function Sent({
   }, [load, refresh])
 
   const older = async () => {
+    if (loading.current) return
     const request = ++latestLoad.current
     try {
       const page = await backend.mail_outbox_list({ cursor, limit: 50n })

@@ -14,6 +14,7 @@ import {
   type BrowserContext,
   type Page,
   type Request,
+  type Route,
 } from '@playwright/test'
 import { Cbor } from '@icp-sdk/core/agent'
 
@@ -3557,5 +3558,70 @@ test('a message sent while older mail is shown in Sent shows there', async ({
   await send(page)
   await expect(page.getByRole('dialog', { name: 'New message' })).toHaveCount(0)
   await expect(sent).toContainText('Fresh quill', { timeout: 4_000 })
+  await context.close()
+})
+
+// A mailbox of its own, with more Sent mail than one page holds
+async function fullSent(local: string, seed: string): Promise<void> {
+  joinMailbox(local, seed)
+  const box = await asUser(seed, env.url, env.backend)
+  await Promise.all(
+    Array.from({ length: 51 }, (_, i) =>
+      box.mail_send(local, {
+        client_id: crypto.randomUUID(),
+        to: ['friend@example.org'],
+        cc: [],
+        bcc: [],
+        subject: `Filler ${i}`,
+        html_body: '<p>Filler</p>',
+        attachments: [],
+      })
+    )
+  )
+}
+
+const QUIRE = '4d'.repeat(32)
+
+test('Older mail clicked while Sent reloads after a send leaves the reload in place', async ({
+  browser,
+}) => {
+  await fullSent('quire', QUIRE)
+  const { context, page } = await signedIn(browser, QUIRE)
+  await folder(page, 'Sent')
+  const sent = page.getByRole('region', { name: 'Sent mail' })
+  await expect(page.getByRole('button', { name: 'Older mail' })).toBeVisible()
+  const loading = await hold(page, 'mail_outbox_list')
+  await compose(page, 'Fresh quire')
+  await send(page)
+  await loading.seen
+  await page.getByRole('button', { name: 'Older mail' }).click()
+  loading.release()
+  await expect(sent).toContainText('Fresh quire', { timeout: 8_000 })
+  await context.close()
+})
+
+const QUOIN = '4e'.repeat(32)
+
+test('a reload of Sent that fails while older mail is shown is tried again', async ({
+  browser,
+}) => {
+  await fullSent('quoin', QUOIN)
+  const { context, page } = await signedIn(browser, QUOIN)
+  await folder(page, 'Sent')
+  const sent = page.getByRole('region', { name: 'Sent mail' })
+  await page.getByRole('button', { name: 'Older mail' }).click()
+  await expect(sent.getByRole('listitem')).toHaveCount(51)
+  // Every attempt: the agent tries a failed call again
+  const refuse = (route: Route) =>
+    callsTo(route.request(), 'mail_outbox_list')
+      ? route.abort()
+      : route.fallback()
+  await page.route('**/api/*/canister/*/*', refuse)
+  await compose(page, 'Late quoin')
+  await send(page)
+  await expect(sent.getByRole('alert')).toBeVisible()
+  await page.unroute('**/api/*/canister/*/*', refuse)
+  // The next refresh, at most 5 seconds on
+  await expect(sent).toContainText('Late quoin', { timeout: 10_000 })
   await context.close()
 })
