@@ -490,7 +490,10 @@ export function App() {
             principal={principal}
             shared={shared}
             folder={current}
-            notify={setToast}
+            notify={(note) => {
+              // A move that ends after a new sign-in is not this session's
+              if (latestBackend.current === backend) setToast(note)
+            }}
             onReply={(reply) =>
               setDraft((open) => open ?? { ...reply, from: shown.local })
             }

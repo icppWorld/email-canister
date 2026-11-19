@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type RefObject,
+} from 'react'
 import { Principal } from '@icp-sdk/core/principal'
 
 import {
@@ -57,14 +64,20 @@ async function attempt(
   }
 }
 
-// A call for many messages, in parts the canister takes
+// A call for many messages, in parts the canister takes. Returns the uids it
+// got through, and the refusal that stopped it.
 async function inBatches(
   uids: bigint[],
   call: (part: bigint[]) => Promise<unknown>
-): Promise<void> {
+): Promise<{ done: bigint[]; error?: unknown }> {
   for (let at = 0; at < uids.length; at += BATCH) {
-    await call(uids.slice(at, at + BATCH))
+    try {
+      await call(uids.slice(at, at + BATCH))
+    } catch (error) {
+      return { done: uids.slice(0, at), error }
+    }
   }
+  return { done: uids }
 }
 
 // "Message", "this message" or "3 messages"
@@ -88,7 +101,10 @@ function undo(
     reload: true,
     run: async () => {
       if (unblock) await backend.mail_unblock(unblock)
-      await inBatches(uids, (part) => backend.mail_move(part, from))
+      const { error } = await inBatches(uids, (part) =>
+        backend.mail_move(part, from)
+      )
+      if (error) throw error
     },
   }
 }
@@ -118,6 +134,7 @@ function Reader({
   principal,
   shared,
   summary,
+  touched,
   actions,
   onBlock,
   onReply,
@@ -129,6 +146,9 @@ function Reader({
   shared: boolean // the mailbox has other members, or had
   onCounts: () => void // the mailbox's unread count may have changed
   summary: Summary
+  // The flags changed on this page since each message started loading, here
+  // or in the list: its reply must not undo them
+  touched: RefObject<Map<bigint, bigint>>
   actions: Action[] // the folder's, for this message
   // Blocks the address and files the message in Spam; absent in Trash
   onBlock?: (address: string) => Promise<void>
@@ -150,9 +170,6 @@ function Reader({
   const [state, setState] = useState(summary.state)
   // Who opened the message, and when each first did
   const [seenBy, setSeenBy] = useState<SeenBy[]>([])
-  // The flags changed here since the message started loading: its reply must
-  // not undo them
-  const changed = useRef(0n)
   const quarantined = state === MESSAGE_QUARANTINED
   const [formatted, setFormatted] = useState(false)
   const plain = quarantined && !formatted
@@ -165,6 +182,7 @@ function Reader({
   useEffect(() => {
     let current = true
     const listed = summary.flags
+    touched.current.set(summary.uid, 0n)
     ;(async () => {
       try {
         const full = await backend.mail_get(summary.uid)
@@ -175,7 +193,7 @@ function Reader({
           // Only what changed since the list loaded, as when another member
           // flagged or read it, so a change made here meanwhile stays
           const flags = full.summary.flags
-          const mine = changed.current
+          const mine = touched.current.get(summary.uid) ?? 0n
           onFlags(flags & ~listed & ~mine, listed & ~flags & ~mine)
         }
         // Every member who opens a message is recorded once, also after
@@ -253,7 +271,8 @@ function Reader({
 
   const toggleFlag = async () => {
     const [set, clear] = starring(summary.flags)
-    changed.current |= FLAG_FLAGGED
+    const uid = summary.uid
+    touched.current.set(uid, (touched.current.get(uid) ?? 0n) | FLAG_FLAGGED)
     try {
       await backend.mail_set_flags([summary.uid], set, clear)
       setActionError('')
@@ -423,6 +442,7 @@ export function Inbox({
   const latestLoad = useRef(0)
   const olderShown = useRef(false)
   const allBox = useRef<HTMLInputElement>(null)
+  const touched = useRef(new Map<bigint, bigint>())
 
   const load = useCallback(
     async (from: [] | [bigint], append: boolean, search: string) => {
@@ -464,7 +484,9 @@ export function Inbox({
     return () => window.clearInterval(timer)
   }, [load, activeQuery, refresh, onLoaded])
 
+  // A list load under way began before this change: its reply must not undo it
   const updateFlags = (uids: bigint[], set: bigint, clear: bigint) => {
+    latestLoad.current++
     const changed = new Set(uids)
     const apply = (m: Summary) =>
       changed.has(m.uid) ? { ...m, flags: (m.flags | set) & ~clear } : m
@@ -474,6 +496,7 @@ export function Inbox({
 
   // Takes messages that moved or were deleted off the list and the reader
   const drop = (uids: bigint[]) => {
+    latestLoad.current++
     const gone = new Set(uids)
     setItems((previous) => previous.filter((m) => !gone.has(m.uid)))
     setChecked((ticked) => new Set([...ticked].filter((uid) => !gone.has(uid))))
@@ -487,19 +510,24 @@ export function Inbox({
     return items.some((m) => asked.has(m.uid) && (m.flags & FLAG_SEEN) === 0n)
   }
 
-  // Out of this folder, for the caller to say so
+  // Out of this folder, for the caller to say so. What moved before a
+  // refusal leaves the list.
   const moveOut = async (uids: bigint[], to: bigint) => {
-    await inBatches(uids, (part) => backend.mail_move(part, to))
-    if (anyUnread(uids)) onCounts()
-    drop(uids)
+    const result = await inBatches(uids, (part) => backend.mail_move(part, to))
+    if (anyUnread(result.done)) onCounts()
+    drop(result.done)
+    return result
   }
 
   const move = async (uids: bigint[], to: Folder) => {
-    await moveOut(uids, FOLDERS[to].number)
-    notify({
-      text: `${messages(uids.length, 'Message')} moved to ${FOLDERS[to].name}`,
-      action: undo(backend, uids, here),
-    })
+    const { done, error } = await moveOut(uids, FOLDERS[to].number)
+    if (done.length > 0) {
+      notify({
+        text: `${messages(done.length, 'Message')} moved to ${FOLDERS[to].name}`,
+        action: undo(backend, done, here),
+      })
+    }
+    if (error) throw error
   }
 
   // For good, once confirmed
@@ -510,15 +538,26 @@ export function Inbox({
       )
     )
       return
-    await inBatches(uids, (part) => backend.mail_delete(part))
-    if (anyUnread(uids)) onCounts()
-    drop(uids)
+    const { done, error } = await inBatches(uids, (part) =>
+      backend.mail_delete(part)
+    )
+    if (anyUnread(done)) onCounts()
+    drop(done)
+    if (error) throw error
   }
 
   const flag = async (uids: bigint[], set: bigint, clear: bigint) => {
-    await inBatches(uids, (part) => backend.mail_set_flags(part, set, clear))
-    updateFlags(uids, set, clear)
+    // Before the call, so a message loading in the reader keeps the change
+    for (const uid of uids) {
+      if (touched.current.has(uid))
+        touched.current.set(uid, touched.current.get(uid)! | set | clear)
+    }
+    const { done, error } = await inBatches(uids, (part) =>
+      backend.mail_set_flags(part, set, clear)
+    )
+    updateFlags(done, set, clear)
     if ((set | clear) & FLAG_SEEN) onCounts()
+    if (error) throw error
   }
 
   // Every message in Trash or Spam, page by page
@@ -544,14 +583,23 @@ export function Inbox({
     await load([], false, activeQuery)
   }
 
-  // Blocked first, then out to Spam: a refused block moves nothing
+  // Blocked first, then out to Spam: a refused block moves nothing. Undo
+  // leaves a block made before alone.
   const block = async (uid: bigint, address: string) => {
+    const before = await backend.mail_blocked()
+    const already = before.some((b) => b.address === address.toLowerCase())
     await backend.mail_block(address)
     const filed = folder === 'spam' ? [] : [uid]
-    if (filed.length > 0) await moveOut(filed, FOLDER_SPAM)
+    if (filed.length > 0) {
+      const { error } = await moveOut(filed, FOLDER_SPAM)
+      if (error) throw error
+    }
     notify({
-      text: `Blocked ${address}`,
-      action: undo(backend, filed, here, address),
+      text: already ? `${address} was blocked already` : `Blocked ${address}`,
+      action:
+        already && filed.length === 0
+          ? undefined
+          : undo(backend, filed, here, already ? undefined : address),
     })
   }
 
@@ -564,7 +612,7 @@ export function Inbox({
     run: (uids) => move(uids, 'trash'),
   }
   const toSpam: Action = {
-    label: 'Spam',
+    label: 'Report spam',
     icon: 'spam',
     run: (uids) => move(uids, 'spam'),
   }
@@ -777,6 +825,7 @@ export function Inbox({
           key={selected.uid.toString()}
           backend={backend}
           summary={selected}
+          touched={touched}
           actions={actions}
           onBlock={
             folder === 'trash'
