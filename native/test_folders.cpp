@@ -1,6 +1,7 @@
 // The Inbox, Trash and Spam folders, and the senders a mailbox blocks
 
 #include <string>
+#include <vector>
 
 #include "api.h"
 #include "ic0.h"
@@ -139,6 +140,15 @@ void test_folders(MockIC &) {
     expect(test, listed(test, 1), "items = vec {}");
     expect(test, CALL(test, admin_check, "(\"fox\", null)", CONTROLLER),
            "result = \"ok\"");
+  }
+  {
+    const std::string test = "a move from Spam to Trash keeps its 30 days";
+    expect(test, move(test, "vec { 1 }", 2), "(1 : nat64)");
+    later_by_days(20);
+    expect(test, move(test, "vec { 1 }", 1), "(1 : nat64)");
+    later_by_days(11);
+    move(test, "vec {}", 1);
+    expect(test, fox(test), "message_count = 2 : ");
     ic0mock_clear_time_override();
   }
 
@@ -152,10 +162,10 @@ void test_folders(MockIC &) {
     expect(test, list, "name = opt \"Alice A\"");
     check(test, count(list, "address = ") == 1, "not one address in: " + list);
   }
-  for (const std::string &address :
-       {"", "nope", "@example.com", "spammer@", "a b@example.com",
-        "a@b@example.com", "<a@example.com>",
-        std::string(250, 'a') + "@x.io"}) {
+  for (const std::string &address : std::vector<std::string>{
+           "", "nope", "@example.com", "spammer@", "a b@example.com",
+           "a@b@example.com", "<a@example.com>",
+           std::string(250, 'a') + "@x.io"}) {
     TRAPS("not an address: " + address.substr(0, 20), mail_block,
           "(\"fox\", \"" + address + "\")", USER_A, "not an email address");
   }

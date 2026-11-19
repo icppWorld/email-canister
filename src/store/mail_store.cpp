@@ -568,8 +568,12 @@ static int64_t file_messages(const Mailbox &box,
                              const std::vector<uint64_t> &uids, int64_t folder,
                              int64_t now_ns) {
   db::Stmt find(box.file, "SELECT folder, flags FROM messages WHERE uid = ?");
-  db::Stmt update(box.file, "UPDATE messages SET folder = ?, folder_ns = ?, "
-                            "modseq = ? WHERE uid = ?");
+  // folder_ns is when the message left the Inbox, so a move between Trash
+  // and Spam keeps its 30 days
+  db::Stmt update(box.file,
+                  "UPDATE messages SET folder = ?1, folder_ns = CASE "
+                  "WHEN ?1 = 0 THEN 0 WHEN folder = 0 THEN ?2 ELSE folder_ns "
+                  "END, modseq = ?3 WHERE uid = ?4");
   int64_t modseq = 0; // taken at the first move
   int64_t moved = 0;
   int64_t unseen = 0;
@@ -589,7 +593,7 @@ static int64_t file_messages(const Mailbox &box,
     unseen += counts_unseen(flags, folder) - counts_unseen(flags, from);
     update.reset();
     ok = modseq > 0 && update.integer(1, folder)
-                           .integer(2, folder == Inbox ? 0 : now_ns)
+                           .integer(2, now_ns)
                            .integer(3, modseq)
                            .integer(4, uid)
                            .done();
