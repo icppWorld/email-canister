@@ -19,7 +19,7 @@ email-canister grows in small releases, driven by running it for real mailboxes.
 - The mailbox experience (v0.3.0): Trash and Spam folders; Delete with no confirmation and an Undo, Restore, and mail in Trash and Spam deleted after 30 days, in steps of 20 messages as mail arrives or is moved; row actions on hover and checkboxes to act on several messages at once; stars in the list; blocked senders, shared by the mailbox's members, whose mail is filed in Spam; the folder shown stays after a send; a compose window at the bottom right that can be minimised or made full screen; and at phone width, the list and the open message taking turns.
 - A simpler mailbox (v0.4.0): the reader's toolbar keeps Reply, Delete, a star and Spam in view, with the rest in ⋮ menus; Spam offers to block the sender in its note; Blocked senders, Download a copy and Admin in a header menu; the selected folder bold with a bar in a new brand role, `action-text`.
 - Faster CI: a run takes about 6 minutes instead of 27. The toolchain, the built libraries and `icp`'s downloads come from caches; the test build is made once and handed to the native, replica and webmail tests, which run side by side, the webmail tests split by area over three jobs, each area on a backend of its own, and the replica tests in three parts. A pull request that changes only docs skips the build and the native, replica, webmail and bridge tests, and a push to `main` whose tree a pull request's run already passed reuses that result, which the release accepts.
-- Spam in one click (v0.5.0): Spam, in the reader or on ticked messages, files the mail and blocks each sender's `From` address, Not spam lifts the block, and one Undo puts back both; the mailbox's own domain is never blocked; the Spam folder links to Blocked senders; the message list gives each message's `From` address.
+- Spam in one click (v0.5.0): Spam, in the reader or on ticked messages, files the mail and blocks each sender's `From` address, Not spam lifts the block, and one Undo puts back both; Spam never blocks an address of the mailbox's own domain or its subdomains; the Spam folder links to Blocked senders; the message list gives each message's `From` address.
 
 ## Next
 
@@ -31,7 +31,7 @@ email-canister grows in small releases, driven by running it for real mailboxes.
   - a note when a new webmail version is deployed, with a button to reload, so a tab left open never calls a backend whose interface changed under it;
   - at phone width, the device's back gesture returning from a message to the list;
   - an `Unopened` folder: Inbox mail that stays unopened for a week moves there, and mail in it moves to Trash 30 days after it arrived in the Inbox, as Spam is cleaned up, with a setting of its own;
-  - Spam's 30 days counted from when the mail arrived in the Inbox, not from when it left it, so mail marked as Spam more than 30 days after it arrived is deleted at once;
+  - Spam's 30 days counted from when the mail arrived in the Inbox, not from when it left it, so mail marked as Spam more than 30 days after it arrived is deleted at once, which Spam's note must say, as its Undo cannot bring that mail back;
   - the smaller webmail and Admin panel items noted during v0.2.0 and v0.3.0, among them every row action checking that the Admin panel's list is current, and errors shown without the agent's call details.
 - Provisioner principals that may create and suspend mailboxes without being admins, for automated onboarding.
 - Mailbox states: `active`, `suspended` (receives, cannot send) and `disabled`.
