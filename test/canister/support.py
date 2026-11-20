@@ -134,6 +134,7 @@ def request(
     recipients = "; ".join(
         f'record {{ user = "{user}"; domain = "{domain}" }}' for user in to.split(",")
     )
+    from_value = from_header or f"Sender <{from_address}>"
     id_header = (
         f'record {{ name = "Message-ID"; value = " {message_id}\\r\\n" }}; '
         if message_id
@@ -145,7 +146,7 @@ def request(
         f'from = record {{ user = "{sender}"; domain = "sender.example" }}; '
         f"to = vec {{ {recipients} }} }}; "
         f"message = opt record {{ headers = vec {{ {id_header}"
-        f'record {{ name = "From"; value = " {from_header or f"Sender <{from_address}>"}\\r\\n" }}; '
+        f'record {{ name = "From"; value = " {from_value}\\r\\n" }}; '
         f'record {{ name = "Date"; value = " {date}\\r\\n" }}; '
         f"{extra_headers}"
         f'record {{ name = "Subject"; value = " {subject}\\r\\n" }} }}; '

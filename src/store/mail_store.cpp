@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <limits>
 
+#include "allowlist.h"
 #include "db.h"
 #include "ic_api.h"
 #include "mime_extract.h"
@@ -27,6 +28,15 @@ const size_t k_max_query_words = 16;
   "uid, state, flags, modseq, received_ns, sent_at, envelope_from, subject, "  \
   "sender, attachments, preview, raw_bytes, folder, sender_address"
 
+// The From address in a sender text, "Name <address>" or the address alone:
+// mail parsed before messages had a sender_address column has only that
+std::string address_in(const std::string &sender) {
+  const size_t open = sender.rfind(" <");
+  if (sender.empty() || sender.back() != '>' || open == std::string::npos)
+    return sender;
+  return sender.substr(open + 2, sender.size() - open - 3);
+}
+
 store::Summary read_summary(db::Stmt &row) {
   store::Summary s;
   s.uid = row.column_integer(0);
@@ -42,7 +52,10 @@ store::Summary read_summary(db::Stmt &row) {
   s.preview = row.column_text(10);
   s.raw_bytes = row.column_integer(11);
   s.folder = row.column_integer(12);
-  s.sender_address = row.column_text(13);
+  const std::string stored = row.column_text(13);
+  const std::string address = stored.empty() ? address_in(s.sender) : stored;
+  // Only an address mail_block takes, so the list can block what it shows
+  s.sender_address = store::valid_address(address) ? address : "";
   return s;
 }
 
