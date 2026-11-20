@@ -130,7 +130,8 @@ def request(
     from_header: Optional[str] = None,
 ) -> str:
     """An SmtpRequest. from_header, when given, is the whole From header's
-    value, in place of "Sender <from_address>"."""
+    value, in place of "Sender <from_address>", as Candid text: its quotes
+    escaped as \\\"."""
     recipients = "; ".join(
         f'record {{ user = "{user}"; domain = "{domain}" }}' for user in to.split(",")
     )
