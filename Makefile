@@ -88,9 +88,11 @@ CANISTER_TESTS ?= test/canister
 test-canister:
 	pytest --network=local --identity=$(TEST_IDENTITY) --durations=20 $(CANISTER_TESTS)
 
+# E2E_ARGS passes options to Playwright, such as --shard=1/3
+E2E_ARGS ?=
 test-e2e:
 	TEST_IDENTITY=$(TEST_IDENTITY) bash webmail/e2e/setup.sh
-	cd webmail && npm run e2e
+	cd webmail && npm run e2e -- $(E2E_ARGS)
 
 # The relay bridge (bridge/) in a Caffeine-style app on PocketIC. Needs only
 # Docker: it runs in a pinned container
