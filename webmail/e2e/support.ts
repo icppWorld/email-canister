@@ -1,4 +1,8 @@
-// What the webmail spec files share: the test users, the backend, and helpers
+// The webmail in a real browser against real canisters on a local replica:
+// what the spec files share, the test users, the backend and helpers.
+// Run e2e/setup.sh first. Sign-in uses fixed keys, as the e2e build does;
+// signin.spec.ts signs in through the local Internet Identity, and only a
+// passkey sign-in on id.ai itself is checked by hand.
 
 import { createHash } from 'node:crypto'
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
@@ -37,7 +41,7 @@ export const backend = (method: string, arg = '()') =>
 export const stub = (method: string, arg = '()') =>
   icp('canister', 'call', 'relay_stub', method, arg)
 
-export const candid = (s: string) =>
+const candid = (s: string) =>
   `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\r/g, '\\r').replace(/\n/g, '\\n')}"`
 
 let serial = 0
@@ -194,7 +198,7 @@ export function watch(page: Page, method: string): Request[] {
 
 // alice, called from the test itself
 // One agent for every call: each fetches the root key
-export let aliceBackend: Promise<Backend> | undefined
+let aliceBackend: Promise<Backend> | undefined
 export const asAlice = () =>
   (aliceBackend ??= asUser(USER_A, env.url, env.backend).catch((error) => {
     aliceBackend = undefined // the next call tries again
@@ -388,9 +392,11 @@ export async function spamAndBlock(page: Page): Promise<void> {
 
 // Each spec file gets a backend of its own: reinstalled, so no file sees what
 // another left, and configured as the deployment would be. alice and bob are
-// onboarded too, unless the file onboards them itself.
+// onboarded too, unless the file onboards them itself. The relay stub starts
+// over as well, once the old backend can send it nothing more.
 export function freshBackend({ onboard = true } = {}): void {
   icp('deploy', 'email-canister-test', '--mode', 'reinstall', '--yes')
+  stub('stub_reset')
   icp(
     'canister',
     'settings',

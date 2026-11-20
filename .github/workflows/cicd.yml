@@ -177,9 +177,10 @@ jobs:
         env:
           E2E_ARGS: --shard=${{ matrix.shard }}/3
       # Once the webmail tests have fetched the sync plugin, and only when they
-      # passed, so a download cut off half way is not kept. One job saves it
+      # passed, so a download cut off half way is not kept. Any job that passed
+      # saves it; the jobs after the first find the key taken and skip
       - name: save icp's downloads
-        if: matrix.shard == 1 && steps.replica.outputs.icp-pkg-hit != 'true'
+        if: steps.replica.outputs.icp-pkg-hit != 'true'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/.local/share/icp-cli/pkg
