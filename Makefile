@@ -9,7 +9,7 @@ SHELL := /bin/bash
 TEST_IDENTITY ?= email-canister-test
 LIBRARIES := sqlite3 libetpan charsets
 
-.PHONY: build-all build-test-all build-libraries build build-test build-relay-stub library-stamps \
+.PHONY: build-all build-test-all build build-test build-relay-stub library-stamps \
 	test test-python test-native test-domain test-canister test-e2e test-bridge check-neutral webmail
 
 # The libraries are built again only when the toolchain or their inputs
@@ -30,10 +30,6 @@ build-test-all:
 # Everything. The test build first: a build of everything empties build/.
 build-all: build-test-all
 	icpp build-wasm --to-compile mine-no-lib
-
-build-libraries:
-	rm -f build-library/built
-	for lib in $(LIBRARIES); do icpp build-library $$lib || exit 1; done
 
 # Our own code only; links the libraries built above
 build:
@@ -66,7 +62,7 @@ test: test-python test-native test-domain test-canister test-e2e
 
 # Needs no replica
 test-python:
-	pytest test/test_build_config.py test/test_charsets.py
+	pytest test/test_build_config.py test/test_charsets.py test/test_passed_tree.py
 
 # Needs no replica: the test build on icpp's Mock IC, as a native executable
 # (native/), in seconds. The libraries are built natively once, and again
