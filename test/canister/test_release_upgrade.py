@@ -140,4 +140,10 @@ def test__an_upgrade_from_the_last_release_keeps_the_mail(
     wait_until_drained()
     assert 'sender_address = "skua@birds.example"' in found(USER_A, "skua", folder=2)
     assert unread(USER_A, "alice") == 3
+    # The upgraded file takes changes: Not spam, and a block
+    skua = uids(found(USER_A, "skua", folder=2))[0]
+    mail("mail_move", "alice", f"(vec {{ {skua} : nat64 }}, 0 : nat64)", USER_A)
+    mail("mail_block", "alice", '("gannet@birds.example")', USER_A)
+    assert "Blocked skua" in page(USER_A)
+    assert unread(USER_A, "alice") == 4
     assert 'result = "ok"' in call("admin_check", '("alice", null)')

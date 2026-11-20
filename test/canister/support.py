@@ -134,7 +134,7 @@ def request(
     recipients = "; ".join(
         f'record {{ user = "{user}"; domain = "{domain}" }}' for user in to.split(",")
     )
-    from_value = from_header or f"Sender <{from_address}>"
+    from_value = f"Sender <{from_address}>" if from_header is None else from_header
     id_header = (
         f'record {{ name = "Message-ID"; value = " {message_id}\\r\\n" }}; '
         if message_id
