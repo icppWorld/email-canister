@@ -130,11 +130,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Each module reinstalls the canister, so any can run in any part. A new
+        # module joins the last part
         include:
           - part: outbox
             tests: test/canister/test_outbox.py
+          - part: check and export
+            tests: test/canister/test_check.py test/canister/test_export.py
           - part: the other modules
-            tests: test/canister --ignore=test/canister/test_outbox.py
+            tests: >-
+              test/canister --ignore=test/canister/test_outbox.py
+              --ignore=test/canister/test_check.py --ignore=test/canister/test_export.py
     name: replica tests (${{ matrix.part }})
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
