@@ -6,6 +6,7 @@ import { asUser } from './as_user'
 import { env } from './local'
 import {
   answer,
+  argOf,
   asAlice,
   backend,
   callsTo,
@@ -519,7 +520,7 @@ test('Empty Trash refused part way leaves only what is still there', async ({
   await context.close()
 })
 
-// The block comes after the move, from its note: a refused move blocks no one
+// The block follows the move: a refused move blocks no one
 test('a move to Spam that is refused blocks no one', async ({ browser }) => {
   deliver({
     subject: 'Stubborn dipper',
@@ -743,6 +744,131 @@ test('ticked messages to Spam block each sender once, and Undo lifts only those 
   expect(after).not.toContain('flock@sender.example')
   expect(after).toContain('rook@sender.example')
   await alice.mail_unblock('alice', 'rook@sender.example')
+  await context.close()
+})
+
+test('a block whose reply is lost leaves the other senders blocked, and Undo lifts both', async ({
+  browser,
+}) => {
+  for (const bird of ['ruff', 'reeve']) {
+    deliver({
+      subject: `Wading ${bird}`,
+      body: `<p>A ${bird}.</p>`,
+      from: `Wader <${bird}@sender.example>`,
+    })
+  }
+  await waitDrained()
+  const { context, page } = await signedIn(browser, USER_A)
+  await search(page, 'Wading')
+  await expect(messageRow(page, 'Wading')).toHaveCount(2)
+  // ruff's block reaches the canister, and its reply is lost
+  await page.route('**/api/*/canister/*/*', async (route) => {
+    const request = route.request()
+    if (
+      callsTo(request, 'mail_block') &&
+      !callsTo(request, 'mail_blocked') &&
+      argOf(request).includes('ruff@sender.example')
+    ) {
+      await route.fetch()
+      await route.abort('failed')
+    } else {
+      await route.fallback()
+    }
+  })
+  const bulk = page.getByRole('toolbar', { name: 'Selected messages' })
+  await bulk.getByLabel('Select all').check()
+  await bulk.getByRole('button', { name: 'Spam', exact: true }).click()
+  // reeve's block is not held up by ruff's, nor skipped after it
+  const note = page.getByTestId('toast')
+  await expect(note.locator('span')).toHaveText(
+    /^2 messages moved to Spam and reeve@sender\.example blocked\. Blocking ruff@sender\.example failed: /,
+    { timeout: 60_000 }
+  )
+  await note.hover()
+  const alice = await asAlice()
+  expect(await blockedAddresses(alice)).toEqual(
+    expect.arrayContaining(['reeve@sender.example', 'ruff@sender.example'])
+  )
+  await undo(page)
+  await expect(messageRow(page, 'Wading')).toHaveCount(2)
+  const after = await blockedAddresses(alice)
+  expect(after).not.toContain('reeve@sender.example')
+  expect(after).not.toContain('ruff@sender.example')
+  await context.close()
+})
+
+test('Spam moves the message when the blocked senders cannot be read, and says so', async ({
+  browser,
+}) => {
+  deliver({
+    subject: 'Unlisted godwit',
+    body: '<p>A godwit.</p>',
+    from: 'Godwit <godwit@sender.example>',
+  })
+  await waitDrained()
+  const { context, page } = await signedIn(browser, USER_A)
+  await openMail(page, 'godwit')
+  await expect(page.getByTestId('subject')).toHaveText('Unlisted godwit')
+  await page.route('**/api/*/canister/*/*', (route) =>
+    callsTo(route.request(), 'mail_blocked')
+      ? route.abort('failed')
+      : route.fallback()
+  )
+  await spamFromReader(page)
+  await expect(page.getByTestId('toast').locator('span')).toHaveText(
+    /^Message moved to Spam\. Blocking failed: /,
+    { timeout: 60_000 }
+  )
+  await expect(messageRow(page, 'Unlisted godwit')).toHaveCount(0)
+  const alice = await asAlice()
+  expect(await blockedAddresses(alice)).not.toContain('godwit@sender.example')
+  await context.close()
+})
+
+test("Spam blocks no address of the mailbox's own domain", async ({
+  browser,
+}) => {
+  // Spam often claims to be from the recipient
+  deliver({
+    subject: 'Spoofed heron',
+    body: '<p>Pay now.</p>',
+    from: `Alice <alice@${DOMAIN}>`,
+  })
+  await waitDrained()
+  const { context, page } = await signedIn(browser, USER_A)
+  await openMail(page, 'Spoofed heron')
+  await expect(page.getByTestId('subject')).toHaveText('Spoofed heron')
+  await spamFromReader(page)
+  await expect(page.getByTestId('toast').locator('span')).toHaveText(
+    'Message moved to Spam'
+  )
+  const alice = await asAlice()
+  expect(await blockedAddresses(alice)).not.toContain(`alice@${DOMAIN}`)
+  await context.close()
+})
+
+test('Not spam also unblocks the envelope sender that filed the mail in Spam', async ({
+  browser,
+}) => {
+  const alice = await asAlice()
+  await alice.mail_block('alice', 'bounce@lists.example')
+  deliver({
+    subject: 'Listed curlew',
+    body: '<p>A curlew.</p>',
+    from: 'News <news@lists.example>',
+    envelopeUser: 'bounce',
+    envelopeDomain: 'lists.example',
+  })
+  await waitDrained()
+  const { context, page } = await signedIn(browser, USER_A)
+  await folder(page, 'Spam')
+  await messageRow(page, 'Listed curlew').click()
+  await expect(page.getByTestId('subject')).toHaveText('Listed curlew')
+  await page.getByRole('button', { name: 'Not spam', exact: true }).click()
+  await expect(page.getByTestId('toast').locator('span')).toHaveText(
+    'Message moved to the Inbox and bounce@lists.example unblocked'
+  )
+  expect(await blockedAddresses(alice)).not.toContain('bounce@lists.example')
   await context.close()
 })
 

@@ -542,6 +542,7 @@ export function App() {
             refresh={refresh}
             onLoaded={onLoaded}
             onBlocked={() => setView('blocked')}
+            domain={shown.address.slice(shown.address.indexOf('@') + 1)}
           />
         )}
         {current === 'sent' && box && (

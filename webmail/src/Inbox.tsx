@@ -112,8 +112,10 @@ function undo(
     label: 'Undo',
     reload: true,
     run: async () => {
-      for (const address of unblock) await backend.mail_unblock(address)
-      for (const address of block) await backend.mail_block(address)
+      await Promise.all([
+        ...unblock.map((address) => backend.mail_unblock(address)),
+        ...block.map((address) => backend.mail_block(address)),
+      ])
       const { error } = await inBatches(uids, (part) =>
         backend.mail_move(part, from)
       )
@@ -452,6 +454,7 @@ export function Inbox({
   refresh,
   onLoaded,
   onBlocked,
+  domain,
 }: {
   backend: Mailbox
   principal: string
@@ -463,6 +466,7 @@ export function Inbox({
   refresh: number
   onLoaded: () => void
   onBlocked: () => void // to the Blocked senders page
+  domain: string // the mailbox's own, whose addresses Spam never blocks
 }) {
   const here = FOLDERS[folder].number
   const [items, setItems] = useState<Summary[]>([])
@@ -574,52 +578,71 @@ export function Inbox({
   }
 
   // To Spam blocks the From address of each message that moves, and from
-  // Spam to the Inbox unblocks it, for Undo to put back. A block that was
-  // there before Spam stays out of its Undo. Mail with no From address only
-  // moves. The reader closes with the move, so the note says what failed after
-  // it.
+  // Spam to the Inbox unblocks it and the envelope sender, as either block
+  // files mail in Spam. Undo puts back every change tried: one whose reply
+  // was lost may have gone through. A block that was there before Spam stays
+  // as it was, and Spam blocks no address of the mailbox's own domain, which
+  // spam often claims to be from. Mail with no From address only moves. The
+  // reader closes with the move, so the note says what failed after it.
   const judge = async (uids: bigint[], to: 'spam' | 'inbox') => {
     const spam = to === 'spam'
     // Read before the move takes the messages off the list
     const senders = new Map(
       [...items, ...(selected ? [selected] : [])].map((m) => [
         m.uid,
-        kept(m.sender_address),
+        (spam ? [m.sender_address] : [m.sender_address, m.envelope_from]).map(
+          kept
+        ),
       ])
     )
-    const blocked = new Set(
-      (await backend.mail_blocked()).map((b) => b.address)
+    // Alongside the move. A list that cannot be read changes no block.
+    const listed = backend.mail_blocked().then(
+      (list) => new Set(list.map((b) => b.address)),
+      (e: unknown) => ({ error: e })
     )
     const { done, error } = await moveOut(uids, FOLDERS[to].number)
-    const changed: string[] = []
-    let failed = ''
-    for (const address of new Set(done.map((uid) => senders.get(uid)))) {
-      if (!address || blocked.has(address) === spam) continue
-      try {
-        if (spam) await backend.mail_block(address)
-        else await backend.mail_unblock(address)
-        changed.push(address)
-      } catch (e) {
-        failed = `. ${spam ? 'Blocking' : 'Unblocking'} ${address} failed: ${errorText(e)}`
-        break
-      }
-    }
+    const blocked = await listed
+    const own = `@${kept(domain)}`
+    const tried =
+      blocked instanceof Set
+        ? [...new Set(done.flatMap((uid) => senders.get(uid) ?? []))].filter(
+            (address) =>
+              address !== '' &&
+              blocked.has(address) !== spam &&
+              !(spam && address.endsWith(own))
+          )
+        : []
+    const results = await Promise.allSettled(
+      tried.map((address) =>
+        spam ? backend.mail_block(address) : backend.mail_unblock(address)
+      )
+    )
     if (done.length > 0) {
-      const who =
-        changed.length === 1 ? changed[0] : `${changed.length} senders`
+      const changed = tried.filter((_, i) => results[i].status === 'fulfilled')
+      const refused = tried.filter((_, i) => results[i].status === 'rejected')
+      const refusal =
+        blocked instanceof Set
+          ? results.find((r) => r.status === 'rejected')?.reason
+          : blocked.error
+      const who = (list: string[]) =>
+        list.length === 1 ? list[0] : `${list.length} senders`
       notify({
         text:
           `${messages(done.length, 'Message')} moved to ${FOLDERS[to].name}` +
           (changed.length > 0
-            ? ` and ${who} ${spam ? 'blocked' : 'unblocked'}`
+            ? ` and ${who(changed)} ${spam ? 'blocked' : 'unblocked'}`
             : '') +
-          failed,
+          (refusal === undefined
+            ? ''
+            : `. ${spam ? 'Blocking' : 'Unblocking'}` +
+              (refused.length > 0 ? ` ${who(refused)}` : '') +
+              ` failed: ${errorText(refusal)}`),
         actions: [
           undo(
             backend,
             done,
             here,
-            spam ? { unblock: changed } : { block: changed }
+            spam ? { unblock: tried } : { block: tried }
           ),
         ],
       })
