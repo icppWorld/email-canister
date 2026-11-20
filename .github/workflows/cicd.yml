@@ -70,6 +70,7 @@ jobs:
   # The test wasms, once, for the jobs that test them
   build:
     runs-on: ubuntu-22.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: ./.github/actions/toolchain
@@ -83,12 +84,14 @@ jobs:
             test/relay_stub/build/relay_stub.wasm
           if-no-files-found: error
           retention-days: 3
+          overwrite: true # a re-run of this job
 
   # The production build, which the tests do not deploy, and the test build on
   # the Mock IC. It saves the built libraries for the next run: it builds all
   # of them.
   native:
     runs-on: ubuntu-22.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - id: toolchain
@@ -104,8 +107,9 @@ jobs:
         run: make build-all build-relay-stub
       - name: native tests
         run: make test-native
+      # Also when a native test failed: the libraries were built before it ran
       - name: save the built libraries
-        if: steps.toolchain.outputs.libraries-hit != 'true'
+        if: ${{ !cancelled() && steps.toolchain.outputs.libraries-hit != 'true' }}
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ${{ env.LIBRARY_DIRS }}
@@ -115,6 +119,7 @@ jobs:
   replica-tests:
     needs: build
     runs-on: ubuntu-22.04
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -127,6 +132,12 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: ./.github/actions/replica
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: install the test tools
+        run: pip install -r requirements.txt
       - name: replica tests
         env:
           GH_TOKEN: ${{ github.token }} # downloads a past release to upgrade from
@@ -136,6 +147,7 @@ jobs:
   webmail-tests:
     needs: build
     runs-on: ubuntu-22.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - id: replica
