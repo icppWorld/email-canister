@@ -23,7 +23,7 @@ TOOLCHAIN_FILES=(
   test/canister/toolchain.py test/test_build_config.py
   BUILD-PROVENANCE.txt ROADMAP.md
 )
-TOOLCHAIN_DIRS=(docker/ .github/workflows/)
+TOOLCHAIN_DIRS=(docker/ .github/workflows/ .github/actions/)
 
 list_file=${NEUTRAL_DENYLIST:-$HOME/.config/email-canister/denylist}
 if [[ -n "${NEUTRAL_DENYLIST_TEXT:-}" ]]; then
