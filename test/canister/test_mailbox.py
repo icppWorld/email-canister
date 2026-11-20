@@ -581,6 +581,33 @@ def test__mail_from_a_blocked_sender_goes_to_spam() -> None:
     assert 'result = "ok"' in call("admin_check", f'("{bob}", null)')
 
 
+def test__the_list_gives_each_messages_from_address() -> None:
+    bob = MAILBOX[USER_B]
+    expected = {
+        # As the From header has it, case included
+        "Named": ("Grebe Club <Grebe@Club.example>", "Grebe@Club.example"),
+        "Bare": ("bare@club.example", "bare@club.example"),
+        "Quoted": ('\\"Grebes <Ltd>\\" <quoted@club.example>', "quoted@club.example"),
+        # One mail_block refuses is not given
+        "Odd": ('\\"odd one\\"@club.example', ""),
+    }
+    for word, (from_header, _) in expected.items():
+        assert re.search(
+            OK,
+            deliver(
+                f"{word} grebe",
+                f"<{word}@club.example>",
+                to=bob,
+                from_header=from_header,
+            ),
+        )
+    wait_until_drained()
+    for word, (_, address) in expected.items():
+        hit = found(USER_B, word)
+        assert len(uids(hit)) == 1, word
+        assert f'sender_address = "{address}"' in hit, word
+
+
 def test__delete_removes_mail_index_and_usage() -> None:
     assert re.search(OK, deliver("Delete jackal", "<del@sender.example>", to="bob"))
     wait_until_drained()

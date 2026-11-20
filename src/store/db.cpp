@@ -228,6 +228,12 @@ CREATE TABLE blocked(
   at_ns INTEGER NOT NULL
 ) WITHOUT ROWID;
 )sql",
+    // Version 3: each message's From address, so the list can block its
+    // sender. A new column only, so no row is rewritten: mail parsed before
+    // has the address in its sender text, where the list reads it.
+    R"sql(
+ALTER TABLE messages ADD COLUMN sender_address TEXT NOT NULL DEFAULT ''; -- set by the parse
+)sql",
 };
 
 struct OpenMailbox {

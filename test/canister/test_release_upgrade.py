@@ -41,8 +41,8 @@ from .test_mailbox import (
 )
 from .test_storage import upgrade
 
-RELEASE = "v0.2.0"
-RELEASE_WASM_SHA256 = "1a938b60ed80f019c97599e64c28c925d9fa53930d6c4f2cece55d02da093fdc"
+RELEASE = "v0.4.0"
+RELEASE_WASM_SHA256 = "05ff9ac7c22e1eacff68f5d3b40fff8316f3e10969889dda51df16e9b69401ca"
 REPO = "icppWorld/email-canister"
 
 
@@ -81,33 +81,69 @@ def test__an_upgrade_from_the_last_release_keeps_the_mail(
     assert "error" not in add_mailbox("alice", principal_of(USER_A)).lower()
     for n, bird in enumerate(("puffin", "gannet", "shag")):
         assert re.search(OK, deliver(f"Kept {bird}", f"<kept{n}@sender.example>"))
+    # The From header in the other forms its sender text takes
+    for subject, from_header in [
+        ("Kept kittiwake", "kittiwake@birds.example"),
+        ("Kept fulmar", '\\"Fulmars <Ltd>\\" <fulmar@birds.example>'),
+    ]:
+        assert re.search(
+            OK,
+            deliver(
+                subject,
+                f"<{subject.split()[1]}@birds.example>",
+                from_header=from_header,
+            ),
+        )
     wait_until_drained()
-    # The release's own interface: one uid, no folder
-    listed = call(
-        "mail_list", '("alice", record { cursor = null; limit = 10 : nat64 })', USER_A
+    # Filed, read and blocked under the release
+    shag = uids(found(USER_A, "shag"))[0]
+    mail("mail_move", "alice", f"(vec {{ {shag} : nat64 }}, 1 : nat64)", USER_A)
+    first = min(uids(page(USER_A)))
+    mail(
+        "mail_set_flags",
+        "alice",
+        f"(vec {{ {first} : nat64 }}, 1 : nat64, 0 : nat64)",
+        USER_A,
     )
-    first = min(uids(listed))
-    call("mail_set_flags", f'("alice", {first} : nat64, 1 : nat64, 0 : nat64)', USER_A)
-    assert unread(USER_A, "alice") == 2
+    mail("mail_block", "alice", '("skua@birds.example")', USER_A)
+    assert unread(USER_A, "alice") == 3
 
     # This build: the pump takes alice's file to its schema, meanwhile her
     # calls answer busy
     assert upgrade(identity) == ""
     wait_until(lambda: not busy(), "alice's upgrade")
     inbox = page(USER_A)
-    assert all(f"Kept {bird}" in inbox for bird in ("puffin", "gannet", "shag"))
-    assert unread(USER_A, "alice") == 2
-    assert uids(found(USER_A, "gannet"))
+    for bird in ("puffin", "gannet", "kittiwake", "fulmar"):
+        assert f"Kept {bird}" in inbox
+    assert "Kept shag" in page(USER_A, folder=1)
+    assert unread(USER_A, "alice") == 3
     assert 'result = "ok"' in call("admin_check", '("alice", null)')
 
-    # The new folders and blocking work on the upgraded file
-    shag = uids(found(USER_A, "shag"))[0]
-    mail("mail_move", "alice", f"(vec {{ {shag} : nat64 }}, 1 : nat64)", USER_A)
-    assert unread(USER_A, "alice") == 1
-    assert "Kept shag" in page(USER_A, folder=1)
-    mail("mail_block", "alice", '("sender@sender.example")', USER_A)
-    assert re.search(OK, deliver("Blocked skua", "<skua@sender.example>"))
+    # Each message's From address, from the sender text the release kept
+    for bird, address in [
+        ("gannet", "sender@sender.example"),
+        ("kittiwake", "kittiwake@birds.example"),
+        ("fulmar", "fulmar@birds.example"),
+    ]:
+        assert f'sender_address = "{address}"' in found(USER_A, bird), bird
+
+    # The block still holds, and mail this build parses gets its From
+    # address from the parser
+    assert re.search(
+        OK,
+        deliver(
+            "Blocked skua",
+            "<skua@birds.example>",
+            from_address="skua@birds.example",
+        ),
+    )
     wait_until_drained()
-    assert "Blocked skua" in page(USER_A, folder=2)
-    assert unread(USER_A, "alice") == 1
+    assert 'sender_address = "skua@birds.example"' in found(USER_A, "skua", folder=2)
+    assert unread(USER_A, "alice") == 3
+    # The upgraded file takes changes: Not spam, and a block
+    skua = uids(found(USER_A, "skua", folder=2))[0]
+    mail("mail_move", "alice", f"(vec {{ {skua} : nat64 }}, 0 : nat64)", USER_A)
+    mail("mail_block", "alice", '("gannet@birds.example")', USER_A)
+    assert "Blocked skua" in page(USER_A)
+    assert unread(USER_A, "alice") == 4
     assert 'result = "ok"' in call("admin_check", '("alice", null)')

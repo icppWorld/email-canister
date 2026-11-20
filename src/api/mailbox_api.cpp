@@ -35,6 +35,7 @@ CandidType summary_value(const store::Summary &s) {
   r.append("preview", CandidTypeText{s.preview});
   r.append("raw_bytes", nat64(s.raw_bytes));
   r.append("folder", nat64(s.folder));
+  r.append("sender_address", CandidTypeText{s.sender_address});
   return r;
 }
 

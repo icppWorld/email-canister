@@ -42,6 +42,27 @@ void test_folders(MockIC &) {
     expect(test, fox(test), "unseen = 4 : ");
   }
   {
+    const std::string test = "the list gives each message's From address";
+    // Seeded mail is not parsed: here as mail parsed before the column was
+    // added has it, in its sender text only, and as the parse stores it
+    CALL(test, dev_file_exec,
+         "(\"fox\", \"UPDATE messages SET sender = CASE uid "
+         "WHEN 1 THEN 'Fox <Fox@den.example>' WHEN 2 THEN 'Fox <>' "
+         "WHEN 3 THEN 'cub@den.example' ELSE 'Vixen <vixen@den.example>' END, "
+         "sender_address = CASE uid WHEN 4 THEN 'no-at-sign' ELSE '' END\")",
+         CONTROLLER);
+    const auto address = [&](int uid) {
+      return CALL(test, mail_get, "(\"fox\", " + std::to_string(uid) + ")",
+                  USER_A);
+    };
+    expect(test, address(1), "sender_address = \"Fox@den.example\"");
+    expect(test, address(2), "sender_address = \"\"");
+    expect(test, address(3), "sender_address = \"cub@den.example\"");
+    // The stored one counts, and one mail_block refuses is not given
+    expect(test, address(4), "sender_address = \"\"");
+    expect(test, listed(test, 0), "sender_address = \"cub@den.example\"");
+  }
+  {
     const std::string test = "a move to Trash takes unread mail off the count";
     expect(test, move(test, "vec { 1; 2; 99 }", 1), "(2 : nat64)");
     const std::string trash = listed(test, 1);
