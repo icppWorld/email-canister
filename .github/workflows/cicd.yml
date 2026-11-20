@@ -56,6 +56,9 @@ jobs:
           (cd webmail && npm ci)
       - name: static checks
         run: make check-static
+      # Here and not in `tests`: they read docs and version strings too
+      - name: Python tests
+        run: make test-python
 
   tests:
     runs-on: ubuntu-22.04
@@ -70,6 +73,30 @@ jobs:
           node-version: "22"
           cache: npm
           cache-dependency-path: webmail/package-lock.json
+      # wasi-sdk and Rust with its tools, which icpp installs only when missing
+      - name: cache the toolchain
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.icpp
+          key: icpp-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+      # The network launcher and the wasms icp fetches, such as its sync plugin
+      - name: cache icp's downloads
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.local/share/icp-cli/pkg
+          key: icp-pkg-${{ runner.os }}-${{ env.ICP_CLI_VERSION }}-${{ hashFiles('icp.yaml') }}
+      # The vendored and toolchain libraries. The Makefile builds them again
+      # anyway when its stamp does not match, so a stale cache costs only time.
+      # The release and the reproducible build never use it.
+      - name: restore the built libraries
+        id: libraries
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            build-library
+            build-library-native
+            test/relay_stub/build-library
+          key: libraries-${{ runner.os }}-${{ hashFiles('requirements.txt', 'icpp.toml', 'icpp-test.toml', 'vendor/**', 'shims/**', 'src/store/sqlite_vfs.c', 'test/relay_stub/icpp.toml') }}
       - name: install the toolchain
         run: |
           pip install -r requirements.txt
@@ -78,7 +105,7 @@ jobs:
           npm install -g @icp-sdk/icp-cli@${ICP_CLI_VERSION}
           (cd webmail && npm ci)
           # didc, which the native tests encode and decode Candid with
-          curl -fsSL -o /tmp/didc.tar.xz "https://github.com/dfinity/candid/releases/download/didc-v${DIDC_VERSION}/didc-x86_64-unknown-linux-gnu.tar.xz"
+          curl -fsSL --retry 3 --retry-all-errors -o /tmp/didc.tar.xz "https://github.com/dfinity/candid/releases/download/didc-v${DIDC_VERSION}/didc-x86_64-unknown-linux-gnu.tar.xz"
           echo "${DIDC_SHA256}  /tmp/didc.tar.xz" | sha256sum -c -
           tar -xJf /tmp/didc.tar.xz -C /tmp
           sudo install /tmp/didc-x86_64-unknown-linux-gnu/didc /usr/local/bin/didc
@@ -87,10 +114,19 @@ jobs:
           google-chrome --version
       - name: build
         run: make build-all build-relay-stub
-      - name: Python tests
-        run: make test-python
       - name: native tests
         run: make test-native
+      # Saved once the native libraries are built too, and even when a later
+      # test fails
+      - name: save the built libraries
+        if: steps.libraries.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            build-library
+            build-library-native
+            test/relay_stub/build-library
+          key: ${{ steps.libraries.outputs.cache-primary-key }}
       - name: domain canister tests
         run: make test-domain
       - name: start a local replica
