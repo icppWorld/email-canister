@@ -6,6 +6,7 @@
 
 #include "db.h"
 #include "ic_api.h"
+#include "mail_store.h"
 
 namespace {
 
@@ -66,11 +67,6 @@ bool valid_local(const std::string &local) {
 // The schema version at which no file waited for its upgrade, so that the
 // pump need not look on every round; 0 while one may wait
 int64_t g_upgraded_at = 0;
-
-std::string newer_than_release(int64_t version) {
-  return "the file has schema version " + std::to_string(version) +
-         ", newer than this release's " + std::to_string(db::mailbox_version());
-}
 
 } // namespace
 
@@ -186,6 +182,20 @@ std::map<int64_t, std::vector<Member>> all_members() {
     found[select.column_integer(0)].push_back(std::move(member));
   }
   return found;
+}
+
+bool valid_address(const std::string &address) {
+  const size_t k_max_address = 254;
+  if (address.empty() || address.size() > k_max_address ||
+      has_control_character(address)) {
+    return false;
+  }
+  const size_t at = address.find('@');
+  if (at == std::string::npos || at == 0 || at + 1 == address.size() ||
+      address.find('@', at + 1) != std::string::npos) {
+    return false;
+  }
+  return address.find_first_of(" <>()[],;:\"\\") == std::string::npos;
 }
 
 bool has_control_character(const std::string &s) {
@@ -322,6 +332,8 @@ std::string unusable(const Entry &entry) {
   if (entry.purging) return "the mailbox is being purged";
   if (!entry.needs_repair.empty())
     return "this mailbox needs repair: ask your administrator";
+  if (entry.schema > db::mailbox_version())
+    return "this mailbox needs a newer release: ask your administrator";
   if (entry.schema != db::mailbox_version())
     return "busy: the mailbox is being upgraded, try again";
   return "";
@@ -378,36 +390,43 @@ bool upgrade_pending() {
          select.failed();
 }
 
-bool upgrade_file(int64_t id) {
+Upgraded upgrade_file(int64_t id, std::string &problem) {
   const int64_t current = db::mailbox_version();
+  int64_t registered = 0;
   {
     db::Stmt select(db::control(),
-                    "SELECT 1 FROM mailboxes WHERE id = ?2 AND "
+                    "SELECT schema FROM mailboxes WHERE id = ?2 AND "
                     "retry_after_ns <= ?3 AND " WAITS_FOR_UPGRADE("?1"));
-    if (!select) return false;
+    if (!select) return Upgraded::Wait;
     const auto now = static_cast<int64_t>(IC_API::time());
     if (!select.integer(1, current).integer(2, id).integer(3, now).row())
-      return !select.failed(); // purged, held, or upgraded meanwhile
+      return select.failed() ? Upgraded::Wait : Upgraded::NotDue;
+    registered = select.column_integer(0);
   }
   sqlite3 *file = db::mailbox(id, true);
-  if (file == nullptr) return false;
+  if (file == nullptr) return Upgraded::Wait;
   const int64_t version = db::file_version(file);
-  if (version < 0) return false;
-  std::string problem;
-  if (version > current) {
-    problem = newer_than_release(version);
-  } else {
-    MailboxWrite write(Mailbox{id, file});
-    if (!write) return false;
-    if (db::upgrade_mailbox(file, version, problem)) {
-      db::Stmt record(db::control(),
-                      "UPDATE mailboxes SET schema = ? WHERE id = ?");
-      return record && record.integer(1, current).integer(2, id).done() &&
-             write.commit();
-    }
-    problem = k_upgrade_failed + problem;
-  } // a failed step rolls back here
-  return set_needs_repair(id, problem);
+  if (version < 0) return Upgraded::Wait;
+  if (version != registered) {
+    // Creating a mailbox and upgrading its file record the file's version
+    // with the file, and a rollback leaves both ahead of the release: a file
+    // out of step with its registry is damage
+    return set_needs_repair(
+               id, "the file has schema version " + std::to_string(version) +
+                       ", its registry " + std::to_string(registered))
+               ? Upgraded::Done
+               : Upgraded::Wait;
+  }
+  MailboxWrite write(Mailbox{id, file});
+  if (!write) return Upgraded::Wait;
+  if (!db::upgrade_mailbox(file, version, problem))
+    return Upgraded::Failed; // the write rolls the step back
+  db::Stmt record(db::control(),
+                  "UPDATE mailboxes SET schema = ? WHERE id = ?");
+  return record && record.integer(1, current).integer(2, id).done() &&
+                 write.commit()
+             ? Upgraded::Done
+             : Upgraded::Wait;
 }
 
 bool set_needs_repair(int64_t id, const std::string &why) {
@@ -443,18 +462,23 @@ check_file(const Entry &entry, const std::optional<std::string> &table) {
                          " in the registry");
     }
   };
+  // A file newer than this release is not damage: nothing uses it until a
+  // release that knows its version runs
   const int64_t version = db::file_version(file);
   differs("the schema version", version, entry.schema);
-  if (version > db::mailbox_version())
-    problems.push_back(newer_than_release(version));
   db::Stmt registry(db::control(),
                     "SELECT " COUNTERS " FROM mailboxes WHERE id = ?");
   db::Stmt counters(file, "SELECT " COUNTERS " FROM counters WHERE id = 1");
-  db::Stmt actual(file, "SELECT (SELECT count(*) FROM messages), "
-                        "(SELECT coalesce(max(uid), 0) FROM messages), "
-                        "(SELECT coalesce(max(modseq), 0) FROM messages), "
-                        "(SELECT coalesce(max(id), 0) FROM outbox), "
-                        "(SELECT count(*) FROM messages WHERE flags & 1 = 0)");
+  // A file waiting for the version that added the folders has all its mail
+  // in the Inbox
+  const std::string totals =
+      std::string("SELECT (SELECT count(*) FROM messages), "
+                  "(SELECT coalesce(max(uid), 0) FROM messages), "
+                  "(SELECT coalesce(max(modseq), 0) FROM messages), "
+                  "(SELECT coalesce(max(id), 0) FROM outbox), "
+                  "(SELECT count(*) FROM messages WHERE ") +
+      (version < db::k_folders_version ? "flags & 1 = 0" : COUNTS_UNSEEN) + ")";
+  db::Stmt actual(file, totals.c_str());
   if (!registry || !registry.integer(1, entry.id).row())
     IC_API::trap("cannot read the registry");
   if (!counters || !counters.row()) {

@@ -65,6 +65,7 @@ type Me = record {
     mailboxes : vec MailboxInfo; // enabled, by address
 };
 // state: 0 queued, 1 indexed, 2 quarantined. flags: 1 seen, 2 flagged.
+// folder: 0 Inbox, 1 Trash, 2 Spam.
 type Summary = record {
     uid : nat64;
     state : nat64;
@@ -78,9 +79,16 @@ type Summary = record {
     attachments : nat64;
     preview : text;
     raw_bytes : nat64;
+    folder : nat64;
+    // The From address alone, as mail_block takes it. Empty when the message
+    // is not parsed yet, or has no such address.
+    sender_address : text;
 };
 type ListRequest = record { cursor : opt nat64; limit : nat64 };
-type SearchRequest = record { "query" : text; cursor : opt nat64; limit : nat64 };
+type FolderRequest = record { folder : nat64; cursor : opt nat64; limit : nat64 };
+type SearchRequest = record { "query" : text; folder : nat64; cursor : opt nat64; limit : nat64 };
+// Mail from a blocked address goes to Spam
+type Blocked = record { address : text; blocked_by : principal; name : opt text; at_ns : nat64 };
 // An absent cursor means there is nothing more
 type Page = record { items : vec Summary; cursor : opt nat64 };
 // Who opened a message, and when each first did
@@ -164,13 +172,19 @@ service : () -> {
     "mail_me" : () -> (Me) query;
 
     // A mailbox the caller is a member of, named by its local part first
-    "mail_list" : (text, ListRequest) -> (Page) query;
+    "mail_list" : (text, FolderRequest) -> (Page) query;
     "mail_get" : (text, nat64) -> (FullMessage) query;
     "mail_search" : (text, SearchRequest) -> (Page) query;
-    // uid, the flags to set, the flags to clear. Setting seen records who
+    // uids, the flags to set, the flags to clear. Setting seen records who
     // opened the message.
-    "mail_set_flags" : (text, nat64, nat64, nat64) -> ();
-    "mail_delete" : (text, vec nat64) -> (nat64);
+    "mail_set_flags" : (text, vec nat64, nat64, nat64) -> ();
+    // for good: uids and the folder they are in; one that left it stays
+    "mail_delete" : (text, vec nat64, nat64) -> (nat64);
+    // uids and the folder to move them to; Trash and Spam keep mail 30 days
+    "mail_move" : (text, vec nat64, nat64) -> (nat64);
+    "mail_block" : (text, text) -> ();
+    "mail_unblock" : (text, text) -> ();
+    "mail_blocked" : (text) -> (vec Blocked) query;
     "mail_send" : (text, SendRequest) -> (nat64);
     "mail_outbox_list" : (text, ListRequest) -> (OutboxPage) query;
     "mail_outbox_get" : (text, nat64) -> (OutboxMessage) query;

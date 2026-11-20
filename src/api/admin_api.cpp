@@ -235,6 +235,12 @@ void admin_check() {
   if (!store::find_entry(lower(local), entry) || entry.vacant)
     IC_API::trap("no such entry");
   if (entry.purging) IC_API::trap("the mailbox is being purged");
+  // This release's checks may not fit a newer file, which is not damage
+  if (entry.schema > db::mailbox_version())
+    IC_API::trap("the mailbox needs a newer release: its file has schema "
+                 "version " +
+                 std::to_string(entry.schema) + ", this release's is " +
+                 std::to_string(db::mailbox_version()));
   const auto problems = store::check_file(entry, table);
   std::string found;
   for (const std::string &problem :
@@ -589,7 +595,8 @@ void dev_search_cost() {
   args.append(CandidTypeText{&local});
   args.append(CandidTypeText{&query});
   ic_api.from_wire(args);
-  store::search(require_test_mailbox(local), query, std::nullopt, 50);
+  store::search(require_test_mailbox(local), store::Inbox, query, std::nullopt,
+                50);
   ic_api.to_wire(CandidTypeNat64{IC_API::performance_counter()});
 }
 
@@ -638,6 +645,7 @@ void dev_schema_step() {
   ic_api.from_wire(CandidTypeText{&sql});
   db::add_schema_step(sql);
   ingest::arm();
+  outbox::arm(); // a mailbox at the new version may have mail to send
   ic_api.to_wire();
 }
 

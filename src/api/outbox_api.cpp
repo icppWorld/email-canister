@@ -19,7 +19,6 @@ namespace {
 
 const size_t k_max_recipients = 50;
 const size_t k_max_attachments = 20;
-const size_t k_max_address = 254;
 const size_t k_max_filename = 255;
 const size_t k_max_subject = 998; // RFC 5322 line limit
 const size_t k_max_client_id = 64;
@@ -28,19 +27,6 @@ const size_t k_max_client_id = 64;
 // URL and headers
 const size_t k_max_encoded_bytes = 1'950'000;
 const uint64_t k_max_page = 100;
-
-bool valid_address(const std::string &address) {
-  if (address.empty() || address.size() > k_max_address ||
-      store::has_control_character(address)) {
-    return false;
-  }
-  const size_t at = address.find('@');
-  if (at == std::string::npos || at == 0 || at + 1 == address.size() ||
-      address.find('@', at + 1) != std::string::npos) {
-    return false;
-  }
-  return address.find_first_of(" <>()[],;:\"\\") == std::string::npos;
-}
 
 bool valid_filename(const std::string &name) {
   return !name.empty() && name.size() <= k_max_filename &&
@@ -57,7 +43,8 @@ void require_valid(const store::NewOutbox &m) {
   if (recipients > k_max_recipients) IC_API::trap("too many recipients");
   for (const auto *list : {&m.to, &m.cc, &m.bcc}) {
     for (const std::string &address : *list) {
-      if (!valid_address(address)) IC_API::trap("invalid address: " + address);
+      if (!store::valid_address(address))
+        IC_API::trap("invalid address: " + address);
     }
   }
   if (m.subject.size() > k_max_subject ||

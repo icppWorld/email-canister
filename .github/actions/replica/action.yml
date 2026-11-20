@@ -1,0 +1,36 @@
+name: a local replica
+description: The wasms from the build job, icp, and a local replica started with the test identity
+
+outputs:
+  icp-pkg-hit:
+    description: "'true' when icp's downloads came from the cache"
+    value: ${{ steps.icp-pkg.outputs.cache-hit }}
+  icp-pkg-key:
+    description: The key to save icp's downloads under
+    value: ${{ steps.icp-pkg.outputs.cache-primary-key }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      with:
+        name: test-wasms
+    # No npm cache here: the jobs that save it must have run npm ci
+    - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      with:
+        node-version: "22"
+    # The network launcher and the wasms icp fetches, such as its sync plugin
+    - name: restore icp's downloads
+      id: icp-pkg
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      with:
+        path: ~/.local/share/icp-cli/pkg
+        key: icp-pkg-${{ runner.os }}-${{ env.ICP_CLI_VERSION }}-${{ hashFiles('icp.yaml') }}
+    - name: install icp
+      shell: bash
+      run: npm install -g @icp-sdk/icp-cli@${ICP_CLI_VERSION}
+    - name: start a local replica
+      shell: bash
+      run: |
+        icp identity new email-canister-test --storage plaintext >/dev/null
+        icp network start -d

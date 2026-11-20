@@ -14,29 +14,31 @@ const RETRY_MS = 1_000
 
 const INTERRUPTED = 'The download was interrupted. Please start it again.'
 
-export function Download({
-  backend,
-  address,
-}: {
-  backend: Mailbox
-  address: string
-}) {
+// The download of the mailbox shown: start() and what to show while it runs.
+// A new session, as at sign-out, ends it, and so does losing every mailbox;
+// another mailbox opening does not.
+export function useDownload(
+  backend: Mailbox | null,
+  address: string,
+  session: unknown
+) {
   const [progress, setProgress] = useState('')
   const [error, setError] = useState('')
-  // Cleared when the button goes away, at sign-out, which ends the download
-  const mounted = useRef(true)
-  const renewTimer = useRef<ReturnType<typeof setInterval> | undefined>(
-    undefined
+  // Raised when the session ends or no mailbox is left, which ends the
+  // download under way
+  const generation = useRef(0)
+  const hasMailbox = backend !== null
+  useEffect(
+    () => () => {
+      generation.current += 1
+      setProgress('')
+      setError('')
+    },
+    [session, hasMailbox]
   )
-  useEffect(() => {
-    mounted.current = true
-    return () => {
-      mounted.current = false
-      clearInterval(renewTimer.current)
-    }
-  }, [])
 
   const start = async () => {
+    if (!backend) return
     setError('')
     // A download keeps the mailbox it started in when another one opens, and
     // says which it is
@@ -45,7 +47,10 @@ export function Download({
     let held: bigint | null = null
     // Set when the download fails, so that every reader stops
     let stopped = false
-    const halted = () => stopped || !mounted.current
+    // This download's own, so that its end leaves a later one's alone
+    let renew: ReturnType<typeof setInterval> | undefined
+    const mine = generation.current
+    const halted = () => stopped || generation.current !== mine
     try {
       const info = await backend.mail_export_freeze([])
       held = info.started_ns
@@ -56,7 +61,9 @@ export function Download({
       const renewMs = Number((info.until_ns - info.started_ns) / 2_500_000n)
       // Each goes out on its own, so that one that hangs does not hold up the
       // next. One that lands after the thaw is refused: it names this download.
-      renewTimer.current = setInterval(() => {
+      // It stops itself once the session ends, also while a chunk hangs
+      renew = setInterval(() => {
+        if (halted()) return clearInterval(renew)
         backend.mail_export_freeze([info.started_ns]).catch(() => undefined)
       }, renewMs)
 
@@ -111,33 +118,18 @@ export function Download({
       saveFile(`${address}-${date}.sqlite`, parts)
     } catch (e) {
       stopped = true
-      setError(`${address}: ${errorText(e)}`)
+      // One the session ended says nothing to the next
+      if (generation.current === mine) setError(`${address}: ${errorText(e)}`)
     } finally {
-      clearInterval(renewTimer.current)
+      clearInterval(renew)
       // Lets new mail in at once; otherwise the freeze lapses by itself. The
       // button waits for it, so a new download does not start before it lands.
       if (held !== null) {
         await backend.mail_export_thaw(held).catch(() => undefined)
       }
-      setProgress('')
+      if (generation.current === mine) setProgress('')
     }
   }
 
-  return (
-    <div className="download">
-      <button onClick={start} disabled={progress !== ''}>
-        Download a copy
-      </button>
-      {progress && (
-        <p className="hint" role="status">
-          {progress}
-        </p>
-      )}
-      {error && (
-        <p className="error" role="alert">
-          {error}
-        </p>
-      )}
-    </div>
-  )
+  return { start, busy: progress !== '', progress, error }
 }

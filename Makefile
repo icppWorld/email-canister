@@ -3,21 +3,36 @@
 #
 # First time:     make build-all build-relay-stub
 # Day to day:     make build build-test
-# After changing vendor/, shims/ or src/store/sqlite_vfs.c: make build-libraries
+# After changing vendor/, shims/ or src/store/sqlite_vfs.c: make build-all
 
 SHELL := /bin/bash
 TEST_IDENTITY ?= email-canister-test
 LIBRARIES := sqlite3 libetpan charsets
 
-.PHONY: build-all build-libraries build build-test build-relay-stub \
+.PHONY: build-all build-test-all build-libraries build build-test build-relay-stub library-stamps \
 	test test-python test-native test-domain test-canister test-e2e test-bridge check-neutral webmail
 
-# Everything, including the libraries and the toolchain's own: slow
-build-all:
-	icpp build-wasm
-	icpp build-wasm --to-compile mine-no-lib --config icpp-test.toml
+# The libraries are built again only when the toolchain or their inputs
+# changed: a stamp in the library folder holds a hash of both. A stamp, not
+# file times, because a checkout or a restored cache resets those.
+#   $(call with_libraries,<library folder>,<inputs>,<icpp build command>[,<more versions>])
+inputs_hash = { icpp --version; $(2) find $(1) -type f ! -name '._*' -print0 | LC_ALL=C sort -z | xargs -0 shasum -a 256; } | shasum -a 256 | cut -c1-64
+with_libraries = hash="$$($(call inputs_hash,$(2),$(4)))"; \
+	if [ "$$(cat $(1)/built 2>/dev/null)" = "$$hash" ]; then to=mine-no-lib; else to=all; rm -f $(1)/built; fi; \
+	$(3) --to-compile $$to && echo "$$hash" > $(1)/built
+
+# The test build, with the libraries and the toolchain's own when they
+# changed. icpp.toml and icpp-test.toml share the libraries.
+LIBRARY_INPUTS := icpp.toml icpp-test.toml vendor shims src/store/sqlite_vfs.c
+build-test-all:
+	$(call with_libraries,build-library,$(LIBRARY_INPUTS),icpp build-wasm --config icpp-test.toml)
+
+# Everything. The test build first: a build of everything empties build/.
+build-all: build-test-all
+	icpp build-wasm --to-compile mine-no-lib
 
 build-libraries:
+	rm -f build-library/built
 	for lib in $(LIBRARIES); do icpp build-library $$lib || exit 1; done
 
 # Our own code only; links the libraries built above
@@ -28,8 +43,15 @@ build:
 build-test:
 	icpp build-wasm --to-compile mine-no-lib --config icpp-test.toml
 
+RELAY_STUB_LIBRARY_INPUTS := icpp.toml
 build-relay-stub:
-	cd test/relay_stub && icpp build-wasm
+	cd test/relay_stub || exit 1; $(call with_libraries,build-library,$(RELAY_STUB_LIBRARY_INPUTS),icpp build-wasm)
+
+# The stamps the library folders should hold, which CI keys its cache on
+library-stamps:
+	@$(call inputs_hash,$(LIBRARY_INPUTS)); \
+	  $(call inputs_hash,$(NATIVE_LIBRARY_INPUTS),$(NATIVE_COMPILER)); \
+	  cd test/relay_stub || exit 1; $(call inputs_hash,$(RELAY_STUB_LIBRARY_INPUTS))
 
 # The generic build, configured into build/webmail, which icp.yaml deploys:
 #   make webmail BACKEND=<backend id> [NETWORK=local|ic] [ORIGIN=https://…] [BRAND=<folder>]
@@ -48,17 +70,12 @@ test-python:
 
 # Needs no replica: the test build on icpp's Mock IC, as a native executable
 # (native/), in seconds. The libraries are built natively once, and again
-# after icpp-test.toml or a library's sources change, another toolchain
-# version is installed, or a build failed. The stamp holds the version that
-# built them.
+# when the toolchain, the host's clang that builds them, or their inputs
+# change, as for build-all.
 NATIVE_LIBRARY_INPUTS := icpp-test.toml vendor shims src/store/sqlite_vfs.c
+NATIVE_COMPILER := clang --version;
 test-native:
-	version="$$(icpp --version)"; \
-	if [ -f build-library-native/built ] && \
-	   [ -z "$$(find $(NATIVE_LIBRARY_INPUTS) -newer build-library-native/built | head -1)" ] && \
-	   [ "$$(cat build-library-native/built)" = "$$version" ]; then to=mine-no-lib; else to=all; fi; \
-	  icpp build-native --config icpp-test.toml --to-compile $$to && \
-	  echo "$$version" > build-library-native/built
+	$(call with_libraries,build-library-native,$(NATIVE_LIBRARY_INPUTS),icpp build-native --config icpp-test.toml,$(NATIVE_COMPILER))
 	./build-native/mockic.exe
 
 # Needs no replica: domain/domain.mjs, with Node's own test runner
@@ -66,12 +83,16 @@ test-domain:
 	node --test test/domain/*.test.mjs
 
 # Needs a local replica: icp network start -d
+#   make test-canister [CANISTER_TESTS="<pytest paths and options>"]
+CANISTER_TESTS ?= test/canister
 test-canister:
-	pytest --network=local --identity=$(TEST_IDENTITY) test/canister
+	pytest --network=local --identity=$(TEST_IDENTITY) --durations=20 $(CANISTER_TESTS)
 
+# E2E_ARGS passes options to Playwright, such as --shard=1/3
+E2E_ARGS ?=
 test-e2e:
 	TEST_IDENTITY=$(TEST_IDENTITY) bash webmail/e2e/setup.sh
-	cd webmail && npm run e2e
+	cd webmail && npm run e2e -- $(E2E_ARGS)
 
 # The relay bridge (bridge/) in a Caffeine-style app on PocketIC. Needs only
 # Docker: it runs in a pinned container
