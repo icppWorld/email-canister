@@ -3668,7 +3668,11 @@ test('a menu gives the focus back to its button, and closes when the focus leave
   await last.focus()
   await page.keyboard.press('Tab')
   await expect(blockedItem).toBeHidden()
-  await expect(last).not.toBeFocused()
+  // A closed menu's items are out of the accessibility tree, so the check
+  // looks at the menu itself
+  expect(await more.evaluate((m) => m.contains(document.activeElement))).toBe(
+    false
+  )
 
   // A window that changes width leaves no list behind
   await openMenu(page, 'More')
