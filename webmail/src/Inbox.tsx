@@ -100,23 +100,29 @@ const messages = (count: number, one: string) =>
 const starring = (flags: bigint): [bigint, bigint] =>
   flags & FLAG_FLAGGED ? [0n, FLAG_FLAGGED] : [FLAG_FLAGGED, 0n]
 
-// Brings messages back to the folder they left, and unblocks an address. Made
-// here, so the toast holds only what it needs.
+// Brings messages back to the folder they left, and puts back the blocks that
+// went with them. Made here, so the toast holds only what it needs.
 function undo(
   backend: Mailbox,
   uids: bigint[],
   from: bigint,
-  unblock?: string
+  { block = [], unblock = [] }: { block?: string[]; unblock?: string[] } = {}
 ): ToastAction {
   return {
     label: 'Undo',
     reload: true,
     run: async () => {
-      if (unblock) await backend.mail_unblock(unblock)
+      // A refused block or unblock does not keep the messages away
+      const changes = await Promise.allSettled([
+        ...unblock.map((address) => backend.mail_unblock(address)),
+        ...block.map((address) => backend.mail_block(address)),
+      ])
       const { error } = await inBatches(uids, (part) =>
         backend.mail_move(part, from)
       )
       if (error) throw error
+      const refused = changes.find((c) => c.status === 'rejected')
+      if (refused) throw refused.reason
     },
   }
 }
@@ -126,6 +132,10 @@ function when(summary: Summary): string {
     ? formatTime(Number(summary.sent_at) * 1000)
     : formatNs(summary.received_ns)
 }
+
+// An address as the canister keeps it: only A to Z in lower case
+const kept = (address: string) =>
+  address.replace(/[A-Z]/g, (c) => c.toLowerCase())
 
 function senderOf(summary: Summary): string {
   return summary.sender || summary.envelope_from
@@ -164,9 +174,7 @@ function Reader({
   // or in the list: its reply must not undo them
   touched: RefObject<Map<bigint, bigint>>
   actions: Action[] // the folder's, for this message
-  // In the Inbox: to Spam, with the sender's address once it is known, for
-  // the note to offer a block
-  onSpam?: (sender: string) => Promise<unknown>
+  onSpam?: () => Promise<unknown> // in the Inbox: to Spam, blocking the sender
   more: MoreAction[] // the folder's, in the ⋮ menu
   onReply: (draft: Omit<Draft, 'from'>) => void // from the mailbox shown
   // The flags set and cleared, applied to the latest state: another change
@@ -331,9 +339,7 @@ function Reader({
           flagged={(summary.flags & FLAG_FLAGGED) !== 0n}
           onClick={toggleFlag}
         />
-        {onSpam && (
-          <button onClick={() => act(() => onSpam(sender))}>Spam</button>
-        )}
+        {onSpam && <button onClick={() => act(onSpam)}>Spam</button>}
         {more.length > 0 && (
           <Menu label="More actions">
             {more.map((action) => (
@@ -450,6 +456,8 @@ export function Inbox({
   onCounts,
   refresh,
   onLoaded,
+  onBlocked,
+  domain,
 }: {
   backend: Mailbox
   principal: string
@@ -460,6 +468,8 @@ export function Inbox({
   onReply: (draft: Omit<Draft, 'from'>) => void
   refresh: number
   onLoaded: () => void
+  onBlocked: () => void // to the Blocked senders page
+  domain: string // the mailbox's own, whose addresses Spam never blocks
 }) {
   const here = FOLDERS[folder].number
   const [items, setItems] = useState<Summary[]>([])
@@ -559,17 +569,87 @@ export function Inbox({
     return result
   }
 
-  // more: a second action for the note, about the messages that moved
-  const move = async (
-    uids: bigint[],
-    to: Folder,
-    more?: (done: bigint[]) => ToastAction
-  ) => {
+  const move = async (uids: bigint[], to: Folder) => {
     const { done, error } = await moveOut(uids, FOLDERS[to].number)
     if (done.length > 0) {
       notify({
         text: `${messages(done.length, 'Message')} moved to ${FOLDERS[to].name}`,
-        actions: [undo(backend, done, here), ...(more ? [more(done)] : [])],
+        actions: [undo(backend, done, here)],
+      })
+    }
+    if (error) throw error
+  }
+
+  // To Spam blocks the From address of each message that moves, and from
+  // Spam to the Inbox unblocks it. Undo puts back every change tried: one
+  // whose reply was lost may have gone through. A block that was there
+  // before Spam stays as it was, and Spam blocks no address of the mailbox's
+  // own domain or its subdomains, which spam often claims to be from. Mail
+  // with no From address only moves. The reader closes with the move, so the
+  // note says what failed after it.
+  const judge = async (uids: bigint[], to: 'spam' | 'inbox') => {
+    const spam = to === 'spam'
+    // Read before the move takes the messages off the list, whose copy of a
+    // message is newer than the reader's
+    const senders = new Map(
+      [...(selected ? [selected] : []), ...items].map((m) => [
+        m.uid,
+        kept(m.sender_address),
+      ])
+    )
+    // Alongside the move. A list that cannot be read changes no block.
+    const listed = backend.mail_blocked().then(
+      (list) => new Set(list.map((b) => b.address)),
+      (e: unknown) => ({ error: e })
+    )
+    const { done, error } = await moveOut(uids, FOLDERS[to].number)
+    const blocked = await listed
+    const ours = (address: string) =>
+      address.endsWith(`@${kept(domain)}`) ||
+      address.endsWith(`.${kept(domain)}`)
+    // The addresses a change is due for, as far as the list can tell
+    const due = [...new Set(done.map((uid) => senders.get(uid) ?? ''))].filter(
+      (address) => address !== '' && !(spam && ours(address))
+    )
+    const tried =
+      blocked instanceof Set
+        ? due.filter((address) => blocked.has(address) !== spam)
+        : []
+    const results = await Promise.allSettled(
+      tried.map((address) =>
+        spam ? backend.mail_block(address) : backend.mail_unblock(address)
+      )
+    )
+    if (done.length > 0) {
+      const changed = tried.filter((_, i) => results[i].status === 'fulfilled')
+      const refused = tried.filter((_, i) => results[i].status === 'rejected')
+      const refusal =
+        blocked instanceof Set
+          ? results.find((r) => r.status === 'rejected')?.reason
+          : due.length > 0
+            ? blocked.error
+            : undefined
+      const who = (list: string[]) =>
+        list.length === 1 ? list[0] : `${list.length} senders`
+      notify({
+        text:
+          `${messages(done.length, 'Message')} moved to ${FOLDERS[to].name}` +
+          (changed.length > 0
+            ? ` and ${who(changed)} ${spam ? 'blocked' : 'unblocked'}`
+            : '') +
+          (refusal === undefined
+            ? ''
+            : `. ${spam ? 'Blocking' : 'Unblocking'}` +
+              (refused.length > 0 ? ` ${who(refused)}` : '') +
+              ` failed: ${errorText(refusal)}`),
+        actions: [
+          undo(
+            backend,
+            done,
+            here,
+            spam ? { unblock: tried } : { block: tried }
+          ),
+        ],
       })
     }
     if (error) throw error
@@ -632,45 +712,19 @@ export function Inbox({
     }
   }
 
-  // New mail from the address goes to Spam. moved: the messages that went to
-  // Spam just before, which Undo brings back too. Undo leaves a block made
-  // before alone.
-  const block = async (address: string, moved: bigint[]) => {
+  // New mail from the address goes to Spam. Undo leaves a block made before
+  // alone.
+  const block = async (address: string) => {
     const before = await backend.mail_blocked()
-    // As the canister keeps it: only A to Z in lower case
-    const kept = address.replace(/[A-Z]/g, (c) => c.toLowerCase())
-    const already = before.some((b) => b.address === kept)
+    const already = before.some((b) => b.address === kept(address))
     await backend.mail_block(address)
     notify({
       text: already ? `${address} was blocked already` : `Blocked ${address}`,
-      actions:
-        already && moved.length === 0
-          ? undefined
-          : [undo(backend, moved, here, already ? undefined : address)],
+      actions: already
+        ? undefined
+        : [undo(backend, [], here, { unblock: [address] })],
     })
   }
-
-  // From the reader: once the sender is known, the note offers to block them
-  const spam = (uid: bigint, sender: string) =>
-    move(
-      [uid],
-      'spam',
-      sender
-        ? (done) => ({
-            label: 'Block sender',
-            title: `Block ${sender}`,
-            // A failure (its outcome unknown when the reply was lost) says where the
-            // message is, and still offers the move's Undo
-            run: () =>
-              block(sender, done).catch((e) =>
-                notify({
-                  text: `Blocking ${sender} failed: ${errorText(e)}. The message is in Spam.`,
-                  actions: [undo(backend, done, here)],
-                })
-              ),
-          })
-        : undefined
-    )
 
   // The reader's ⋮ menu, by folder
   const readerMore = (uid: bigint): MoreAction[] =>
@@ -691,7 +745,7 @@ export function Inbox({
             {
               label: 'Block sender',
               needs: 'sender',
-              run: (sender) => block(sender, []),
+              run: block,
             },
           ]
         : []
@@ -707,12 +761,13 @@ export function Inbox({
   const toSpam: Action = {
     label: 'Spam',
     icon: 'spam',
-    run: (uids) => move(uids, 'spam'),
+    run: (uids) => judge(uids, 'spam'),
   }
   const restore: Action = {
     label: folder === 'spam' ? 'Not spam' : 'Restore',
     icon: folder === 'spam' ? 'inbox' : 'undo',
-    run: (uids) => move(uids, 'inbox'),
+    run: (uids) =>
+      folder === 'spam' ? judge(uids, 'inbox') : move(uids, 'inbox'),
   }
   const forever: Action = {
     label: 'Delete forever',
@@ -784,6 +839,13 @@ export function Inbox({
               </button>
             )}
           </form>
+          {folder === 'spam' && (
+            <div className="bulk">
+              <button className="small" onClick={onBlocked}>
+                Blocked senders
+              </button>
+            </div>
+          )}
           {items.length > 0 && (
             <div className="bulk" role="toolbar" aria-label="Selected messages">
               <input
@@ -920,9 +982,7 @@ export function Inbox({
           touched={touched}
           actions={actions}
           onSpam={
-            folder === 'inbox'
-              ? (sender) => spam(selected.uid, sender)
-              : undefined
+            folder === 'inbox' ? () => toSpam.run([selected.uid]) : undefined
           }
           more={readerMore(selected.uid)}
           onReply={onReply}

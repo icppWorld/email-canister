@@ -384,12 +384,6 @@ export async function spamFromReader(page: Page): Promise<void> {
   await reader(page).getByRole('button', { name: 'Spam', exact: true }).click()
 }
 
-// The open message to Spam, then its sender blocked from the note this leaves
-export async function spamAndBlock(page: Page): Promise<void> {
-  await spamFromReader(page)
-  await toastButton(page, 'Block sender')
-}
-
 // Each spec file gets a backend of its own: reinstalled, so no file sees what
 // another left, and configured as the deployment would be. alice and bob are
 // onboarded too, unless the file onboards them itself. The relay stub starts
