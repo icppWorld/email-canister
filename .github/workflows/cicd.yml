@@ -67,8 +67,57 @@ jobs:
       - name: domain canister tests
         run: make test-domain
 
+  # Whether the build and the tests run, and the tree this run tests. They are
+  # skipped for a pull request that changes only docs, which `static` checks,
+  # and for a push to main whose tree a pull request's run passed. That run
+  # tested the merge commit, whose first parent is the base it was built on
+  changes:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      run-tests: ${{ steps.decide.outputs.run-tests }}
+      tree: ${{ steps.decide.outputs.tree }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 2
+      - id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          tree=$(git rev-parse 'HEAD^{tree}')
+          echo "tree=$tree" >>"$GITHUB_OUTPUT"
+          run=true
+          if [ "$EVENT" = pull_request ]; then
+            # A renamed file under both names, so code moved into docs/ counts
+            files=$(git diff --no-renames --name-only 'HEAD^1' HEAD)
+            if [ -n "$files" ] && ! grep -qvE '^docs/|\.md$' <<<"$files"; then
+              run=false
+              echo "Only docs changed"
+            fi
+          elif [ "$EVENT" = push ]; then
+            # A run of this workflow that passed this tree, for a pull request
+            # from this repository: a fork's run could upload any marker. An
+            # API call that fails runs the tests
+            for id in $(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/artifacts?name=passed-tree-$tree&per_page=100" \
+                --jq '.artifacts[] | select(.expired | not) | select(.workflow_run.head_repository_id == .workflow_run.repository_id) | .workflow_run.id'); do
+              run_of=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id" --jq '[.path, .event, .conclusion] | join(" ")' || true)
+              if [ "$run_of" = ".github/workflows/cicd.yml pull_request success" ]; then
+                run=false
+                echo "Run $id passed this tree"
+                break
+              fi
+            done
+          fi
+          echo "run-tests=$run" >>"$GITHUB_OUTPUT"
+
   # The test wasms, once, for the jobs that test them
   build:
+    needs: changes
+    if: needs.changes.outputs.run-tests == 'true'
     runs-on: ubuntu-22.04
     timeout-minutes: 30
     steps:
@@ -89,7 +138,11 @@ jobs:
   # The production build, which the tests do not deploy, and the test build on
   # the Mock IC. It saves the built libraries for the next run: it builds all
   # of them.
+  # Also on every push to main: main's caches are the ones every pull request
+  # can restore, and this job saves the toolchain and the libraries
   native:
+    needs: changes
+    if: needs.changes.outputs.run-tests == 'true' || github.event_name == 'push'
     runs-on: ubuntu-22.04
     timeout-minutes: 30
     steps:
@@ -188,12 +241,37 @@ jobs:
 
   # The relay bridge in a Caffeine-style app on PocketIC, in its own container
   bridge:
+    needs: changes
+    if: needs.changes.outputs.run-tests == 'true'
     runs-on: ubuntu-22.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: relay bridge tests
         run: make test-bridge
+
+  # Marks the tree as passed, for the push to main that merges it, once every
+  # job above passed; a job skipped skips this one too. A fork's pull request
+  # skips `neutral`, and the push checks the run's repository as well
+  passed:
+    if: github.event_name == 'pull_request'
+    needs: [changes, neutral, static, build, native, replica-tests, webmail-tests, bridge]
+    runs-on: ubuntu-22.04
+    steps:
+      - name: the tree this run passed
+        env:
+          TREE: ${{ needs.changes.outputs.tree }}
+        run: echo "$TREE" >passed-tree
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: passed-tree-${{ needs.changes.outputs.tree }}
+          path: passed-tree
+          if-no-files-found: error
+          # a re-run of this job
+          overwrite: true
+          # A pull request merged later is tested again on main: a result
+          # also depends on the runner, the releases and what was downloaded
+          retention-days: 7
 
   # Slow: it builds the whole toolchain image. Pull requests get the builds in
   # `build` and `native`; main gets this one, and a manual run when asked for.
