@@ -213,6 +213,12 @@ nav button.compose {
 nav button[aria-current='true'] {
   background: var(--selected);
 }
+/* The folder shown: more than the hover's tint, bold with a bar in the
+   brand's colour */
+.folders button[aria-current='true'] {
+  font-weight: 700;
+  box-shadow: inset 3px 0 0 var(--action-text);
+}
 .folder {
   display: flex;
   gap: 4px;
@@ -291,18 +297,22 @@ nav button.mailbox {
   cursor: pointer;
   color: var(--ink-muted);
 }
-.seen-by ul {
+/* Lists that open below their button */
+.seen-by ul,
+.menu-items {
   position: absolute;
   right: 0;
-  z-index: 1;
-  min-width: 240px;
+  z-index: 2;
   margin: 4px 0 0;
-  padding: 8px 12px;
-  list-style: none;
   background: var(--surface-raised);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-dialog);
+}
+.seen-by ul {
+  min-width: 240px;
+  padding: 8px 12px;
+  list-style: none;
 }
 .seen-by li {
   display: flex;
@@ -310,9 +320,55 @@ nav button.mailbox {
   gap: 12px;
   padding: 2px 0;
 }
-.usage {
+/* A ⋮ button with a short list of actions below it */
+.menu {
+  position: relative;
+}
+.menu summary {
+  list-style: none;
+  display: grid;
+  place-items: center;
+  min-width: var(--control-height);
+  min-height: var(--control-height);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+/* Filled dots, which a thin outline leaves too faint */
+.menu summary .icon {
+  fill: currentColor;
+}
+.menu summary::-webkit-details-marker {
+  display: none;
+}
+.menu summary:hover,
+.menu[open] summary {
+  background: var(--surface-muted);
+}
+.menu-items {
+  display: flex;
+  flex-direction: column;
+  min-width: 180px;
+  padding: 4px;
+}
+.menu-items.from-left {
+  right: auto;
+  left: 0;
+}
+.menu-items button {
+  border: 0;
+  text-align: left;
+  white-space: nowrap;
+}
+.menu-items button[aria-current='true'] {
+  font-weight: 600;
+}
+/* The reader's star sits among its buttons */
+.usage,
+.download-status {
   color: var(--ink-muted);
   font-size: 12px;
+}
+.usage {
   margin-top: auto;
 }
 .content {
@@ -388,8 +444,12 @@ li.message-row:has(.message[aria-current='true']) {
 }
 button.star {
   flex: none;
-  padding: 9px 2px 0 6px;
+  padding: 4px 8px;
   color: var(--ink-muted);
+}
+/* In a list row, level with the sender's line */
+.message-row button.star {
+  padding: 9px 2px 0 6px;
 }
 button.star.on {
   color: var(--warning);
@@ -598,7 +658,7 @@ button.star.on .icon {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-dialog);
-  z-index: 2; /* above the reader's popups */
+  z-index: 3; /* above the menus and the reader's popups */
 }
 .dialog label {
   display: grid;
@@ -665,7 +725,7 @@ button.star.on .icon {
 .backdrop {
   position: fixed;
   inset: 0;
-  z-index: 2;
+  z-index: 3;
   background: rgb(0 0 0 / 40%);
 }
 /* Back to the list: only at phone width, where the reader takes its place */
@@ -762,6 +822,10 @@ th {
     flex-wrap: wrap;
     padding: 0;
   }
+  /* Tabs: the bar goes under the selected one */
+  .folders button[aria-current='true'] {
+    box-shadow: inset 0 -3px 0 var(--action-text);
+  }
   .usage,
   nav .hint {
     display: none;
@@ -781,7 +845,13 @@ th {
   button.back {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
+  }
+  /* A little tighter, so a message's actions fit on one line */
+  .reader > .toolbar {
+    gap: 6px;
+  }
+  .reader > .toolbar button:not(.bare) {
+    padding-inline: 10px;
   }
   /* Compose fills the screen, or minimised, a bar along its foot */
   .dialog.compose,
@@ -884,9 +954,18 @@ button.small {
   button.star {
     display: inline-flex;
     justify-content: center;
+    align-items: center;
     min-width: 44px;
     min-height: 44px;
+    padding: 0;
+  }
+  .message-row button.star {
+    align-items: flex-start;
     padding: 9px 0 0;
+  }
+  .menu summary {
+    min-width: 44px;
+    min-height: 44px;
   }
   /* The compose window's buttons too; the bar keeps its height for them */
   .compose-bar {

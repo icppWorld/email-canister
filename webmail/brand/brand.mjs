@@ -64,16 +64,22 @@ const isDomain = (name) =>
 const MAX_CUSTOM_DOMAINS = 10
 const OUTPUT_MARKER = '.brand-output'
 
+// A role a brand leaves out takes this role's value, as the brand or the
+// default sets it
+const FOLLOWS = { 'action-text': 'action' }
+
 // Pairs that must stay readable: text, background, minimum contrast
 const CONTRAST = [
   ['ink', 'surface', 4.5],
   ['ink', 'surface-muted', 4.5],
   ['ink', 'surface-raised', 4.5],
-  ['action', 'surface-raised', 4.5],
+  ['action-text', 'surface-raised', 4.5],
   ['ink', 'selected', 4.5],
   ['ink-muted', 'surface', 4.5],
   ['ink-muted', 'surface-muted', 4.5],
   ['ink-muted', 'selected', 4.5],
+  // The bar that marks the selected folder
+  ['action-text', 'selected', 3],
   ['danger', 'surface', 4.5],
   ['warning', 'warning-surface', 4.5],
   ['on-action', 'action', 4.5],
@@ -247,11 +253,13 @@ export function loadBrand(folder) {
     return resolve(target, [...seen, alias])
   }
 
-  for (const role of Object.keys(own.roles ?? {})) {
+  for (const [role, value] of Object.entries(own.roles ?? {})) {
     if (!(role in defaults.roles))
       fail(
         `unknown role "${role}"; the roles are ${Object.keys(defaults.roles).join(', ')}`
       )
+    if (value === null)
+      fail(`role ${role} is null: leave it out to use the default`)
   }
   // A brand without a dark theme stays light, rather than mixing with grey dark defaults
   const hasDark =
@@ -268,6 +276,9 @@ export function loadBrand(folder) {
       return [role, value]
     })
   )
+  for (const [role, leader] of Object.entries(FOLLOWS)) {
+    if (own.roles?.[role] === undefined) roles[role] = roles[leader]
+  }
   // A family may name one of the tokens file's type families, as "{body}"
   const families = Object.fromEntries(
     Object.entries({ ...defaults.families, ...own.families }).map(

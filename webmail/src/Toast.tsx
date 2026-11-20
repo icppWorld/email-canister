@@ -1,11 +1,16 @@
-// A short note at the bottom of the page about what was just done, with an
-// action such as Undo
+// A short note at the bottom of the page about what was just done, with
+// actions such as Undo
 
-export type Toast = {
-  text: string
-  // reload: the action changes mail, so the list and counts load again
-  action?: { label: string; run: () => Promise<void> | void; reload?: true }
+export type ToastAction = {
+  label: string
+  // Says more than the label, such as whom a block is for
+  title?: string
+  run: () => Promise<void> | void
+  // The action changes mail, so the list and counts load again
+  reload?: true
 }
+
+export type Toast = { text: string; actions?: ToastAction[] }
 
 export function ToastBar({
   toast,
@@ -14,12 +19,11 @@ export function ToastBar({
   onHold,
 }: {
   toast: Toast | null
-  onAction: (action: NonNullable<Toast['action']>) => void
+  onAction: (action: ToastAction) => void
   onClose: () => void
   // True while the pointer is over it or the focus is in it
   onHold: (held: boolean) => void
 }) {
-  const action = toast?.action
   // The live region stays on the page, so a new note is announced
   return (
     <div
@@ -42,11 +46,16 @@ export function ToastBar({
       {toast && (
         <>
           <span>{toast.text}</span>
-          {action && (
-            <button className="bare" onClick={() => onAction(action)}>
+          {toast.actions?.map((action) => (
+            <button
+              key={action.label}
+              className="bare"
+              title={action.title}
+              onClick={() => onAction(action)}
+            >
               {action.label}
             </button>
-          )}
+          ))}
           <button className="bare" aria-label="Dismiss" onClick={onClose}>
             ×
           </button>

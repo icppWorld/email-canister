@@ -16,7 +16,7 @@ function readPageStyle(): PageStyle {
   return {
     background: role('--surface-raised'),
     ink: role('--ink'),
-    link: role('--action'),
+    link: role('--action-text'),
     // The app's own text, as styles.css sets it from the brand
     font: `${body.fontSize}/${Number.isFinite(ratio) ? ratio.toFixed(3) : 'normal'} ${body.fontFamily}`,
     scheme: root.colorScheme,

@@ -26,7 +26,9 @@ import { formatNs, formatTime, memberName } from './format'
 import { Icon, type IconName } from './Icon'
 import { MessageBody } from './MessageBody'
 import { deliveredVia, parseMail, saveFile, type ParsedMail } from './mime'
-import type { Toast } from './Toast'
+import { BackButton, StarButton } from './Buttons'
+import { Menu } from './Menu'
+import type { Toast, ToastAction } from './Toast'
 
 const PAGE_SIZE = 50n
 const REFRESH_MS = 20_000
@@ -50,6 +52,14 @@ type Action = {
   icon: IconName
   danger?: true // it cannot be undone
   run: (uids: bigint[]) => Promise<unknown>
+}
+
+// One in the reader's ⋮ menu. needs: what it waits for, the sender's address
+// or the reader's own mark as read, which must not land after it.
+type MoreAction = {
+  label: string
+  needs?: 'sender' | 'mark'
+  run: (sender: string) => Promise<unknown>
 }
 
 // Runs an action, showing a refusal with onError. A new action clears the
@@ -97,7 +107,7 @@ function undo(
   uids: bigint[],
   from: bigint,
   unblock?: string
-): NonNullable<Toast['action']> {
+): ToastAction {
   return {
     label: 'Undo',
     reload: true,
@@ -138,7 +148,8 @@ function Reader({
   summary,
   touched,
   actions,
-  onBlock,
+  onSpam,
+  more,
   onReply,
   onFlags,
   onCounts,
@@ -153,8 +164,10 @@ function Reader({
   // or in the list: its reply must not undo them
   touched: RefObject<Map<bigint, bigint>>
   actions: Action[] // the folder's, for this message
-  // Blocks the address and files the message in Spam; absent in Trash
-  onBlock?: (address: string) => Promise<void>
+  // In the Inbox: to Spam, with the sender's address once it is known, for
+  // the note to offer a block
+  onSpam?: (sender: string) => Promise<unknown>
+  more: MoreAction[] // the folder's, in the ⋮ menu
   onReply: (draft: Omit<Draft, 'from'>) => void // from the mailbox shown
   // The flags set and cleared, applied to the latest state: another change
   // may have landed while this one was under way
@@ -174,6 +187,8 @@ function Reader({
   const [state, setState] = useState(summary.state)
   // Who opened the message, and when each first did
   const [seenBy, setSeenBy] = useState<SeenBy[]>([])
+  // Its mark as read is made, or was not needed
+  const [settled, setSettled] = useState(false)
   const quarantined = state === MESSAGE_QUARANTINED
   const [formatted, setFormatted] = useState(false)
   const plain = quarantined && !formatted
@@ -232,6 +247,8 @@ function Reader({
         }
       } catch (e) {
         if (current) setError(errorText(e))
+      } finally {
+        if (current) setSettled(true)
       }
     })()
     return () => {
@@ -268,14 +285,6 @@ function Reader({
     : rawText
       ? summary.envelope_from
       : ''
-  const block = () => {
-    if (!onBlock || !sender) return
-    const asked =
-      `Block ${sender}? New mail from this address goes to Spam, for ` +
-      'everyone in this mailbox, and this message moves there now.'
-    if (window.confirm(asked)) act(() => onBlock(sender))
-  }
-
   const toggleFlag = async () => {
     const [set, clear] = starring(summary.flags)
     const uid = summary.uid
@@ -305,14 +314,9 @@ function Reader({
   return (
     <article className="reader">
       <div className="toolbar">
-        <button className="back" onClick={onBack}>
-          <Icon name="back" /> Back
-        </button>
+        <BackButton onClick={onBack} />
         <button onClick={reply} disabled={!mail}>
           Reply
-        </button>
-        <button onClick={toggleFlag}>
-          {summary.flags & FLAG_FLAGGED ? 'Unflag' : 'Flag'}
         </button>
         {actions.map((action) => (
           <button
@@ -323,10 +327,28 @@ function Reader({
             {action.label}
           </button>
         ))}
-        {onBlock && (
-          <button onClick={block} disabled={!sender}>
-            Block sender
-          </button>
+        <StarButton
+          flagged={(summary.flags & FLAG_FLAGGED) !== 0n}
+          onClick={toggleFlag}
+        />
+        {onSpam && (
+          <button onClick={() => act(() => onSpam(sender))}>Spam</button>
+        )}
+        {more.length > 0 && (
+          <Menu label="More actions">
+            {more.map((action) => (
+              <button
+                key={action.label}
+                disabled={
+                  (action.needs === 'sender' && !sender) ||
+                  (action.needs === 'mark' && !settled)
+                }
+                onClick={() => act(() => action.run(sender))}
+              >
+                {action.label}
+              </button>
+            ))}
+          </Menu>
         )}
         {(shared ||
           seenBy.some((seen) => seen.principal.toText() !== principal)) && (
@@ -537,12 +559,17 @@ export function Inbox({
     return result
   }
 
-  const move = async (uids: bigint[], to: Folder) => {
+  // more: a second action for the note, about the messages that moved
+  const move = async (
+    uids: bigint[],
+    to: Folder,
+    more?: (done: bigint[]) => ToastAction
+  ) => {
     const { done, error } = await moveOut(uids, FOLDERS[to].number)
     if (done.length > 0) {
       notify({
         text: `${messages(done.length, 'Message')} moved to ${FOLDERS[to].name}`,
-        action: undo(backend, done, here),
+        actions: [undo(backend, done, here), ...(more ? [more(done)] : [])],
       })
     }
     if (error) throw error
@@ -605,28 +632,69 @@ export function Inbox({
     }
   }
 
-  // Blocked first, then out to Spam: a refused block moves nothing. Undo
-  // leaves a block made before alone.
-  const block = async (uid: bigint, address: string) => {
+  // New mail from the address goes to Spam. moved: the messages that went to
+  // Spam just before, which Undo brings back too. Undo leaves a block made
+  // before alone.
+  const block = async (address: string, moved: bigint[]) => {
     const before = await backend.mail_blocked()
     // As the canister keeps it: only A to Z in lower case
     const kept = address.replace(/[A-Z]/g, (c) => c.toLowerCase())
     const already = before.some((b) => b.address === kept)
     await backend.mail_block(address)
-    // A refused move leaves the block in place, for Undo to take back
-    const { done, error } =
-      folder === 'spam'
-        ? { done: [], error: undefined }
-        : await moveOut([uid], FOLDER_SPAM)
     notify({
       text: already ? `${address} was blocked already` : `Blocked ${address}`,
-      action:
-        already && done.length === 0
+      actions:
+        already && moved.length === 0
           ? undefined
-          : undo(backend, done, here, already ? undefined : address),
+          : [undo(backend, moved, here, already ? undefined : address)],
     })
-    if (error) throw error
   }
+
+  // From the reader: once the sender is known, the note offers to block them
+  const spam = (uid: bigint, sender: string) =>
+    move(
+      [uid],
+      'spam',
+      sender
+        ? (done) => ({
+            label: 'Block sender',
+            title: `Block ${sender}`,
+            // A failure (its outcome unknown when the reply was lost) says where the
+            // message is, and still offers the move's Undo
+            run: () =>
+              block(sender, done).catch((e) =>
+                notify({
+                  text: `Blocking ${sender} failed: ${errorText(e)}. The message is in Spam.`,
+                  actions: [undo(backend, done, here)],
+                })
+              ),
+          })
+        : undefined
+    )
+
+  // The reader's ⋮ menu, by folder
+  const readerMore = (uid: bigint): MoreAction[] =>
+    folder === 'inbox'
+      ? [
+          {
+            label: 'Mark unread',
+            needs: 'mark',
+            // Back to the list, unless another message opened meanwhile
+            run: async () => {
+              await markUnread.run([uid])
+              setSelected((open) => (open?.uid === uid ? null : open))
+            },
+          },
+        ]
+      : folder === 'spam'
+        ? [
+            {
+              label: 'Block sender',
+              needs: 'sender',
+              run: (sender) => block(sender, []),
+            },
+          ]
+        : []
 
   // A refusal in the list shows above it
   const act = (run: () => Promise<unknown>) => attempt(run, setError)
@@ -637,7 +705,7 @@ export function Inbox({
     run: (uids) => move(uids, 'trash'),
   }
   const toSpam: Action = {
-    label: 'Report spam',
+    label: 'Spam',
     icon: 'spam',
     run: (uids) => move(uids, 'spam'),
   }
@@ -662,10 +730,10 @@ export function Inbox({
     icon: 'mail',
     run: (uids) => flag(uids, 0n, FLAG_SEEN),
   }
-  // A message's own, in the reader; the ticked ones can also be read or not
-  const actions = folder === 'inbox' ? [toTrash, toSpam] : [restore, forever]
+  // A message's own; the reader has Spam and Mark unread apart
+  const actions = folder === 'inbox' ? [toTrash] : [restore, forever]
   const bulkActions =
-    folder === 'inbox' ? [...actions, markRead, markUnread] : actions
+    folder === 'inbox' ? [toTrash, toSpam, markRead, markUnread] : actions
 
   const tick = (uid: bigint, on: boolean) =>
     setChecked((ticked) => {
@@ -791,15 +859,11 @@ export function Inbox({
                     onChange={(e) => tick(m.uid, e.target.checked)}
                   />
                 </label>
-                <button
-                  className={flagged ? 'bare star on' : 'bare star'}
-                  aria-label={flagged ? `Unstar ${title}` : `Star ${title}`}
-                  aria-pressed={flagged}
-                  title={flagged ? 'Starred' : 'Not starred'}
+                <StarButton
+                  flagged={flagged}
+                  name={title}
                   onClick={() => act(() => flag([m.uid], ...starring(m.flags)))}
-                >
-                  <Icon name="star" />
-                </button>
+                />
                 <button
                   className={unread ? 'message unread' : 'message'}
                   aria-current={selected?.uid === m.uid}
@@ -855,11 +919,12 @@ export function Inbox({
           summary={selected}
           touched={touched}
           actions={actions}
-          onBlock={
-            folder === 'trash'
-              ? undefined
-              : (address) => block(selected.uid, address)
+          onSpam={
+            folder === 'inbox'
+              ? (sender) => spam(selected.uid, sender)
+              : undefined
           }
+          more={readerMore(selected.uid)}
           onReply={onReply}
           onFlags={(set, clear) => updateFlags([selected.uid], set, clear)}
           onBack={() => setSelected(null)}

@@ -84,6 +84,19 @@ function brandCopy(change: (dir: string) => void): string {
   return dir
 }
 
+// A copy of e2e/brand with these settings of brand.json added or replaced
+const editBrand = (patch: Record<string, unknown>) =>
+  brandCopy((d) => {
+    const file = path.join(d, 'brand.json')
+    writeFileSync(
+      file,
+      JSON.stringify({ ...JSON.parse(readFileSync(file, 'utf8')), ...patch })
+    )
+  })
+
+const brandCss = (out: string) =>
+  readFileSync(path.join(out, 'brand.css'), 'utf8')
+
 const settingsOf = (html: string) =>
   JSON.parse(
     /<script type="application\/json" id="settings">(.*?)<\/script>/.exec(
@@ -103,7 +116,7 @@ test('without a brand the webmail is greyscale', () => {
   const { ok, output, out } = brand({})
   expect(ok, output).toBe(true)
   expect(output).not.toContain('below')
-  const css = readFileSync(path.join(out, 'brand.css'), 'utf8')
+  const css = brandCss(out)
   const colours = css.match(/#[0-9a-f]{3,8}\b/gi)!
   expect(colours.length).toBeGreaterThan(20)
   for (const colour of colours) {
@@ -351,25 +364,17 @@ test('runs when started through a symlink', () => {
 })
 
 test('keeps $ patterns in brand text literally, and refuses text that is not a string', () => {
-  const edit = (patch: Record<string, unknown>) =>
-    brandCopy((d) => {
-      const file = path.join(d, 'brand.json')
-      writeFileSync(
-        file,
-        JSON.stringify({ ...JSON.parse(readFileSync(file, 'utf8')), ...patch })
-      )
-    })
   const { ok, output, out } = brand({
-    brand: edit({ tagline: "Save $' and $& and $$ now" }),
+    brand: editBrand({ tagline: "Save $' and $& and $$ now" }),
   })
   expect(ok, output).toBe(true)
   expect(
     settingsOf(readFileSync(path.join(out, 'index.html'), 'utf8')).brand.tagline
   ).toBe("Save $' and $& and $$ now")
-  expect(brand({ brand: edit({ tagline: 2026 }) }).output).toContain(
+  expect(brand({ brand: editBrand({ tagline: 2026 }) }).output).toContain(
     'tagline must be text'
   )
-  expect(brand({ brand: edit({ name: 123 }) }).output).toContain(
+  expect(brand({ brand: editBrand({ name: 123 }) }).output).toContain(
     'name must be text'
   )
 })
@@ -412,9 +417,7 @@ test('reads files, tokens and manifest from a shared package', () => {
   )
   const { ok, output, out } = brand({ brand: app })
   expect(ok, output).toBe(true)
-  expect(readFileSync(path.join(out, 'brand.css'), 'utf8')).toContain(
-    '--action: #1d5e8c;'
-  )
+  expect(brandCss(out)).toContain('--action: #1d5e8c;')
   writeFileSync(path.join(shared, 'icon.svg'), ' ', { flag: 'a' })
   expect(brand({ brand: app }).output).toContain(
     'icon.svg differs from manifest.json'
@@ -441,35 +444,82 @@ test('takes font families from the tokens file', () => {
     })
   const { ok, output, out } = brand({ brand: edit({ body: '{sans}' }) })
   expect(ok, output).toBe(true)
-  expect(readFileSync(path.join(out, 'brand.css'), 'utf8')).toContain(
-    '--font-body: "Test Sans", sans-serif;'
-  )
+  expect(brandCss(out)).toContain('--font-body: "Test Sans", sans-serif;')
   expect(brand({ brand: edit({ body: '{serif}' }) }).output).toContain(
     'font family {serif} is not in the type families'
   )
 })
 
+test("action-text follows the brand's action unless set, and is checked on its grounds", () => {
+  // The brand's roles, which each case below adds to or changes
+  const { roles } = JSON.parse(
+    readFileSync(path.join(webmail, 'e2e', 'brand', 'brand.json'), 'utf8')
+  )
+
+  // Without action-text, links and the bar take the brand's action
+  const { 'action-text': _, ...withoutText } = roles
+  const follows = brand({ brand: editBrand({ roles: withoutText }) })
+  expect(follows.ok, follows.output).toBe(true)
+  const followsCss = brandCss(follows.out)
+  expect(followsCss).toContain('--action-text: #1d5e8c;')
+  expect(followsCss).toContain('--action-text: #7fc1f0;')
+
+  // e2e/brand sets an action-text of its own, which leaves action alone
+  const own = brand({ brand: 'e2e/brand' })
+  expect(own.ok, own.output).toBe(true)
+  expect(own.output).not.toContain('below')
+  const ownCss = brandCss(own.out)
+  expect(ownCss).toContain('--action-text: #0b4a75;')
+  expect(ownCss).toContain('--action-text: #9ccff3;')
+  expect(ownCss).toContain('--action: #1d5e8c;')
+  expect(ownCss).toContain('--action: #7fc1f0;')
+
+  // Too faint for the bar beside the selected folder
+  const faint = brand({
+    brand: editBrand({
+      roles: {
+        ...roles,
+        'action-text': { light: '#a0a0a0', dark: '#7fc1f0' },
+      },
+    }),
+  })
+  expect(faint.ok, faint.output).toBe(true)
+  expect(faint.output).toMatch(
+    /brand: action-text on selected in light is \d+\.\d{2}:1, below 3:1/
+  )
+
+  // A button colour too dark for text in dark mode, with links of their own
+  const dark = brand({
+    brand: editBrand({
+      roles: {
+        ...roles,
+        action: { light: '#1d5e8c', dark: '#0b2a40' },
+        'action-text': { light: '#1d5e8c', dark: '#7fc1f0' },
+      },
+    }),
+  })
+  expect(dark.ok, dark.output).toBe(true)
+  expect(dark.output).not.toContain('on surface-raised')
+  expect(dark.output).not.toContain('action-text on selected')
+})
+
 test('refuses an unknown role, a missing token, a path outside the brand and unsafe CSS', () => {
-  const edit = (patch: Record<string, unknown>) =>
-    brandCopy((d) => {
-      const file = path.join(d, 'brand.json')
-      writeFileSync(
-        file,
-        JSON.stringify({ ...JSON.parse(readFileSync(file, 'utf8')), ...patch })
-      )
-    })
   expect(
-    brand({ brand: edit({ roles: { accent: '#000000' } }) }).output
+    brand({ brand: editBrand({ roles: { accent: '#000000' } }) }).output
   ).toContain('unknown role "accent"')
   expect(
-    brand({ brand: edit({ roles: { action: '{nope}' } }) }).output
+    brand({ brand: editBrand({ roles: { 'action-text': null } }) }).output
+  ).toContain('role action-text is null')
+  expect(
+    brand({ brand: editBrand({ roles: { action: '{nope}' } }) }).output
   ).toContain('token {nope} is not in tokens.json')
   expect(
-    brand({ brand: edit({ icons: [{ file: '../brand.json' }] }) }).output
+    brand({ brand: editBrand({ icons: [{ file: '../brand.json' }] }) }).output
   ).toContain('use a plain relative path')
   expect(
-    brand({ brand: edit({ roles: { action: 'red; background: url(x)' } }) })
-      .output
+    brand({
+      brand: editBrand({ roles: { action: 'red; background: url(x)' } }),
+    }).output
   ).toContain('role action')
   // Each would swallow the rules after it in a style sheet
   for (const value of [
@@ -479,9 +529,9 @@ test('refuses an unknown role, a missing token, a path outside the brand and uns
     '"red',
     'red [',
   ])
-    expect(brand({ brand: edit({ roles: { ink: value } }) }).output).toContain(
-      'role ink'
-    )
+    expect(
+      brand({ brand: editBrand({ roles: { ink: value } }) }).output
+    ).toContain('role ink')
   // The last two are not CSS identifiers, and would void the whole font variable
   for (const value of [
     '"Inter',
@@ -494,16 +544,19 @@ test('refuses an unknown role, a missing token, a path outside the brand and uns
     'Source Sans 3',
   ])
     expect(
-      brand({ brand: edit({ families: { body: value } }) }).output
+      brand({ brand: editBrand({ families: { body: value } }) }).output
     ).toContain('font family')
   // A quote of the other kind inside a quoted name, letters beyond ASCII, and quoted names are fine
   for (const value of [
     `"O'Brien", serif`,
     'Noto Sans 日本語, ".SF NS", "Source Sans 3", sans-serif',
   ])
-    expect(brand({ brand: edit({ families: { body: value } }) }).ok).toBe(true)
+    expect(brand({ brand: editBrand({ families: { body: value } }) }).ok).toBe(
+      true
+    )
   expect(
-    brand({ brand: edit({ roles: { ink: 'var(--brand_ink, #1a1a1a)' } }) }).ok
+    brand({ brand: editBrand({ roles: { ink: 'var(--brand_ink, #1a1a1a)' } }) })
+      .ok
   ).toBe(true)
 })
 

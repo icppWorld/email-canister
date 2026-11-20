@@ -11,6 +11,7 @@ import {
   type OutboxMessage,
   type OutboxSummary,
 } from './api'
+import { BackButton } from './Buttons'
 import { memberName } from './format'
 import { Icon } from './Icon'
 import { MessageBody } from './MessageBody'
@@ -88,9 +89,7 @@ function Details({
   return (
     <article className="reader">
       <div className="toolbar">
-        <button className="back" onClick={onBack}>
-          <Icon name="back" /> Back
-        </button>
+        <BackButton onClick={onBack} />
         {canResend && (
           <button className="primary" onClick={resend}>
             Send again
