@@ -93,10 +93,16 @@ jobs:
           path: ~/.icpp
           key: icpp-${{ runner.os }}-${{ steps.icpp.outputs.version }}
       - name: install the toolchain
+        env:
+          TOOLCHAIN_RESTORED: ${{ steps.toolchain.outputs.cache-hit }}
         run: |
           pip install -r requirements.txt
-          icpp install-wasi-sdk
-          icpp install-rust
+          # The toolchain reinstalls these even when they are there, so only
+          # when the cache, keyed on its version, did not bring them
+          if [ "$TOOLCHAIN_RESTORED" != true ]; then
+            icpp install-wasi-sdk
+            icpp install-rust
+          fi
           npm install -g @icp-sdk/icp-cli@${ICP_CLI_VERSION}
           (cd webmail && npm ci)
           # didc, which the native tests encode and decode Candid with
