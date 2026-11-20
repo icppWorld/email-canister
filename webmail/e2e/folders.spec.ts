@@ -797,6 +797,38 @@ test('a block whose reply is lost leaves the other senders blocked, and Undo lif
   await context.close()
 })
 
+test('an unblock refused in Undo still brings the message back, and says why', async ({
+  browser,
+}) => {
+  deliver({
+    subject: 'Stuck sanderling',
+    body: '<p>A sanderling.</p>',
+    from: 'Sanderling <sanderling@sender.example>',
+  })
+  await waitDrained()
+  const { context, page } = await signedIn(browser, USER_A)
+  await openMail(page, 'sanderling')
+  await expect(page.getByTestId('subject')).toHaveText('Stuck sanderling')
+  await spamFromReader(page)
+  const note = page.getByTestId('toast').locator('span')
+  await expect(note).toHaveText(
+    'Message moved to Spam and sanderling@sender.example blocked'
+  )
+  await page.route('**/api/*/canister/*/*', (route) =>
+    callsTo(route.request(), 'mail_unblock')
+      ? route.abort('failed')
+      : route.fallback()
+  )
+  await undo(page)
+  // The refusal, after the agent's own retries, and the message is back
+  await expect(note).toHaveText(/\S/, { timeout: 60_000 })
+  await expect(messageRow(page, 'Stuck sanderling')).toHaveCount(1)
+  await page.unrouteAll()
+  const alice = await asAlice()
+  await alice.mail_unblock('alice', 'sanderling@sender.example')
+  await context.close()
+})
+
 test('Spam moves the message when the blocked senders cannot be read, and says so', async ({
   browser,
 }) => {
@@ -805,15 +837,28 @@ test('Spam moves the message when the blocked senders cannot be read, and says s
     body: '<p>A godwit.</p>',
     from: 'Godwit <godwit@sender.example>',
   })
+  deliver({
+    subject: 'Unlisted bittern',
+    body: '<p>A bittern.</p>',
+    from: `Us <bittern@${DOMAIN}>`,
+  })
   await waitDrained()
   const { context, page } = await signedIn(browser, USER_A)
-  await openMail(page, 'godwit')
-  await expect(page.getByTestId('subject')).toHaveText('Unlisted godwit')
   await page.route('**/api/*/canister/*/*', (route) =>
     callsTo(route.request(), 'mail_blocked')
       ? route.abort('failed')
       : route.fallback()
   )
+  // No block was due for this one, so none failed
+  await openMail(page, 'bittern')
+  await expect(page.getByTestId('subject')).toHaveText('Unlisted bittern')
+  await spamFromReader(page)
+  await expect(page.getByTestId('toast').locator('span')).toHaveText(
+    'Message moved to Spam',
+    { timeout: 60_000 }
+  )
+  await openMail(page, 'godwit')
+  await expect(page.getByTestId('subject')).toHaveText('Unlisted godwit')
   await spamFromReader(page)
   await expect(page.getByTestId('toast').locator('span')).toHaveText(
     /^Message moved to Spam\. Blocking failed: /,
@@ -828,47 +873,29 @@ test('Spam moves the message when the blocked senders cannot be read, and says s
 test("Spam blocks no address of the mailbox's own domain", async ({
   browser,
 }) => {
-  // Spam often claims to be from the recipient
-  deliver({
-    subject: 'Spoofed heron',
-    body: '<p>Pay now.</p>',
-    from: `Alice <alice@${DOMAIN}>`,
-  })
+  // Spam often claims to be from the recipient, or from the domain's own
+  // services
+  for (const [subject, address] of [
+    ['Spoofed heron', `alice@${DOMAIN}`],
+    ['Spoofed egret', `alerts@lists.${DOMAIN}`],
+  ]) {
+    deliver({ subject, body: '<p>Pay now.</p>', from: `Us <${address}>` })
+  }
   await waitDrained()
   const { context, page } = await signedIn(browser, USER_A)
-  await openMail(page, 'Spoofed heron')
-  await expect(page.getByTestId('subject')).toHaveText('Spoofed heron')
-  await spamFromReader(page)
-  await expect(page.getByTestId('toast').locator('span')).toHaveText(
-    'Message moved to Spam'
-  )
   const alice = await asAlice()
-  expect(await blockedAddresses(alice)).not.toContain(`alice@${DOMAIN}`)
-  await context.close()
-})
-
-test('Not spam also unblocks the envelope sender that filed the mail in Spam', async ({
-  browser,
-}) => {
-  const alice = await asAlice()
-  await alice.mail_block('alice', 'bounce@lists.example')
-  deliver({
-    subject: 'Listed curlew',
-    body: '<p>A curlew.</p>',
-    from: 'News <news@lists.example>',
-    envelopeUser: 'bounce',
-    envelopeDomain: 'lists.example',
-  })
-  await waitDrained()
-  const { context, page } = await signedIn(browser, USER_A)
-  await folder(page, 'Spam')
-  await messageRow(page, 'Listed curlew').click()
-  await expect(page.getByTestId('subject')).toHaveText('Listed curlew')
-  await page.getByRole('button', { name: 'Not spam', exact: true }).click()
-  await expect(page.getByTestId('toast').locator('span')).toHaveText(
-    'Message moved to the Inbox and bounce@lists.example unblocked'
-  )
-  expect(await blockedAddresses(alice)).not.toContain('bounce@lists.example')
+  for (const [subject, address] of [
+    ['Spoofed heron', `alice@${DOMAIN}`],
+    ['Spoofed egret', `alerts@lists.${DOMAIN}`],
+  ]) {
+    await openMail(page, subject)
+    await expect(page.getByTestId('subject')).toHaveText(subject)
+    await spamFromReader(page)
+    await expect(page.getByTestId('toast').locator('span')).toHaveText(
+      'Message moved to Spam'
+    )
+    expect(await blockedAddresses(alice)).not.toContain(address)
+  }
   await context.close()
 })
 

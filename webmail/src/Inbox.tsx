@@ -112,7 +112,8 @@ function undo(
     label: 'Undo',
     reload: true,
     run: async () => {
-      await Promise.all([
+      // A refused block or unblock does not keep the messages away
+      const changes = await Promise.allSettled([
         ...unblock.map((address) => backend.mail_unblock(address)),
         ...block.map((address) => backend.mail_block(address)),
       ])
@@ -120,6 +121,8 @@ function undo(
         backend.mail_move(part, from)
       )
       if (error) throw error
+      const refused = changes.find((c) => c.status === 'rejected')
+      if (refused) throw refused.reason
     },
   }
 }
@@ -578,21 +581,19 @@ export function Inbox({
   }
 
   // To Spam blocks the From address of each message that moves, and from
-  // Spam to the Inbox unblocks it and the envelope sender, as either block
-  // files mail in Spam. Undo puts back every change tried: one whose reply
-  // was lost may have gone through. A block that was there before Spam stays
-  // as it was, and Spam blocks no address of the mailbox's own domain, which
-  // spam often claims to be from. Mail with no From address only moves. The
-  // reader closes with the move, so the note says what failed after it.
+  // Spam to the Inbox unblocks it. Undo puts back every change tried: one
+  // whose reply was lost may have gone through. A block that was there
+  // before Spam stays as it was, and Spam blocks no address of the mailbox's
+  // own domain or its subdomains, which spam often claims to be from. Mail
+  // with no From address only moves. The reader closes with the move, so the
+  // note says what failed after it.
   const judge = async (uids: bigint[], to: 'spam' | 'inbox') => {
     const spam = to === 'spam'
     // Read before the move takes the messages off the list
     const senders = new Map(
       [...items, ...(selected ? [selected] : [])].map((m) => [
         m.uid,
-        (spam ? [m.sender_address] : [m.sender_address, m.envelope_from]).map(
-          kept
-        ),
+        kept(m.sender_address),
       ])
     )
     // Alongside the move. A list that cannot be read changes no block.
@@ -602,15 +603,16 @@ export function Inbox({
     )
     const { done, error } = await moveOut(uids, FOLDERS[to].number)
     const blocked = await listed
-    const own = `@${kept(domain)}`
+    const ours = (address: string) =>
+      address.endsWith(`@${kept(domain)}`) ||
+      address.endsWith(`.${kept(domain)}`)
+    // The addresses a change is due for, as far as the list can tell
+    const due = [...new Set(done.map((uid) => senders.get(uid) ?? ''))].filter(
+      (address) => address !== '' && !(spam && ours(address))
+    )
     const tried =
       blocked instanceof Set
-        ? [...new Set(done.flatMap((uid) => senders.get(uid) ?? []))].filter(
-            (address) =>
-              address !== '' &&
-              blocked.has(address) !== spam &&
-              !(spam && address.endsWith(own))
-          )
+        ? due.filter((address) => blocked.has(address) !== spam)
         : []
     const results = await Promise.allSettled(
       tried.map((address) =>
@@ -623,7 +625,9 @@ export function Inbox({
       const refusal =
         blocked instanceof Set
           ? results.find((r) => r.status === 'rejected')?.reason
-          : blocked.error
+          : due.length > 0
+            ? blocked.error
+            : undefined
       const who = (list: string[]) =>
         list.length === 1 ? list[0] : `${list.length} senders`
       notify({
