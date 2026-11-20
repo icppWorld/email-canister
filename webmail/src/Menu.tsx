@@ -56,26 +56,30 @@ export function Menu({
     }
   }, [])
 
+  // Where it opens and the window's width then. On the click, so its first
+  // frame is on screen, and again on the toggle, as it can also open without
+  // one (a find in the page expands it)
+  const measure = () => {
+    const box = ref.current?.querySelector('summary')?.getBoundingClientRect()
+    if (!box) return
+    openWidth.current = window.innerWidth
+    setFromLeft(box.left + box.right < window.innerWidth)
+  }
+
   return (
     <details
       className="menu"
       ref={ref}
+      onToggle={(e) => {
+        if (e.currentTarget.open) measure()
+      }}
       onBlur={(e) => {
         // Focus that moved to the page's body is left to the click handlers
         const to = e.relatedTarget as Node | null
         if (to && !e.currentTarget.contains(to)) close()
       }}
     >
-      <summary
-        aria-label={label}
-        title={label}
-        onClick={(e) => {
-          // Measured before it opens, so its first frame is on screen
-          const { left, right } = e.currentTarget.getBoundingClientRect()
-          openWidth.current = window.innerWidth
-          setFromLeft(left + right < window.innerWidth)
-        }}
-      >
+      <summary aria-label={label} title={label} onClick={measure}>
         <Icon name="more" />
       </summary>
       <div
