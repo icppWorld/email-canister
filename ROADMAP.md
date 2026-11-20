@@ -40,6 +40,7 @@ email-canister grows in small releases, driven by running it for real mailboxes.
 
 - Low-cycles mode that pauses sending, and alerts before the freezing threshold.
 - Snapshot and restore drills.
+- Faster CI. The tests job takes about half an hour, one step after another: the build about 8 minutes, the replica tests and the webmail tests about 9 each. Build once and hand the wasm to jobs that run the native, replica and webmail tests side by side; cache the toolchain and the build's object files; spread the replica tests over parallel workers; and run the webmail tests in parallel, which needs each test to use its own mailboxes instead of the state the serial run shares. A failing webmail test then also no longer stops the ones after it.
 - Only compatible Candid changes from now on: new methods, and new optional fields and arguments, never a changed or removed signature, so an upgrade from the last release passes `icp`'s compatibility check without `--yes`, and a webmail tab left open keeps working until it reloads. The release skill checks that the last release's deployment upgrades cleanly: the new interface against the last release's `.did`, and the upgrade test from the last release's wasm with mail in it. Before implementing it, compare how icpp-pro and llama_cpp_canister check their upgrades.
 - Mail deleted for good overwritten in the mailbox file (`secure_delete`), and the search index merged after a delete, so a download cannot recover it.
 - A paged rebuild of a mailbox's search index.
