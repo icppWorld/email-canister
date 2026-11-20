@@ -69,7 +69,8 @@ jobs:
 
   # Whether the build and the tests run, and the tree this run tests. They are
   # skipped for a pull request that changes only docs, which `static` checks,
-  # and for a push to main whose tree a pull request's run passed
+  # and for a push to main whose tree a pull request's run passed. That run
+  # tested the merge commit, whose first parent is the base it was built on
   changes:
     runs-on: ubuntu-22.04
     permissions:
@@ -81,28 +82,29 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          fetch-depth: 0
+          fetch-depth: 2
       - id: decide
         env:
           GH_TOKEN: ${{ github.token }}
           EVENT: ${{ github.event_name }}
-          BASE: ${{ github.event.pull_request.base.sha }}
         run: |
           tree=$(git rev-parse 'HEAD^{tree}')
           echo "tree=$tree" >>"$GITHUB_OUTPUT"
           run=true
           if [ "$EVENT" = pull_request ]; then
-            files=$(git diff --name-only "$BASE" HEAD)
+            # A renamed file under both names, so code moved into docs/ counts
+            files=$(git diff --no-renames --name-only 'HEAD^1' HEAD)
             if [ -n "$files" ] && ! grep -qvE '^docs/|\.md$' <<<"$files"; then
               run=false
               echo "Only docs changed"
             fi
           elif [ "$EVENT" = push ]; then
             # A run of this workflow that passed this tree, for a pull request
-            # from this repository: a fork's run could upload any marker
-            for id in $(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=passed-tree-$tree&per_page=100" \
+            # from this repository: a fork's run could upload any marker. An
+            # API call that fails runs the tests
+            for id in $(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/artifacts?name=passed-tree-$tree&per_page=100" \
                 --jq '.artifacts[] | select(.expired | not) | select(.workflow_run.head_repository_id == .workflow_run.repository_id) | .workflow_run.id'); do
-              run_of=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id" --jq '[.path, .event, .conclusion] | join(" ")')
+              run_of=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id" --jq '[.path, .event, .conclusion] | join(" ")' || true)
               if [ "$run_of" = ".github/workflows/cicd.yml pull_request success" ]; then
                 run=false
                 echo "Run $id passed this tree"
@@ -136,9 +138,11 @@ jobs:
   # The production build, which the tests do not deploy, and the test build on
   # the Mock IC. It saves the built libraries for the next run: it builds all
   # of them.
+  # Also on every push to main: main's caches are the ones every pull request
+  # can restore, and this job saves the toolchain and the libraries
   native:
     needs: changes
-    if: needs.changes.outputs.run-tests == 'true'
+    if: needs.changes.outputs.run-tests == 'true' || github.event_name == 'push'
     runs-on: ubuntu-22.04
     timeout-minutes: 30
     steps:
@@ -263,7 +267,11 @@ jobs:
           name: passed-tree-${{ needs.changes.outputs.tree }}
           path: passed-tree
           if-no-files-found: error
-          retention-days: 30
+          # a re-run of this job
+          overwrite: true
+          # A pull request merged later is tested again on main: a result
+          # also depends on the runner, the releases and what was downloaded
+          retention-days: 7
 
   # Slow: it builds the whole toolchain image. Pull requests get the builds in
   # `build` and `native`; main gets this one, and a manual run when asked for.
