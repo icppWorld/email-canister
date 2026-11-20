@@ -589,9 +589,10 @@ export function Inbox({
   // note says what failed after it.
   const judge = async (uids: bigint[], to: 'spam' | 'inbox') => {
     const spam = to === 'spam'
-    // Read before the move takes the messages off the list
+    // Read before the move takes the messages off the list, whose copy of a
+    // message is newer than the reader's
     const senders = new Map(
-      [...items, ...(selected ? [selected] : [])].map((m) => [
+      [...(selected ? [selected] : []), ...items].map((m) => [
         m.uid,
         kept(m.sender_address),
       ])
