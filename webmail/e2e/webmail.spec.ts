@@ -3530,12 +3530,11 @@ test('a block refused after Spam shows why, and its Undo still brings the messag
   await expect(messageRow(page, 'Refused gannet')).toHaveCount(0)
   await toastButton(page, 'Block sender')
   // The refusal, after the agent's own retries, with the move's Undo
-  await expect(note.getByRole('button', { name: 'Undo' })).toBeVisible({
-    timeout: 60_000,
-  })
   await expect(note).toHaveText(
-    /Blocking gannet@sender\.example failed: [\s\S]*The message is in Spam\./
+    /Blocking gannet@sender\.example failed: [\s\S]*The message is in Spam\./,
+    { timeout: 60_000 }
   )
+  await expect(note.getByRole('button', { name: 'Undo' })).toBeVisible()
   await expect(note.getByRole('button', { name: 'Block sender' })).toHaveCount(
     0
   )
