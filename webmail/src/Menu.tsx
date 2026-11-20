@@ -14,7 +14,8 @@ export function Menu({
   children: ReactNode
 }) {
   const ref = useRef<HTMLDetailsElement>(null)
-  const [open, setOpen] = useState(false)
+  // The window's width when it opened
+  const openWidth = useRef(0)
   // The list opens toward the middle of the screen, so it stays on it
   const [fromLeft, setFromLeft] = useState(false)
 
@@ -25,21 +26,23 @@ export function Menu({
     if (refocus) menu.querySelector('summary')?.focus()
   }
 
-  // Listened for only while it is open
+  // Listened for from the start, so that an Escape or a click right after it
+  // opens finds them; they do nothing while it is closed
   useEffect(() => {
-    if (!open) return
+    const isOpen = () => !!ref.current?.open
     const outside = (e: PointerEvent) => {
-      if (!ref.current?.contains(e.target as Node)) close()
+      if (isOpen() && !ref.current?.contains(e.target as Node)) close()
     }
     const escape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') close(true)
+      if (isOpen() && e.key === 'Escape') close(true)
     }
     // A click in the message's frame reaches the page only as a blur
-    const away = () => close()
+    const away = () => {
+      if (isOpen()) close()
+    }
     // A phone's keyboard and toolbar change only the height
-    const width = window.innerWidth
     const resized = () => {
-      if (window.innerWidth !== width) close()
+      if (isOpen() && window.innerWidth !== openWidth.current) close()
     }
     document.addEventListener('pointerdown', outside)
     document.addEventListener('keydown', escape)
@@ -51,13 +54,12 @@ export function Menu({
       window.removeEventListener('blur', away)
       window.removeEventListener('resize', resized)
     }
-  }, [open])
+  }, [])
 
   return (
     <details
       className="menu"
       ref={ref}
-      onToggle={(e) => setOpen(e.currentTarget.open)}
       onBlur={(e) => {
         // Focus that moved to the page's body is left to the click handlers
         const to = e.relatedTarget as Node | null
@@ -70,6 +72,7 @@ export function Menu({
         onClick={(e) => {
           // Measured before it opens, so its first frame is on screen
           const { left, right } = e.currentTarget.getBoundingClientRect()
+          openWidth.current = window.innerWidth
           setFromLeft(left + right < window.innerWidth)
         }}
       >
