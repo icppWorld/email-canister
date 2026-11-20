@@ -9,7 +9,7 @@ SHELL := /bin/bash
 TEST_IDENTITY ?= email-canister-test
 LIBRARIES := sqlite3 libetpan charsets
 
-.PHONY: build-all build-libraries build build-test build-relay-stub library-stamps \
+.PHONY: build-all build-test-all build-libraries build build-test build-relay-stub library-stamps \
 	test test-python test-native test-domain test-canister test-e2e test-bridge check-neutral webmail
 
 # The libraries are built again only when the toolchain or their inputs
@@ -21,11 +21,15 @@ with_libraries = hash="$$($(call inputs_hash,$(2),$(4)))"; \
 	if [ "$$(cat $(1)/built 2>/dev/null)" = "$$hash" ]; then to=mine-no-lib; else to=all; rm -f $(1)/built; fi; \
 	$(3) --to-compile $$to && echo "$$hash" > $(1)/built
 
-# Everything, including the libraries and the toolchain's own when they changed
+# The test build, with the libraries and the toolchain's own when they
+# changed. icpp.toml and icpp-test.toml share the libraries.
 LIBRARY_INPUTS := icpp.toml icpp-test.toml vendor shims src/store/sqlite_vfs.c
-build-all:
-	$(call with_libraries,build-library,$(LIBRARY_INPUTS),icpp build-wasm)
-	icpp build-wasm --to-compile mine-no-lib --config icpp-test.toml
+build-test-all:
+	$(call with_libraries,build-library,$(LIBRARY_INPUTS),icpp build-wasm --config icpp-test.toml)
+
+# Everything. The test build first: a build of everything empties build/.
+build-all: build-test-all
+	icpp build-wasm --to-compile mine-no-lib
 
 build-libraries:
 	rm -f build-library/built
@@ -79,8 +83,10 @@ test-domain:
 	node --test test/domain/*.test.mjs
 
 # Needs a local replica: icp network start -d
+#   make test-canister [CANISTER_TESTS="<pytest paths and options>"]
+CANISTER_TESTS ?= test/canister
 test-canister:
-	pytest --network=local --identity=$(TEST_IDENTITY) --durations=20 test/canister
+	pytest --network=local --identity=$(TEST_IDENTITY) --durations=20 $(CANISTER_TESTS)
 
 test-e2e:
 	TEST_IDENTITY=$(TEST_IDENTITY) bash webmail/e2e/setup.sh
