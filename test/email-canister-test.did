@@ -95,6 +95,8 @@ type Summary = record {
     preview : text;
     raw_bytes : nat64;
     folder : nat64;
+    // The From address alone, or empty while the message is not parsed
+    sender_address : text;
 };
 type ListRequest = record { cursor : opt nat64; limit : nat64 };
 type FolderRequest = record { folder : nat64; cursor : opt nat64; limit : nat64 };

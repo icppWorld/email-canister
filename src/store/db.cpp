@@ -228,6 +228,19 @@ CREATE TABLE blocked(
   at_ns INTEGER NOT NULL
 ) WITHOUT ROWID;
 )sql",
+    // Version 3: each message's From address, so the list can block its
+    // sender. Mail parsed before has it in its sender text, "Name <address>"
+    // or the address alone: the address is what follows the last "<". The
+    // inner rtrim keeps the text up to that "<", as it strips every other
+    // character from the end.
+    R"sql(
+ALTER TABLE messages ADD COLUMN sender_address TEXT NOT NULL DEFAULT '';
+UPDATE messages SET sender_address = CASE
+  WHEN sender LIKE '%<%>'
+    THEN rtrim(substr(sender, length(rtrim(sender, replace(sender, '<', ''))) + 1), '>')
+  ELSE sender
+END WHERE sender != '';
+)sql",
 };
 
 struct OpenMailbox {

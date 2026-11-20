@@ -81,6 +81,19 @@ def test__an_upgrade_from_the_last_release_keeps_the_mail(
     assert "error" not in add_mailbox("alice", principal_of(USER_A)).lower()
     for n, bird in enumerate(("puffin", "gannet", "shag")):
         assert re.search(OK, deliver(f"Kept {bird}", f"<kept{n}@sender.example>"))
+    # The From header in the other forms its sender text takes
+    for subject, from_header in [
+        ("Kept kittiwake", "kittiwake@birds.example"),
+        ("Kept fulmar", '\\"Fulmars <Ltd>\\" <fulmar@birds.example>'),
+    ]:
+        assert re.search(
+            OK,
+            deliver(
+                subject,
+                f"<{subject.split()[1]}@birds.example>",
+                from_header=from_header,
+            ),
+        )
     wait_until_drained()
     # The release's own interface: one uid, no folder
     listed = call(
@@ -88,7 +101,7 @@ def test__an_upgrade_from_the_last_release_keeps_the_mail(
     )
     first = min(uids(listed))
     call("mail_set_flags", f'("alice", {first} : nat64, 1 : nat64, 0 : nat64)', USER_A)
-    assert unread(USER_A, "alice") == 2
+    assert unread(USER_A, "alice") == 4
 
     # This build: the pump takes alice's file to its schema, meanwhile her
     # calls answer busy
@@ -96,18 +109,25 @@ def test__an_upgrade_from_the_last_release_keeps_the_mail(
     wait_until(lambda: not busy(), "alice's upgrade")
     inbox = page(USER_A)
     assert all(f"Kept {bird}" in inbox for bird in ("puffin", "gannet", "shag"))
-    assert unread(USER_A, "alice") == 2
+    assert unread(USER_A, "alice") == 4
+    # Each message's From address, from the sender text the release kept
+    assert inbox.count('sender_address = "sender@sender.example"') == 3
+    assert 'sender_address = "kittiwake@birds.example"' in inbox
+    assert 'sender_address = "fulmar@birds.example"' in inbox
     assert uids(found(USER_A, "gannet"))
     assert 'result = "ok"' in call("admin_check", '("alice", null)')
 
     # The new folders and blocking work on the upgraded file
     shag = uids(found(USER_A, "shag"))[0]
     mail("mail_move", "alice", f"(vec {{ {shag} : nat64 }}, 1 : nat64)", USER_A)
-    assert unread(USER_A, "alice") == 1
+    assert unread(USER_A, "alice") == 3
     assert "Kept shag" in page(USER_A, folder=1)
     mail("mail_block", "alice", '("sender@sender.example")', USER_A)
     assert re.search(OK, deliver("Blocked skua", "<skua@sender.example>"))
     wait_until_drained()
-    assert "Blocked skua" in page(USER_A, folder=2)
-    assert unread(USER_A, "alice") == 1
+    spam = page(USER_A, folder=2)
+    assert "Blocked skua" in spam
+    # Mail this build parses gets its From address from the parser
+    assert 'sender_address = "sender@sender.example"' in spam
+    assert unread(USER_A, "alice") == 3
     assert 'result = "ok"' in call("admin_check", '("alice", null)')

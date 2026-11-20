@@ -25,7 +25,7 @@ const size_t k_max_query_words = 16;
 
 #define SUMMARY_COLUMNS                                                        \
   "uid, state, flags, modseq, received_ns, sent_at, envelope_from, subject, "  \
-  "sender, attachments, preview, raw_bytes, folder"
+  "sender, attachments, preview, raw_bytes, folder, sender_address"
 
 store::Summary read_summary(db::Stmt &row) {
   store::Summary s;
@@ -42,6 +42,7 @@ store::Summary read_summary(db::Stmt &row) {
   s.preview = row.column_text(10);
   s.raw_bytes = row.column_integer(11);
   s.folder = row.column_integer(12);
+  s.sender_address = row.column_text(13);
   return s;
 }
 
@@ -328,7 +329,7 @@ bool process(int64_t mailbox, int64_t id) {
   db::Stmt update(box.file,
                   "UPDATE messages SET state = ?, subject = ?, sender = ?, "
                   "sent_at = ?, attachments = ?, preview = ?, attempts = ?, "
-                  "last_error = '' WHERE id = ?");
+                  "last_error = '', sender_address = ? WHERE id = ?");
   db::Stmt index(
       box.file,
       "INSERT INTO fts(rowid, subject, sender, body) VALUES(?,?,?,?)");
@@ -344,7 +345,8 @@ bool process(int64_t mailbox, int64_t id) {
                 .integer(5, attachments)
                 .text(6, preview)
                 .integer(7, attempts)
-                .integer(8, id)
+                .text(8, sender_address)
+                .integer(9, id)
                 .done() &&
             index.integer(1, id)
                 .text(2, subject)
@@ -427,7 +429,7 @@ bool get_message(const Mailbox &box, int64_t uid, Summary &summary,
   if (!select || !select.integer(1, uid).row()) return false;
   summary = read_summary(select);
   db::Stmt body(box.file, "SELECT raw FROM bodies WHERE id = ?");
-  if (!body || !body.integer(1, select.column_integer(13)).row()) return false;
+  if (!body || !body.integer(1, select.column_integer(14)).row()) return false;
   const auto *bytes = static_cast<const uint8_t *>(body.column_blob(0));
   raw.assign(bytes, bytes + body.column_bytes(0));
   return true;

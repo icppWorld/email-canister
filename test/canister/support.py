@@ -127,7 +127,10 @@ def request(
     sender: str = "sender",
     date: str = "Mon, 9 Nov 2026 12:00:00 +0100",
     from_address: str = "sender@sender.example",
+    from_header: Optional[str] = None,
 ) -> str:
+    """An SmtpRequest. from_header, when given, is the whole From header's
+    value, in place of "Sender <from_address>"."""
     recipients = "; ".join(
         f'record {{ user = "{user}"; domain = "{domain}" }}' for user in to.split(",")
     )
@@ -142,7 +145,7 @@ def request(
         f'from = record {{ user = "{sender}"; domain = "sender.example" }}; '
         f"to = vec {{ {recipients} }} }}; "
         f"message = opt record {{ headers = vec {{ {id_header}"
-        f'record {{ name = "From"; value = " Sender <{from_address}>\\r\\n" }}; '
+        f'record {{ name = "From"; value = " {from_header or f"Sender <{from_address}>"}\\r\\n" }}; '
         f'record {{ name = "Date"; value = " {date}\\r\\n" }}; '
         f"{extra_headers}"
         f'record {{ name = "Subject"; value = " {subject}\\r\\n" }} }}; '

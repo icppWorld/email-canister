@@ -77,6 +77,7 @@ struct Summary {
   std::string preview;
   int64_t raw_bytes{0};
   int64_t folder{Inbox};
+  std::string sender_address; // the From address alone, once parsed
 };
 
 // One page, newest first. An absent cursor means there is nothing more.
