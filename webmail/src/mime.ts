@@ -95,12 +95,11 @@ export type PageStyle = {
 // the white page it was designed for. Styles are read as the browser parsed
 // them, so comments and escapes hide nothing. A parsed document is inert: it
 // runs no scripts and loads nothing.
-// Quote bars, a border-left as webmail services draw them, are allowed: their
-// colour is decoration, not content. The border shorthand is not: it also sets
-// border-image, which can carry an image, and it draws boxes. Thunderbird
-// marks quotes with type, cite and wrap, a webmail service puts a
-// <br clear="all"> before the signature of a reply, and data-* and xmlns
-// attributes style nothing.
+// Quote bars, like Gmail's border-left, are allowed: their colour is decoration,
+// not content. The border shorthand is not: it also sets border-image, which
+// can carry an image, and it draws boxes. Thunderbird marks quotes with type,
+// cite and wrap, Gmail puts a <br clear="all"> before the signature of a
+// reply, and data-* and xmlns attributes style nothing.
 const PLAIN_ELEMENTS = new Set([
   'html',
   'head',

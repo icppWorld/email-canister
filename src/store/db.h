@@ -105,8 +105,6 @@ sqlite3 *mailbox(int64_t id, bool any_version = false);
 
 // The schema version of the mailbox files this code reads and writes
 int64_t mailbox_version();
-// The mailbox file version that added the Trash and Spam folders
-const int64_t k_folders_version = 2;
 
 // The schema version of a database, or -1
 int64_t file_version(sqlite3 *db);

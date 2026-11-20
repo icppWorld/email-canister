@@ -17,7 +17,6 @@
     "action": { "light": "#262626", "dark": "#e6e6e6" },
     "action-hover": { "light": "#000000", "dark": "#ffffff" },
     "on-action": { "light": "#ffffff", "dark": "#161616" },
-    "action-text": { "light": "#262626", "dark": "#e6e6e6" },
     "selected": { "light": "#e6e6e6", "dark": "#333333" },
     "focus-ring": { "light": "#1a1a1a", "dark": "#ededed" },
     "danger": { "light": "#1a1a1a", "dark": "#ededed" },

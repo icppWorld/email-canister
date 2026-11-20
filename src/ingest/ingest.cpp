@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cstdint>
-#include <map>
 
 #include "allowlist.h"
 #include "api.h"
@@ -17,9 +16,6 @@
 namespace {
 
 const int64_t k_max_attempts = 3;
-// A file's failed upgrades before its mailbox is held: a canister low on
-// cycles fails every upgrade for a while
-const int64_t k_max_upgrade_failures = 3;
 const int64_t k_merge_every = 64;
 const int64_t k_merge_pages =
     2000; // about 10B instructions, measured (docs/design.md)
@@ -40,11 +36,6 @@ bool g_pumping = false;
 uint64_t g_pumping_since = 0;
 uint64_t g_pump_generation = 0; // a pump the watchdog gave up on ends quietly
 bool g_paused = false;
-// By mailbox, until its upgrade or its hold; the heap does not survive an
-// upgrade, so a new release starts counting afresh
-std::map<int64_t, int64_t> g_upgrade_failures;
-// Upgrades take turns with parses and moves
-bool g_upgrade_turn = true;
 #ifdef EMAIL_CANISTER_TEST_HOOKS
 bool g_trap_moves = false;
 #endif
@@ -100,20 +91,6 @@ bool running(IC_API &ic_api) {
   return ic_api.get_canister_status() == IC_API::CanisterStatus::Running;
 }
 
-// Holds the mailbox for `why` once its file's upgrade failed
-// k_max_upgrade_failures times, else leaves it to wait before the next try
-void upgrade_failed(int64_t mailbox, const std::string &why) {
-  int64_t &failures = g_upgrade_failures[mailbox];
-  if (++failures >= k_max_upgrade_failures &&
-      store::set_needs_repair(mailbox, store::k_upgrade_failed + why)) {
-    g_upgrade_failures.erase(mailbox);
-    return;
-  }
-  // A hold that could not be written is tried again after the wait
-  const auto now = static_cast<int64_t>(IC_API::time());
-  store::defer_pump(mailbox, now + static_cast<int64_t>(k_defer_ns));
-}
-
 void require_self(IC_API &ic_api) {
   if (ic_api.get_caller().get_text() != g_self) {
     IC_API::trap("only this canister can call this method");
@@ -130,11 +107,9 @@ IC_Async ingest_pump_async() {
     co_return;
   }
 
-  // Until its upgrade nothing uses a file, and a parse or a move leaves its
-  // mailbox alone. Upgrades take turns with the rest, so that mailboxes
-  // already upgraded keep receiving while the others wait. Parsing goes
-  // before moving, so that a message is searchable soon after its move. A
-  // mailbox whose parse cannot be claimed does not hold up the moves.
+  // A file's schema upgrade goes first: until then nothing uses the file.
+  // Parsing goes next, so that a message is searchable soon after its move.
+  // A mailbox whose parse cannot be claimed does not hold up the moves.
   int64_t mailbox = 0;
   int64_t id = 0;
   const auto now = static_cast<int64_t>(IC_API::time());
@@ -153,17 +128,12 @@ IC_Async ingest_pump_async() {
     failed = failed || found == store::Claim::Failed;
     return false;
   };
-  const auto upgrade = [&] {
-    return take(store::claim_upgrade(now, defer, mailbox), Work::Upgrade);
-  };
-  const auto receive = [&] {
-    return take(store::claim_parse(k_max_attempts, now, defer, mailbox, id),
-                Work::Parse) ||
-           take(store::claim_move(k_max_attempts, now, defer, id), Work::Move);
-  };
-  if (g_upgrade_turn ? upgrade() || receive() : receive() || upgrade())
-    g_upgrade_turn = work != Work::Upgrade;
-  else if (failed) claim = store::Claim::Failed;
+  if (!take(store::claim_upgrade(now, defer, mailbox), Work::Upgrade) &&
+      !take(store::claim_parse(k_max_attempts, now, defer, mailbox, id),
+            Work::Parse) &&
+      !take(store::claim_move(k_max_attempts, now, defer, id), Work::Move) &&
+      failed)
+    claim = store::Claim::Failed;
   if (claim == store::Claim::Claimed) {
     g_pumping = true; // the co_await commits this and the recorded attempt
     g_pumping_since = IC_API::time();
@@ -177,12 +147,13 @@ IC_Async ingest_pump_async() {
       IC_CallResult<IC_CallReply> result =
           co_await IC_Call::unbounded_wait(self, "ingest_upgrade_file")
               .with_arg(CandidTypeNat64{static_cast<uint64_t>(mailbox)});
-      // A step that traps again and again holds the mailbox for repair. A
-      // call that did not run the upgrade is tried again later.
+      // A step that traps would trap again: the mailbox waits for repair.
+      // A call that did not run the upgrade is tried again later.
       if (!result) {
         const IC_CallError &error = result.error();
         if (ran(error) && error.reject_code == IC_RejectCode::CanisterError) {
-          upgrade_failed(mailbox, error.to_string());
+          store::set_needs_repair(mailbox,
+                                  store::k_upgrade_failed + error.to_string());
         } else {
           store::defer_pump(mailbox, now + defer);
         }
@@ -278,24 +249,13 @@ void ingest_upgrade_file() {
   uint64_t mailbox = 0;
   ic_api.from_wire(CandidTypeNat64{&mailbox});
   const auto id = static_cast<int64_t>(mailbox);
-  std::string problem;
-  switch (store::upgrade_file(id, problem)) {
-  case store::Upgraded::Done:
-    g_upgrade_failures.erase(id);
+  if (store::upgrade_file(id)) {
     outbox::arm(); // the outbox leaves a file alone until its upgrade
-    break;
-  case store::Upgraded::NotDue:
-    break;
-  case store::Upgraded::Failed:
-    upgrade_failed(id, problem);
-    break;
-  case store::Upgraded::Wait: {
-    // Not a trap: the pump counts an upgrade that traps. A failed defer
-    // leaves the upgrade due, so it is tried again at once.
+  } else {
+    // Not a trap: the pump holds a mailbox whose upgrade traps. A failed
+    // defer leaves the upgrade due, so it is tried again at once.
     const auto now = static_cast<int64_t>(IC_API::time());
     store::defer_pump(id, now + static_cast<int64_t>(k_defer_ns));
-    break;
-  }
   }
   dev_record_cost(__func__);
   ic_api.to_wire();

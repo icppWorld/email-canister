@@ -13,11 +13,6 @@ on:
 permissions:
   contents: read
 
-# While the project is alpha, every release is a prerelease with "(alpha)" in
-# its name. Set this to "" once it is not.
-env:
-  STAGE: alpha
-
 # One release at a time; a second dispatch waits instead of racing the first
 concurrency:
   group: release
@@ -94,9 +89,9 @@ jobs:
         with:
           tag_name: ${{ github.event.inputs.tag }}
           target_commitish: ${{ github.sha }}
-          name: "${{ github.event.inputs.tag }}${{ env.STAGE != '' && format(' ({0})', env.STAGE) || '' }} — wasm ${{ env.WASM_SHA256 }}"
+          name: "${{ github.event.inputs.tag }} — wasm ${{ env.WASM_SHA256 }}"
           body_path: out/release-body.md
-          prerelease: ${{ env.STAGE != '' || contains(github.event.inputs.tag, 'rc') }}
+          prerelease: ${{ contains(github.event.inputs.tag, 'rc') }}
           files: |
             out/email-canister_${{ github.event.inputs.tag }}.zip
             out/email-canister.wasm

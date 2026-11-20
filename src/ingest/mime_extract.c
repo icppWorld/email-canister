@@ -116,13 +116,6 @@ static char *format_sender(const struct mailimf_mailbox *mailbox) {
   return out;
 }
 
-static char *copy_text(const char *text) {
-  const size_t size = strlen(text) + 1;
-  char *out = malloc(size);
-  if (out != NULL) memcpy(out, text, size);
-  return out;
-}
-
 static int64_t days_from_civil(int64_t y, int m, int d) {
   y -= m <= 2;
   int64_t era = (y >= 0 ? y : y - 399) / 400;
@@ -164,11 +157,7 @@ static void read_fields(const struct mailimf_fields *fields, MimeSummary *out) {
           field->fld_data.fld_from->frm_mb_list;
       if (out->sender == NULL && list != NULL &&
           !clist_isempty(list->mb_list)) {
-        const struct mailimf_mailbox *first =
-            clist_content(clist_begin(list->mb_list));
-        out->sender = format_sender(first);
-        out->sender_address =
-            first->mb_addr_spec ? copy_text(first->mb_addr_spec) : NULL;
+        out->sender = format_sender(clist_content(clist_begin(list->mb_list)));
       }
       break;
     }
@@ -316,7 +305,6 @@ int mime_extract(const char *data, size_t length, MimeSummary *out) {
 void mime_summary_free(MimeSummary *summary) {
   free(summary->subject);
   free(summary->sender);
-  free(summary->sender_address);
   free(summary->text);
   memset(summary, 0, sizeof *summary);
 }

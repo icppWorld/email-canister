@@ -25,7 +25,7 @@ struct Entry {
   int64_t quota_bytes{0};
   int64_t used_bytes{0};
   int64_t message_count{0};
-  int64_t unseen{0}; // unread messages in the Inbox
+  int64_t unseen{0}; // messages without the seen flag
   int64_t members{0};
   int64_t uidvalidity{0};
   bool purging{false};
@@ -80,8 +80,6 @@ std::map<int64_t, std::vector<Member>> all_members();
 
 // A name or a header holds none of these
 bool has_control_character(const std::string &s);
-// One address, without a display name or angle brackets
-bool valid_address(const std::string &address);
 
 // The name an admin gave a principal; an empty name removes it. Returns why
 // it was refused, or an empty string.
@@ -118,10 +116,9 @@ std::string unusable(const Entry &entry);
 // The retry time of a mailbox held for repair, which keeps every pump away
 const int64_t k_held_ns = INT64_MAX;
 // A mailbox whose file waits for its schema upgrade, where `version` is the
-// parameter that holds the current version. A vacant row has no file. A file
-// newer than this release waits for the release that knows its version.
+// parameter that holds the current version. A vacant row has no file.
 #define WAITS_FOR_UPGRADE(version)                                             \
-  "(schema < " version " AND vacant = 0 AND purging = 0)"
+  "(schema != " version " AND vacant = 0 AND purging = 0)"
 
 // Opens a mailbox's file for a pump: Claimed with the file, or Again when it
 // cannot be opened, after which every pump leaves the mailbox alone until
@@ -138,17 +135,10 @@ Claim claim_upgrade(int64_t now_ns, int64_t defer_ns, int64_t &id);
 // Whether any mailbox's file waits for a schema upgrade, or the registry
 // cannot tell
 bool upgrade_pending();
-// What an upgrade of a mailbox's file came to
-enum class Upgraded {
-  Done,   // upgraded, or held: the file is ahead of its registry
-  NotDue, // purged, held, deferred, or upgraded meanwhile
-  Wait,   // the file cannot be opened or written now
-  Failed  // a step failed, and the file is as it was
-};
-// Takes the mailbox's file to the current schema version. A failed step
-// describes itself in `problem`; the caller decides whether that holds the
-// mailbox.
-Upgraded upgrade_file(int64_t id, std::string &problem);
+// Takes the mailbox's file to the current schema version. Returns false when
+// that has to wait: the file cannot be opened or written now. A file newer
+// than this code, or a step that fails, holds the mailbox for repair.
+bool upgrade_file(int64_t id);
 // Holds the mailbox for repair, for `why`, or with an empty `why` releases it.
 // Nothing may use the file meanwhile, and the pumps keep away: its
 // retry_after_ns is k_held_ns.

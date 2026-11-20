@@ -1,6 +1,5 @@
 // The owner's view of a mailbox (see owner.h)
 
-#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -14,7 +13,7 @@
 namespace {
 
 const uint64_t k_max_page = 100;
-const size_t k_max_batch = 200; // messages deleted, moved or flagged at once
+const size_t k_max_delete = 200;
 
 CandidTypeNat64 nat64(int64_t value) {
   return CandidTypeNat64{static_cast<uint64_t>(value)};
@@ -34,8 +33,6 @@ CandidType summary_value(const store::Summary &s) {
   r.append("attachments", nat64(s.attachments));
   r.append("preview", CandidTypeText{s.preview});
   r.append("raw_bytes", nat64(s.raw_bytes));
-  r.append("folder", nat64(s.folder));
-  r.append("sender_address", CandidTypeText{s.sender_address});
   return r;
 }
 
@@ -54,23 +51,6 @@ void reply_page(IC_API &ic_api, const store::Page &page) {
 int64_t page_limit(uint64_t limit) {
   return static_cast<int64_t>(limit == 0 || limit > k_max_page ? k_max_page
                                                                : limit);
-}
-
-int64_t to_folder(uint64_t folder) {
-  if (folder > static_cast<uint64_t>(store::k_last_folder))
-    IC_API::trap("no such folder");
-  return static_cast<int64_t>(folder);
-}
-
-void require_batch(const std::vector<uint64_t> &uids) {
-  if (uids.size() > k_max_batch) IC_API::trap("too many messages at once");
-}
-
-// The address in lower case, as SQLite's lower() makes it; traps when it is
-// not one
-std::string address_arg(const std::string &address) {
-  if (!store::valid_address(address)) IC_API::trap("not an email address");
-  return lower(address);
 }
 
 std::optional<int64_t> to_cursor(const std::optional<uint64_t> &cursor) {
@@ -125,17 +105,14 @@ void mail_me() {
 
 void mail_list() {
   IC_API ic_api(CanisterQuery{std::string(__func__)}, false);
-  uint64_t folder = 0;
   std::optional<uint64_t> cursor;
   uint64_t limit = 0;
   CandidTypeRecord in;
-  in.append("folder", CandidTypeNat64{&folder});
   in.append("cursor", CandidTypeOptNat64{&cursor});
   in.append("limit", CandidTypeNat64{&limit});
   const store::Mailbox box = require_file(read_mailbox(ic_api, {in}));
   reply_page(ic_api,
-             store::list_messages(box, to_folder(folder), to_cursor(cursor),
-                                  page_limit(limit)));
+             store::list_messages(box, to_cursor(cursor), page_limit(limit)));
 }
 
 void mail_get() {
@@ -162,122 +139,50 @@ void mail_get() {
 void mail_search() {
   IC_API ic_api(CanisterQuery{std::string(__func__)}, false);
   std::string query;
-  uint64_t folder = 0;
   std::optional<uint64_t> cursor;
   uint64_t limit = 0;
   CandidTypeRecord in;
   in.append("query", CandidTypeText{&query});
-  in.append("folder", CandidTypeNat64{&folder});
   in.append("cursor", CandidTypeOptNat64{&cursor});
   in.append("limit", CandidTypeNat64{&limit});
   const store::Mailbox box = require_file(read_mailbox(ic_api, {in}));
-  reply_page(ic_api, store::search(box, to_folder(folder), query,
-                                   to_cursor(cursor), page_limit(limit)));
+  reply_page(ic_api,
+             store::search(box, query, to_cursor(cursor), page_limit(limit)));
 }
 
-// Sets the flags in `set` and clears those in `clear` on each message; a uid
-// that does not exist is skipped. Setting the seen flag records that the
-// caller opened the message, so a reader sets it on every open.
+// Sets the flags in `set` and clears those in `clear`. Setting the seen flag
+// records that the caller opened the message, so a reader sets it on every
+// open.
 void mail_set_flags() {
   IC_API ic_api(CanisterUpdate{std::string(__func__)}, false);
-  std::vector<uint64_t> uids;
+  uint64_t uid = 0;
   uint64_t set = 0;
   uint64_t clear = 0;
   const store::Mailbox box = require_writable_file(
-      read_mailbox(ic_api, {CandidTypeVecNat64{&uids}, CandidTypeNat64{&set},
+      read_mailbox(ic_api, {CandidTypeNat64{&uid}, CandidTypeNat64{&set},
                             CandidTypeNat64{&clear}}));
-  require_batch(uids);
   if ((set | clear) & ~static_cast<uint64_t>(store::Seen | store::Flagged)) {
     IC_API::trap("unknown flag");
   }
   // Which one would win is not obvious, and a seen mark records who opened it
   if (set & clear) IC_API::trap("a flag both set and cleared");
-  if (!store::set_flags(box, uids, static_cast<int64_t>(set),
-                        static_cast<int64_t>(clear),
+  if (!store::set_flags(box, static_cast<int64_t>(uid),
+                        static_cast<int64_t>(set), static_cast<int64_t>(clear),
                         ic_api.get_caller().get_text(),
                         static_cast<int64_t>(IC_API::time()))) {
-    IC_API::trap("the change failed");
+    IC_API::trap("no such message");
   }
   ic_api.to_wire();
 }
 
-// Deletes the messages that are still in the folder, and returns how many.
-// Deletion is permanent.
+// Returns how many messages were deleted. Deletion is permanent.
 void mail_delete() {
   IC_API ic_api(CanisterUpdate{std::string(__func__)}, false);
   std::vector<uint64_t> uids;
-  uint64_t folder = 0;
-  const store::Mailbox box = require_writable_file(read_mailbox(
-      ic_api, {CandidTypeVecNat64{&uids}, CandidTypeNat64{&folder}}));
-  require_batch(uids);
-  const int64_t deleted = store::delete_messages(box, uids, to_folder(folder));
+  const store::Mailbox box =
+      require_writable_file(read_mailbox(ic_api, {CandidTypeVecNat64{&uids}}));
+  if (uids.size() > k_max_delete) IC_API::trap("too many messages at once");
+  const int64_t deleted = store::delete_messages(box, uids);
   if (deleted < 0) IC_API::trap("the delete failed");
   ic_api.to_wire(nat64(deleted));
-}
-
-// Moves messages between the Inbox, Trash and Spam, and returns how many
-// moved; a uid that does not exist is skipped. Mail stays in Trash and Spam
-// for 30 days.
-void mail_move() {
-  IC_API ic_api(CanisterUpdate{std::string(__func__)}, false);
-  std::vector<uint64_t> uids;
-  uint64_t folder = 0;
-  const store::Mailbox box = require_writable_file(read_mailbox(
-      ic_api, {CandidTypeVecNat64{&uids}, CandidTypeNat64{&folder}}));
-  require_batch(uids);
-  const int64_t moved = store::move_messages(
-      box, uids, to_folder(folder), static_cast<int64_t>(IC_API::time()));
-  if (moved < 0) IC_API::trap("the move failed");
-  ic_api.to_wire(nat64(moved));
-}
-
-// New mail from the address, as envelope sender or From, goes to Spam, for
-// every member of the mailbox. Mail already received stays where it is.
-void mail_block() {
-  IC_API ic_api(CanisterUpdate{std::string(__func__)}, false);
-  std::string address;
-  const store::Mailbox box =
-      require_writable_file(read_mailbox(ic_api, {CandidTypeText{&address}}));
-  const store::Block done =
-      store::block(box, address_arg(address), ic_api.get_caller().get_text(),
-                   static_cast<int64_t>(IC_API::time()));
-  if (done == store::Block::Full)
-    IC_API::trap("the mailbox blocks " + std::to_string(store::k_max_blocked) +
-                 " addresses already: unblock one first");
-  if (done == store::Block::Failed) IC_API::trap("the block failed");
-  ic_api.to_wire();
-}
-
-void mail_unblock() {
-  IC_API ic_api(CanisterUpdate{std::string(__func__)}, false);
-  std::string address;
-  const store::Mailbox box =
-      require_writable_file(read_mailbox(ic_api, {CandidTypeText{&address}}));
-  if (!store::unblock(box, address_arg(address)))
-    IC_API::trap("the unblock failed");
-  ic_api.to_wire();
-}
-
-void mail_blocked() {
-  IC_API ic_api(CanisterQuery{std::string(__func__)}, false);
-  const store::Mailbox box = require_file(read_mailbox(ic_api, {}));
-  const auto value = [](const store::Blocked &b,
-                        const std::optional<std::string> &name) {
-    CandidTypeRecord r;
-    r.append("address", CandidTypeText{b.address});
-    r.append("blocked_by", CandidTypePrincipal{b.blocked_by});
-    r.append("name", CandidTypeOptText{name});
-    r.append("at_ns", nat64(b.at_ns));
-    return r;
-  };
-  std::vector<CandidType> items;
-  // Few members block, so each name is looked up once
-  std::map<std::string, std::optional<std::string>> names;
-  for (const store::Blocked &b : store::blocked(box)) {
-    auto name = names.find(b.blocked_by);
-    if (name == names.end())
-      name = names.emplace(b.blocked_by, store::name_of(b.blocked_by)).first;
-    items.push_back(value(b, name->second));
-  }
-  ic_api.to_wire(CandidTypeVecOf(value(store::Blocked{}, std::nullopt), items));
 }

@@ -4,30 +4,15 @@ import type { Identity } from '@icp-sdk/core/agent'
 import { createBackend, errorText, mailbox, type Backend, type Me } from './api'
 import { createSession, type Session } from './auth'
 import { AdminPanel } from './AdminPanel'
-import { BlockedSenders } from './Blocked'
 import { formatBytes } from './format'
 import { Icon } from './Icon'
 import { Compose, type Draft } from './Compose'
-import { useDownload } from './Download'
-import { Inbox, isFolder } from './Inbox'
-import { Menu } from './Menu'
+import { Download } from './Download'
+import { Inbox } from './Inbox'
 import { Sent } from './Sent'
 import { deployment } from './settings'
-import { ToastBar, type Toast, type ToastAction } from './Toast'
 
-// A mailbox's folders and pages, each with an address of its own
-const PAGES = {
-  inbox: 'Inbox',
-  sent: 'Sent',
-  spam: 'Spam',
-  trash: 'Trash',
-  blocked: 'Blocked senders',
-} as const
-type Page = keyof typeof PAGES
-type View = Page | 'admin'
-
-// How long a note about what was just done stays shown
-const TOAST_MS = 8_000
+type View = 'inbox' | 'sent' | 'admin'
 
 // How often the person's mailboxes, with their unread counts and usage, are
 // fetched again
@@ -35,14 +20,13 @@ const MAILBOXES_REFRESH_MS = 30_000
 
 // The mailbox and folder the address names, as #team or #team/sent, so a view
 // can be bookmarked or shared
-function route(): { local: string | null; view: Page } {
+function route(): { local: string | null; view: 'inbox' | 'sent' } {
   const [local, folder] = window.location.hash.slice(1).split('/')
-  const view = Object.hasOwn(PAGES, folder ?? '') ? (folder as Page) : 'inbox'
-  return { local: local || null, view }
+  return { local: local || null, view: folder === 'sent' ? 'sent' : 'inbox' }
 }
 
-function hashOf(local: string, view: Page): string {
-  return `#${local}${view === 'inbox' ? '' : `/${view}`}`
+function hashOf(local: string, view: 'inbox' | 'sent'): string {
+  return `#${local}${view === 'sent' ? '/sent' : ''}`
 }
 
 // The mailbox a person last chose, kept in this browser only
@@ -150,14 +134,9 @@ export function App() {
   const [selected, setSelected] = useState<string | null>(() => route().local)
   const [view, setView] = useState<View>(() => route().view)
   const [refresh, setRefresh] = useState(0)
-  // Sends made here, for the Sent list alone: other folders keep their pages
-  const [sends, setSends] = useState(0)
   const [refreshing, setRefreshing] = useState(false)
   const onLoaded = useCallback(() => setRefreshing(false), [])
   const [draft, setDraft] = useState<Draft | null>(null)
-  const [toast, setToast] = useState<Toast | null>(null)
-  // Under the pointer or holding the focus, the note stays until let go
-  const [toastHeld, setToastHeld] = useState(false)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
   // Whose sign-in ended while the page was open, so only they get the draft back
@@ -186,7 +165,6 @@ export function App() {
     [backend, local]
   )
   const current = box !== null ? view : 'admin'
-  const download = useDownload(box, shown?.address ?? '', backend)
 
   // The draft open now, for a send that ends later
   const sendingDraft = useRef(draft)
@@ -206,7 +184,6 @@ export function App() {
     latestBackend.current = null
     setBackend(null)
     setMe(null)
-    setToast(null)
   }
 
   const reloadMailboxes = useCallback(async () => {
@@ -229,34 +206,6 @@ export function App() {
     const timer = window.setInterval(reloadMailboxes, MAILBOXES_REFRESH_MS)
     return () => window.clearInterval(timer)
   }, [backend, reloadMailboxes])
-
-  // A note that closed while held, as by its own button, lets go. One that
-  // takes the place of a held note stays held.
-  useEffect(() => {
-    if (!toast) setToastHeld(false)
-  }, [toast])
-  useEffect(() => {
-    if (!toast || toastHeld) return
-    const timer = window.setTimeout(() => setToast(null), TOAST_MS)
-    return () => window.clearTimeout(timer)
-  }, [toast, toastHeld])
-
-  // A toast's action, such as Undo
-  const runToast = async (action: ToastAction) => {
-    setToast(null)
-    // Its end belongs to the session it began in
-    const session = latestBackend.current
-    try {
-      await action.run()
-    } catch (e) {
-      if (session === latestBackend.current) setToast({ text: errorText(e) })
-    } finally {
-      if (action.reload && session === latestBackend.current) {
-        setRefresh((count) => count + 1)
-        reloadMailboxes()
-      }
-    }
-  }
 
   // The address follows the mailbox and folder shown
   useEffect(() => {
@@ -397,18 +346,9 @@ export function App() {
           <Icon name="refresh" />
         </button>
       </div>
-      {(Object.keys(PAGES) as Page[])
-        // Blocked senders is in the menu
-        .filter((page) => page !== 'inbox' && page !== 'blocked')
-        .map((page) => (
-          <button
-            key={page}
-            aria-current={current === page}
-            onClick={() => setView(page)}
-          >
-            {PAGES[page]}
-          </button>
-        ))}
+      <button aria-current={current === 'sent'} onClick={() => setView('sent')}>
+        Sent
+      </button>
     </div>
   )
 
@@ -422,31 +362,6 @@ export function App() {
         <span className="address" data-testid="address">
           {shown?.address ?? 'Administrator'}
         </span>
-        {(box || me.is_controller) && (
-          <Menu label="More">
-            {box && (
-              <>
-                <button
-                  aria-current={current === 'blocked'}
-                  onClick={() => setView('blocked')}
-                >
-                  Blocked senders
-                </button>
-                <button onClick={download.start} disabled={download.busy}>
-                  Download a copy
-                </button>
-              </>
-            )}
-            {me.is_controller && (
-              <button
-                aria-current={current === 'admin'}
-                onClick={() => setView('admin')}
-              >
-                Admin
-              </button>
-            )}
-          </Menu>
-        )}
         <button onClick={signOut}>Sign out</button>
       </header>
       <nav aria-label="Folders">
@@ -500,23 +415,21 @@ export function App() {
             </ul>
           </>
         )}
+        {me.is_controller && (
+          <button
+            aria-current={current === 'admin'}
+            onClick={() => setView('admin')}
+          >
+            Admin
+          </button>
+        )}
         {shown && (
           <p className="usage" data-testid="usage">
             {formatBytes(shown.used_bytes)} of {formatBytes(shown.quota_bytes)}{' '}
             used
           </p>
         )}
-        {/* Started from the menu, and shown here while it runs */}
-        {download.progress && (
-          <p className="download-status" role="status">
-            {download.progress}
-          </p>
-        )}
-        {download.error && (
-          <p className="error" role="alert">
-            {download.error}
-          </p>
-        )}
+        {box && shown && <Download backend={box} address={shown.address} />}
         {!box && (
           <p className="hint" data-testid="principal">
             {principal}
@@ -524,25 +437,18 @@ export function App() {
         )}
       </nav>
       <div className="content">
-        {isFolder(current) && box && shown && (
+        {current === 'inbox' && box && shown && (
           <Inbox
-            key={`${shown.local}/${current}`}
+            key={shown.local}
             backend={box}
             principal={principal}
             shared={shared}
-            folder={current}
-            notify={(note) => {
-              // A move that ends after a new sign-in is not this session's
-              if (latestBackend.current === backend) setToast(note)
-            }}
             onReply={(reply) =>
               setDraft((open) => open ?? { ...reply, from: shown.local })
             }
             onCounts={reloadMailboxes}
             refresh={refresh}
             onLoaded={onLoaded}
-            onBlocked={() => setView('blocked')}
-            domain={shown.address.slice(shown.address.indexOf('@') + 1)}
           />
         )}
         {current === 'sent' && box && (
@@ -551,15 +457,6 @@ export function App() {
             backend={box}
             principal={principal}
             shared={shared}
-            refresh={sends}
-          />
-        )}
-        {current === 'blocked' && box && (
-          <BlockedSenders
-            key={local}
-            backend={box}
-            principal={principal}
-            refresh={refresh}
           />
         )}
         {current === 'admin' && <AdminPanel backend={backend} />}
@@ -575,31 +472,13 @@ export function App() {
             // A send that ends after this draft was closed, as over a new
             // sign-in, leaves the draft open now alone
             if (sendingDraft.current?.clientId !== clientId) return
-            // The folder shown stays, and a Sent list shown reloads; the note
-            // leads to the Sent folder it was sent from
+            // Its Sent folder shows it, in the mailbox it was sent from
+            setSelected(from)
             setDraft(null)
-            setSends((count) => count + 1)
-            setToast({
-              text: 'Message sent',
-              actions: [
-                {
-                  label: 'View in Sent',
-                  run: () => {
-                    setSelected(from)
-                    setView('sent')
-                  },
-                },
-              ],
-            })
+            setView('sent')
           }}
         />
       )}
-      <ToastBar
-        toast={toast}
-        onAction={runToast}
-        onClose={() => setToast(null)}
-        onHold={setToastHeld}
-      />
     </div>
   )
 }

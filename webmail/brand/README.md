@@ -60,8 +60,7 @@ The folder holds `brand.json` and the files it names. Every field is optional:
 - `name` is the browser tab's title. `label` is shown beside the logo and on the sign-in page, and defaults to `name`.
 - `logo.dark` is shown when the system is in dark mode. Logos can be SVG, PNG, JPG or WebP. Icons can be SVG, PNG or ICO, and fonts WOFF2 or WOFF.
 - `tokens` names a token file in the design-system format: `color.themes` with `light` and `dark`, and lists of `{ "name", "value" }` under `color`, `radius`, `shadow` and so on. A value is a string or `{ "light", "dark" }`.
-- `roles` sets the webmail's own variables. A value is a literal, `{ "light", "dark" }`, or `"{token}"` for a token in the tokens file. Roles left out keep their greyscale default, except `action-text`, which follows the brand's `action`. `default.json` lists every role.
-- `action` fills the primary button. `action-text` colours links in mail and the bar beside the selected folder; set it when `action` is too dark or too light to read on `surface-raised` and `selected`.
+- `roles` sets the webmail's own variables. A value is a literal, `{ "light", "dark" }`, or `"{token}"` for a token in the tokens file. Roles left out keep their greyscale default. `default.json` lists every role.
 - `families` values are CSS font lists, or `"{name}"` for a family listed under `type.families` in the tokens file.
 - A brand with no dark theme stays light in dark mode.
 - `package` points, relative to `brand.json`, at a brand folder shared with other apps. The files, the tokens file and `manifest.json` are then read from that folder, and the deployment's folder holds only `brand.json`.
@@ -82,4 +81,4 @@ If the folder holds a `manifest.json`, the script checks every file the brand us
 
 Role values must be colours, lengths or shadows: letters, digits, `#%.,()/*_+-` and whitespace, with round brackets closed and no CSS comment. Font families must be a comma-separated list of names, in quotes or bare; a bare name is CSS identifiers, so quote one with a digit-led or dotted word, such as `"Source Sans 3"`. The script refuses anything else, because these values go into style sheets.
 
-The script also warns when a text colour and its background fall below 4.5:1 contrast, or a control outline or focus ring below 3:1. Plain mail is shown as `ink` on `surface-raised`, with links in `action-text`, so those pairs are checked as well. The selected folder is marked with a bar in `action-text` on `selected`, which needs 3:1.
+The script also warns when a text colour and its background fall below 4.5:1 contrast, or a control outline or focus ring below 3:1. Plain mail is shown as `ink` on `surface-raised`, with links in `action`, so those pairs are checked as well.

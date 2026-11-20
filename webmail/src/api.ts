@@ -43,18 +43,9 @@ export type Summary = {
   attachments: bigint
   preview: string
   raw_bytes: bigint
-  folder: bigint
-  sender_address: string // the From address alone, or empty while not parsed
 }
 
 export type Page = { items: Summary[]; cursor: [] | [bigint] }
-// New mail from the address goes to Spam
-export type Blocked = {
-  address: string
-  blocked_by: Principal
-  name: [] | [string]
-  at_ns: bigint
-}
 // Who opened a message, and when each first did
 export type SeenBy = {
   principal: Principal
@@ -141,10 +132,6 @@ export const MESSAGE_QUEUED = 0n
 export const MESSAGE_QUARANTINED = 2n
 export const FLAG_SEEN = 1n
 export const FLAG_FLAGGED = 2n
-// Trash and Spam keep mail for 30 days
-export const FOLDER_INBOX = 0n
-export const FOLDER_TRASH = 1n
-export const FOLDER_SPAM = 2n
 
 export const OUTBOX_QUEUED = 0n
 export const OUTBOX_SENDING = 1n
@@ -158,28 +145,18 @@ export const MAX_ENCODED_BYTES = 1_950_000
 // The methods of one mailbox, as the backend has them after the mailbox's
 // local part
 export type Mailbox = {
-  mail_list(request: {
-    folder: bigint
-    cursor: [] | [bigint]
-    limit: bigint
-  }): Promise<Page>
+  mail_list(request: { cursor: [] | [bigint]; limit: bigint }): Promise<Page>
   mail_get(uid: bigint): Promise<FullMessage>
   mail_search(request: {
     query: string
-    folder: bigint
     cursor: [] | [bigint]
     limit: bigint
   }): Promise<Page>
-  // Sets the flags in `set` and clears those in `clear` on each message, so
-  // that members who change different flags at once keep both. Setting the
-  // seen flag records that the caller opened the message.
-  mail_set_flags(uids: bigint[], set: bigint, clear: bigint): Promise<void>
-  // For good, the messages still in `folder`: mail_move puts mail in Trash
-  mail_delete(uids: bigint[], folder: bigint): Promise<bigint>
-  mail_move(uids: bigint[], folder: bigint): Promise<bigint>
-  mail_block(address: string): Promise<void>
-  mail_unblock(address: string): Promise<void>
-  mail_blocked(): Promise<Blocked[]>
+  // Sets the flags in `set` and clears those in `clear`, so that members who
+  // change different flags at once keep both. Setting the seen flag records
+  // that the caller opened the message.
+  mail_set_flags(uid: bigint, set: bigint, clear: bigint): Promise<void>
+  mail_delete(uids: bigint[]): Promise<bigint>
   mail_send(request: SendRequest): Promise<bigint>
   mail_outbox_list(request: {
     cursor: [] | [bigint]

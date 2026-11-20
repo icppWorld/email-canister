@@ -75,11 +75,6 @@ textarea {
   padding: 6px 8px;
   width: 100%;
 }
-input[type='checkbox'] {
-  width: auto;
-  min-height: 0;
-  padding: 0;
-}
 :focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
@@ -213,12 +208,6 @@ nav button.compose {
 nav button[aria-current='true'] {
   background: var(--selected);
 }
-/* The folder shown: more than the hover's tint, bold with a bar in the
-   brand's colour */
-.folders button[aria-current='true'] {
-  font-weight: 700;
-  box-shadow: inset 3px 0 0 var(--action-text);
-}
 .folder {
   display: flex;
   gap: 4px;
@@ -297,22 +286,18 @@ nav button.mailbox {
   cursor: pointer;
   color: var(--ink-muted);
 }
-/* Lists that open below their button */
-.seen-by ul,
-.menu-items {
+.seen-by ul {
   position: absolute;
   right: 0;
-  z-index: 2;
+  z-index: 1;
+  min-width: 240px;
   margin: 4px 0 0;
+  padding: 8px 12px;
+  list-style: none;
   background: var(--surface-raised);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-dialog);
-}
-.seen-by ul {
-  min-width: 240px;
-  padding: 8px 12px;
-  list-style: none;
 }
 .seen-by li {
   display: flex;
@@ -320,55 +305,9 @@ nav button.mailbox {
   gap: 12px;
   padding: 2px 0;
 }
-/* A ⋮ button with a short list of actions below it */
-.menu {
-  position: relative;
-}
-.menu summary {
-  list-style: none;
-  display: grid;
-  place-items: center;
-  min-width: var(--control-height);
-  min-height: var(--control-height);
-  border-radius: var(--radius-md);
-  cursor: pointer;
-}
-/* Filled dots, which a thin outline leaves too faint */
-.menu summary .icon {
-  fill: currentColor;
-}
-.menu summary::-webkit-details-marker {
-  display: none;
-}
-.menu summary:hover,
-.menu[open] summary {
-  background: var(--surface-muted);
-}
-.menu-items {
-  display: flex;
-  flex-direction: column;
-  min-width: 180px;
-  padding: 4px;
-}
-.menu-items.from-left {
-  right: auto;
-  left: 0;
-}
-.menu-items button {
-  border: 0;
-  text-align: left;
-  white-space: nowrap;
-}
-.menu-items button[aria-current='true'] {
-  font-weight: 600;
-}
-/* The reader's star sits among its buttons */
-.usage,
-.download-status {
+.usage {
   color: var(--ink-muted);
   font-size: 12px;
-}
-.usage {
   margin-top: auto;
 }
 .content {
@@ -390,113 +329,35 @@ nav button.mailbox {
   margin: 0;
   padding: 0;
 }
-.list-head {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
-}
 .search {
   display: flex;
   gap: 6px;
   padding: 8px;
-}
-.bulk {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  padding: 0 8px 8px 12px;
-}
-/* A button that is only its icon or text */
-button.bare {
-  min-height: 0;
-  min-width: 0;
-  border: 0;
-  background: transparent;
+  position: sticky;
+  top: 0;
+  background: var(--surface);
 }
 .list > .hint,
 .list > .error {
   padding: 12px;
 }
-li.message-row {
-  position: relative;
-  display: flex;
-  align-items: flex-start;
-  border-bottom: 1px solid var(--border);
-}
-li.message-row:hover {
-  background: var(--surface-muted);
-}
-li.message-row:has(.pick:checked),
-li.message-row:has(.message[aria-current='true']) {
-  background: var(--selected);
-}
-.pick-area {
-  flex: none;
-  display: flex;
-  padding: 12px 0 0 12px;
-  cursor: pointer;
-}
-.pick {
-  margin: 0;
-}
-button.star {
-  flex: none;
-  padding: 4px 8px;
-  color: var(--ink-muted);
-}
-/* In a list row, level with the sender's line */
-.message-row button.star {
-  padding: 9px 2px 0 6px;
-}
-button.star.on {
-  color: var(--warning);
-}
-button.star.on .icon {
-  fill: currentColor;
-}
 .message {
-  flex: 1;
-  min-width: 0;
   display: grid;
   grid-template-columns: 1fr auto;
   gap: 1px 8px;
+  width: 100%;
   min-height: 0;
   text-align: left;
   font-weight: 400;
   border: 0;
+  border-bottom: 1px solid var(--border);
   border-radius: 0;
   background: transparent;
-  padding: 9px 12px 9px 4px;
+  padding: 9px 12px;
 }
-.message:hover:not(:disabled) {
-  background: transparent;
-}
-/* Shown on hover only, where there is a pointer: the boxes and the reader
-   do the same on any screen */
-.row-actions {
-  display: none;
-  position: absolute;
-  top: 6px;
-  right: 8px;
-  gap: 2px;
-  padding: 2px;
-  background: var(--surface-raised);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-}
-@media (hover: hover) {
-  li.message-row:hover .row-actions {
-    display: flex;
-  }
-  li.message-row:hover .date {
-    visibility: hidden;
-  }
-}
-.row-actions button {
-  padding: 4px;
+.message[aria-current='true'],
+.message[aria-current='true']:hover:not(:disabled) {
+  background: var(--selected);
 }
 .message span {
   overflow: hidden;
@@ -528,50 +389,6 @@ button.star.on .icon {
 .more {
   margin: 10px;
 }
-.toast {
-  position: fixed;
-  left: 16px;
-  bottom: 16px;
-  z-index: 20;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  max-width: calc(100vw - 32px);
-  padding: 6px 6px 6px 14px;
-  background: var(--ink);
-  color: var(--surface);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-dialog);
-}
-/* Empty, it stays in the accessibility tree, so a new note is announced */
-.toast:empty {
-  padding: 0;
-  opacity: 0;
-  pointer-events: none;
-}
-.toast button {
-  padding: 4px 8px;
-  color: inherit;
-  font-weight: 600;
-}
-.toast button:hover:not(:disabled) {
-  background: transparent;
-  text-decoration: underline;
-}
-.blocked {
-  height: 100%;
-  overflow-y: auto;
-  padding: 12px 18px;
-}
-.blocked li {
-  padding: 8px 0;
-  border-bottom: 1px solid var(--border);
-}
-.blocked-address {
-  flex: 1 1 200px;
-  font-weight: 500;
-  overflow-wrap: anywhere;
-}
 .reader {
   display: flex;
   flex-direction: column;
@@ -592,10 +409,6 @@ button.star.on .icon {
 }
 .toolbar h2 {
   margin: 0 auto 0 0;
-}
-/* A narrow reader puts its actions on more than one line */
-.reader > .toolbar {
-  flex-wrap: wrap;
 }
 .headers {
   display: grid;
@@ -658,7 +471,7 @@ button.star.on .icon {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-dialog);
-  z-index: 3; /* above the menus and the reader's popups */
+  z-index: 2; /* above the reader's popups */
 }
 .dialog label {
   display: grid;
@@ -669,68 +482,6 @@ button.star.on .icon {
 .dialog textarea {
   min-height: 200px;
   resize: vertical;
-}
-/* The compose window: a title bar over its fields, at the bottom right */
-.dialog.compose {
-  padding: 0;
-  gap: 0;
-  overflow: hidden;
-}
-.compose-bar {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 6px 8px 6px 14px;
-  background: var(--surface-muted);
-  border-bottom: 1px solid var(--border);
-}
-.compose-bar h2 {
-  flex: 1;
-  min-width: 0;
-  margin: 0;
-  font-size: 1rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.compose-bar button {
-  padding: 6px;
-}
-.compose-body {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 14px;
-}
-.compose-body[hidden] {
-  display: none;
-}
-.dialog.compose.minimised {
-  width: min(300px, calc(100vw - 32px));
-}
-.dialog.compose.minimised .compose-bar {
-  border-bottom: 0;
-}
-.dialog.compose.full {
-  inset: 4vh 4vw;
-  width: auto;
-  max-height: none;
-}
-.dialog.compose.full textarea {
-  flex: 1;
-}
-.backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 3;
-  background: rgb(0 0 0 / 40%);
-}
-/* Back to the list: only at phone width, where the reader takes its place */
-button.back {
-  display: none;
 }
 .admin {
   padding: 16px 20px;
@@ -819,60 +570,19 @@ th {
   }
   .folders {
     flex-direction: row;
-    flex-wrap: wrap;
     padding: 0;
-  }
-  /* Tabs: the bar goes under the selected one */
-  .folders button[aria-current='true'] {
-    box-shadow: inset 0 -3px 0 var(--action-text);
   }
   .usage,
   nav .hint {
     display: none;
   }
-  /* The list, or the open message in its place */
   .split {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(0, 1fr);
-  }
-  .split.reading > .list,
-  .split:not(.reading) > .reader {
-    display: none;
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(200px, 40%) 1fr;
   }
   .list {
     border-right: 0;
-  }
-  button.back {
-    display: inline-flex;
-    align-items: center;
-  }
-  /* A little tighter, so a message's actions fit on one line */
-  .reader > .toolbar {
-    gap: 6px;
-  }
-  .reader > .toolbar button:not(.bare) {
-    padding-inline: 10px;
-  }
-  /* Compose fills the screen, or minimised, a bar along its foot */
-  .dialog.compose,
-  .dialog.compose.full {
-    inset: 0;
-    width: auto;
-    max-height: none;
-    border: 0;
-    border-radius: 0;
-  }
-  .dialog.compose.minimised {
-    top: auto;
-    width: auto;
-  }
-  /* Room below the page for the minimised bar, so it covers nothing */
-  body:has(.dialog.compose.minimised) .app {
-    padding-bottom: 48px;
-  }
-  .full-toggle,
-  .backdrop {
-    display: none;
+    border-bottom: 1px solid var(--border);
   }
   /* Each row of the Admin panel's tables is a block of its own */
   .admin table,
@@ -941,42 +651,4 @@ button.small {
 }
 .admin button {
   white-space: nowrap;
-}
-
-/* Touch: the row's box and star have targets of at least 44px, drawn as before */
-@media (pointer: coarse) {
-  .pick-area {
-    min-width: 44px;
-    min-height: 44px;
-    justify-content: center;
-    padding: 12px 0 0;
-  }
-  button.star {
-    display: inline-flex;
-    justify-content: center;
-    align-items: center;
-    min-width: 44px;
-    min-height: 44px;
-    padding: 0;
-  }
-  .message-row button.star {
-    align-items: flex-start;
-    padding: 9px 0 0;
-  }
-  .menu summary {
-    min-width: 44px;
-    min-height: 44px;
-  }
-  /* The compose window's buttons too; the bar keeps its height for them */
-  .compose-bar {
-    padding-top: 0;
-    padding-bottom: 0;
-  }
-  .compose-bar button {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 44px;
-    min-height: 44px;
-  }
 }

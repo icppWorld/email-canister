@@ -14,7 +14,6 @@ extern "C" {
 typedef struct MimeSummary {
   char *subject;
   char *sender;            // "Name <address>", or just the address
-  char *sender_address;    // the address alone, as the From header has it
   char *text;              // the readable body, capped for the search index
   int64_t sent_at_seconds; // the Date header, 0 if absent or malformed
   uint32_t attachments;
