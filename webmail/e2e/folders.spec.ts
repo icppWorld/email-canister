@@ -382,6 +382,8 @@ test('a search under way when a message opens still shows what it found', async 
   browser,
 }) => {
   deliver({ subject: 'Patient bittern', body: '<p>A bittern.</p>' })
+  // Mail the search does not find, so its result differs from the Inbox
+  deliver({ subject: 'Unsought plover', body: '<p>A plover.</p>' })
   await waitDrained()
   const { context, page } = await signedIn(browser, USER_A)
   const first = page.locator('button.message').first()

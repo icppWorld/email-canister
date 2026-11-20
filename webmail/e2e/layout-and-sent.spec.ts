@@ -668,10 +668,21 @@ test('a failed reload of Sent is tried again after Older mail goes through', asy
 test('a Sent list slower to answer than its refresh still shows a send', async ({
   browser,
 }) => {
+  // A Sent list that shows something before its replies slow down
+  const alice = await asAlice()
+  await alice.mail_send('alice', {
+    client_id: crypto.randomUUID(),
+    to: ['friend@example.org'],
+    cc: [],
+    bcc: [],
+    subject: 'Prompt grebe',
+    html_body: '<p>A grebe.</p>',
+    attachments: [],
+  })
   const { context, page } = await signedIn(browser, USER_A)
   await folder(page, 'Sent')
   const sent = page.getByRole('region', { name: 'Sent mail' })
-  await expect(sent.getByRole('listitem').first()).toBeVisible()
+  await expect(sent).toContainText('Prompt grebe')
   // Each reply 6 seconds late, past the 5-second refresh
   await page.route('**/api/*/canister/*/*', async (route) => {
     if (!callsTo(route.request(), 'mail_outbox_list')) return route.fallback()
