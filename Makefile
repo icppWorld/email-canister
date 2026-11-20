@@ -12,13 +12,12 @@ LIBRARIES := sqlite3 libetpan charsets
 .PHONY: build-all build-libraries build build-test build-relay-stub library-stamps \
 	test test-python test-native test-domain test-canister test-e2e test-bridge check-neutral webmail
 
-# The libraries are built again only when the toolchain, the host's clang
-# (which builds the native ones) or their inputs changed: a stamp in the
-# library folder holds a hash of these. A stamp, not file times, because a
-# checkout or a restored cache resets those.
-#   $(call with_libraries,<library folder>,<inputs>,<icpp build command>)
-inputs_hash = { icpp --version; clang --version 2>/dev/null; find $(1) -type f ! -name '._*' -print0 | LC_ALL=C sort -z | xargs -0 shasum -a 256; } | shasum -a 256 | cut -c1-64
-with_libraries = hash="$$($(call inputs_hash,$(2)))"; \
+# The libraries are built again only when the toolchain or their inputs
+# changed: a stamp in the library folder holds a hash of both. A stamp, not
+# file times, because a checkout or a restored cache resets those.
+#   $(call with_libraries,<library folder>,<inputs>,<icpp build command>[,<more versions>])
+inputs_hash = { icpp --version; $(2) find $(1) -type f ! -name '._*' -print0 | LC_ALL=C sort -z | xargs -0 shasum -a 256; } | shasum -a 256 | cut -c1-64
+with_libraries = hash="$$($(call inputs_hash,$(2),$(4)))"; \
 	if [ "$$(cat $(1)/built 2>/dev/null)" = "$$hash" ]; then to=mine-no-lib; else to=all; rm -f $(1)/built; fi; \
 	$(3) --to-compile $$to && echo "$$hash" > $(1)/built
 
@@ -40,13 +39,15 @@ build:
 build-test:
 	icpp build-wasm --to-compile mine-no-lib --config icpp-test.toml
 
+RELAY_STUB_LIBRARY_INPUTS := icpp.toml
 build-relay-stub:
-	cd test/relay_stub || exit 1; $(call with_libraries,build-library,icpp.toml,icpp build-wasm)
+	cd test/relay_stub || exit 1; $(call with_libraries,build-library,$(RELAY_STUB_LIBRARY_INPUTS),icpp build-wasm)
 
 # The stamps the library folders should hold, which CI keys its cache on
 library-stamps:
-	@$(call inputs_hash,$(LIBRARY_INPUTS)); $(call inputs_hash,$(NATIVE_LIBRARY_INPUTS)); \
-	  cd test/relay_stub || exit 1; $(call inputs_hash,icpp.toml)
+	@$(call inputs_hash,$(LIBRARY_INPUTS)); \
+	  $(call inputs_hash,$(NATIVE_LIBRARY_INPUTS),$(NATIVE_COMPILER)); \
+	  cd test/relay_stub || exit 1; $(call inputs_hash,$(RELAY_STUB_LIBRARY_INPUTS))
 
 # The generic build, configured into build/webmail, which icp.yaml deploys:
 #   make webmail BACKEND=<backend id> [NETWORK=local|ic] [ORIGIN=https://…] [BRAND=<folder>]
@@ -65,10 +66,12 @@ test-python:
 
 # Needs no replica: the test build on icpp's Mock IC, as a native executable
 # (native/), in seconds. The libraries are built natively once, and again
-# when the toolchain or their inputs change, as for build-all.
+# when the toolchain, the host's clang that builds them, or their inputs
+# change, as for build-all.
 NATIVE_LIBRARY_INPUTS := icpp-test.toml vendor shims src/store/sqlite_vfs.c
+NATIVE_COMPILER := clang --version;
 test-native:
-	$(call with_libraries,build-library-native,$(NATIVE_LIBRARY_INPUTS),icpp build-native --config icpp-test.toml)
+	$(call with_libraries,build-library-native,$(NATIVE_LIBRARY_INPUTS),icpp build-native --config icpp-test.toml,$(NATIVE_COMPILER))
 	./build-native/mockic.exe
 
 # Needs no replica: domain/domain.mjs, with Node's own test runner

@@ -21,7 +21,7 @@ c_compile_flags = ["-D_WASI_EMULATED_MMAN"]
 # Everyday build, of our own code only:
 #   icpp build-wasm --to-compile mine-no-lib [--config icpp-test.toml]
 # After a change in vendor/, shims/ or src/store/sqlite_vfs.c:
-#   icpp build-library <lib_name>
+#   make build-all
 #
 # icpp.toml and icpp-test.toml share build-library/, so these tables must stay
 # identical. test/test_build_config.py checks that.
