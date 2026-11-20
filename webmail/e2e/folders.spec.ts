@@ -821,7 +821,9 @@ test('an unblock refused in Undo still brings the message back, and says why', a
   )
   await undo(page)
   // The refusal, after the agent's own retries, and the message is back
-  await expect(note).toHaveText(/\S/, { timeout: 60_000 })
+  await expect(note).toHaveText(/^(?!Message moved to Spam)\S/, {
+    timeout: 60_000,
+  })
   await expect(messageRow(page, 'Stuck sanderling')).toHaveCount(1)
   await page.unrouteAll()
   const alice = await asAlice()
