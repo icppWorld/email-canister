@@ -33,7 +33,7 @@ import {
   search,
   send,
   signedIn,
-  spamAndBlock,
+  spamFromReader,
   uidOf,
   USER_A,
   USER_C,
@@ -330,9 +330,9 @@ test('an unblock made while the list reloads stays', async ({ browser }) => {
   const { context, page } = await signedIn(browser, USER_A)
   await openMail(page, 'wren')
   await expect(page.getByTestId('subject')).toHaveText('Rash wren')
-  await spamAndBlock(page)
+  await spamFromReader(page)
   const note = page.getByTestId('toast')
-  await expect(note).toHaveText(/Blocked rash@sender.example/)
+  await expect(note).toHaveText(/rash@sender.example blocked/)
   await menuItem(page, 'More', 'Blocked senders')
   const blocked = page.getByRole('region', { name: 'Blocked senders' })
   await expect(blocked).toContainText('brisk@sender.example')

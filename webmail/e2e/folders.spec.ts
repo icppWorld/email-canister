@@ -29,9 +29,7 @@ import {
   search,
   signedIn,
   signInAgain,
-  spamAndBlock,
   spamFromReader,
-  toastButton,
   uidOf,
   undo,
   USER_A,
@@ -180,9 +178,9 @@ test('a blocked sender goes to Spam, until Not spam and Unblock bring the mail b
   // Blocked with no dialog to confirm
   const dialogs = answer(page)
   await openMail(page, 'Pushy grebe')
-  await spamAndBlock(page)
-  await expect(page.getByTestId('toast')).toHaveText(
-    /Blocked pushy@sender.example/
+  await spamFromReader(page)
+  await expect(page.getByTestId('toast').locator('span')).toHaveText(
+    'Message moved to Spam and pushy@sender.example blocked'
   )
   await expect(messageRow(page, 'Pushy grebe')).toHaveCount(0)
 
@@ -522,7 +520,7 @@ test('Empty Trash refused part way leaves only what is still there', async ({
 })
 
 // The block comes after the move, from its note: a refused move blocks no one
-test('a move to Spam that is refused offers no block', async ({ browser }) => {
+test('a move to Spam that is refused blocks no one', async ({ browser }) => {
   deliver({
     subject: 'Stubborn dipper',
     body: '<p>A dipper.</p>',
@@ -537,15 +535,11 @@ test('a move to Spam that is refused offers no block', async ({ browser }) => {
       ? route.abort('failed')
       : route.fallback()
   )
-  // Loaded, so a move that went through would offer the block
   await spamFromReader(page)
   // The refusal shows beside the message, after the agent's own retries
   await expect(reader(page).getByRole('alert')).toBeVisible({
     timeout: 60_000,
   })
-  await expect(
-    page.getByTestId('toast').getByRole('button', { name: 'Block sender' })
-  ).toHaveCount(0)
   await expect(messageRow(page, 'Stubborn dipper')).toHaveCount(1)
   const alice = await asAlice()
   expect(await blockedAddresses(alice)).not.toContain('dipper@sender.example')
@@ -662,7 +656,7 @@ test('Undo of a block shows on the Blocked senders page', async ({
   await context.close()
 })
 
-test("Spam in the reader offers to block the sender, and that block's Undo brings the message back", async ({
+test('Spam in the reader blocks the sender, and Undo unblocks them and brings the message back', async ({
   browser,
 }) => {
   deliver({
@@ -675,7 +669,7 @@ test("Spam in the reader offers to block the sender, and that block's Undo bring
   const dialogs = answer(page)
   await openMail(page, 'kittiwake')
   await expect(page.getByTestId('subject')).toHaveText('Brash kittiwake')
-  // The Inbox's reader blocks no one by itself: the note offers it
+  // The Inbox's reader has Spam, which blocks, and no Block sender of its own
   await openMenu(page, 'More actions')
   await expect(
     menu(page, 'More actions').getByRole('button', { name: 'Mark unread' })
@@ -686,15 +680,14 @@ test("Spam in the reader offers to block the sender, and that block's Undo bring
   await page.keyboard.press('Escape')
   await spamFromReader(page)
   const note = page.getByTestId('toast')
-  await expect(note).toHaveText(/Message moved to Spam/)
+  // One click: moved and blocked
+  await expect(note.locator('span')).toHaveText(
+    'Message moved to Spam and brash@sender.example blocked'
+  )
   await expect(messageRow(page, 'Brash kittiwake')).toHaveCount(0)
-  await expect(note.getByRole('button', { name: 'Undo' })).toBeVisible()
-  await expect(
-    note.getByRole('button', { name: 'Block sender' })
-  ).toHaveAttribute('title', 'Block brash@sender.example')
-
-  await note.getByRole('button', { name: 'Block sender' }).click()
-  await expect(note).toHaveText(/Blocked brash@sender.example/)
+  await expect(note.getByRole('button', { name: 'Block sender' })).toHaveCount(
+    0
+  )
   await menuItem(page, 'More', 'Blocked senders')
   const blocked = page.getByRole('region', { name: 'Blocked senders' })
   await expect(blocked).toContainText('brash@sender.example')
@@ -710,7 +703,90 @@ test("Spam in the reader offers to block the sender, and that block's Undo bring
   await context.close()
 })
 
-test('a block refused after Spam shows why, and its Undo still brings the message back', async ({
+test('ticked messages to Spam block each sender once, and Undo lifts only those blocks', async ({
+  browser,
+}) => {
+  for (const n of [1, 2]) {
+    deliver({
+      subject: `Flocking starling ${n}`,
+      body: '<p>A starling.</p>',
+      from: 'Flock <Flock@sender.example>',
+    })
+  }
+  deliver({
+    subject: 'Flocking rook',
+    body: '<p>A rook.</p>',
+    from: 'Rook <rook@sender.example>',
+  })
+  await waitDrained()
+  // Blocked before the move: its Undo leaves this block alone
+  const alice = await asAlice()
+  await alice.mail_block('alice', 'rook@sender.example')
+  const { context, page } = await signedIn(browser, USER_A)
+  await search(page, 'Flocking')
+  await expect(messageRow(page, 'Flocking')).toHaveCount(3)
+  const bulk = page.getByRole('toolbar', { name: 'Selected messages' })
+  await bulk.getByLabel('Select all').check()
+  await bulk.getByRole('button', { name: 'Spam', exact: true }).click()
+  const note = page.getByTestId('toast')
+  await expect(note.locator('span')).toHaveText(
+    '3 messages moved to Spam and flock@sender.example blocked'
+  )
+  await expect(messageRow(page, 'Flocking')).toHaveCount(0)
+  expect(await blockedAddresses(alice)).toEqual(
+    expect.arrayContaining(['flock@sender.example', 'rook@sender.example'])
+  )
+
+  await undo(page)
+  await expect(messageRow(page, 'Flocking')).toHaveCount(3)
+  const after = await blockedAddresses(alice)
+  expect(after).not.toContain('flock@sender.example')
+  expect(after).toContain('rook@sender.example')
+  await alice.mail_unblock('alice', 'rook@sender.example')
+  await context.close()
+})
+
+test('Not spam unblocks the sender, its Undo blocks them again, and Spam links to Blocked senders', async ({
+  browser,
+}) => {
+  const alice = await asAlice()
+  await alice.mail_block('alice', 'stray@sender.example')
+  deliver({
+    subject: 'Stray plover',
+    body: '<p>A plover.</p>',
+    from: 'Stray <Stray@sender.example>',
+  })
+  await waitDrained()
+  const { context, page } = await signedIn(browser, USER_A)
+  await folder(page, 'Spam')
+  // The Spam folder's list leads to the senders it blocks
+  await page
+    .getByRole('region', { name: 'Messages' })
+    .getByRole('button', { name: 'Blocked senders', exact: true })
+    .click()
+  const blocked = page.getByRole('region', { name: 'Blocked senders' })
+  await expect(blocked).toContainText('stray@sender.example')
+
+  await folder(page, 'Spam')
+  await messageRow(page, 'Stray plover').click()
+  await expect(page.getByTestId('subject')).toHaveText('Stray plover')
+  await page.getByRole('button', { name: 'Not spam', exact: true }).click()
+  const note = page.getByTestId('toast')
+  await expect(note.locator('span')).toHaveText(
+    'Message moved to the Inbox and stray@sender.example unblocked'
+  )
+  await expect(messageRow(page, 'Stray plover')).toHaveCount(0)
+  expect(await blockedAddresses(alice)).not.toContain('stray@sender.example')
+
+  // Undo blocks the address again, and the message is back in Spam
+  await undo(page)
+  await expect(messageRow(page, 'Stray plover')).toHaveCount(1)
+  expect(await blockedAddresses(alice)).toContain('stray@sender.example')
+  await alice.mail_unblock('alice', 'stray@sender.example')
+  await context.close()
+})
+
+test('a block refused after the move to Spam shows why, and Undo still brings the message back', async ({
   browser,
 }) => {
   deliver({
@@ -731,19 +807,15 @@ test('a block refused after Spam shows why, and its Undo still brings the messag
       : route.fallback()
   )
   await spamFromReader(page)
+  // The reader closed with the move: the note says what failed, after the
+  // agent's own retries, with the move's Undo
   const note = page.getByTestId('toast')
-  await expect(note).toHaveText(/Message moved to Spam/)
-  await expect(messageRow(page, 'Refused gannet')).toHaveCount(0)
-  await toastButton(page, 'Block sender')
-  // The refusal, after the agent's own retries, with the move's Undo
   await expect(note).toHaveText(
-    /Blocking gannet@sender\.example failed: [\s\S]*The message is in Spam\./,
+    /^Message moved to Spam\. Blocking gannet@sender\.example failed: /,
     { timeout: 60_000 }
   )
+  await expect(messageRow(page, 'Refused gannet')).toHaveCount(0)
   await expect(note.getByRole('button', { name: 'Undo' })).toBeVisible()
-  await expect(note.getByRole('button', { name: 'Block sender' })).toHaveCount(
-    0
-  )
   // Undo first, before the note's time runs out
   await undo(page)
   await expect(messageRow(page, 'Refused gannet')).toHaveCount(1)

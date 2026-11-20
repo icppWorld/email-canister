@@ -541,6 +541,7 @@ export function App() {
             onCounts={reloadMailboxes}
             refresh={refresh}
             onLoaded={onLoaded}
+            onBlocked={() => setView('blocked')}
           />
         )}
         {current === 'sent' && box && (

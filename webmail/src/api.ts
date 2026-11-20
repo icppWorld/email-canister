@@ -44,6 +44,7 @@ export type Summary = {
   preview: string
   raw_bytes: bigint
   folder: bigint
+  sender_address: string // the From address alone, or empty while not parsed
 }
 
 export type Page = { items: Summary[]; cursor: [] | [bigint] }

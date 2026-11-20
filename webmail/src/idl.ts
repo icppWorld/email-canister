@@ -34,6 +34,7 @@ export const idlFactory: IDL.InterfaceFactory = ({ IDL }) => {
     preview: IDL.Text,
     raw_bytes: IDL.Nat64,
     folder: IDL.Nat64,
+    sender_address: IDL.Text,
   })
   const ListRequest = IDL.Record({
     cursor: IDL.Opt(IDL.Nat64),
