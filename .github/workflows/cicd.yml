@@ -107,9 +107,16 @@ jobs:
         run: make build-all build-relay-stub
       - name: native tests
         run: make test-native
-      # Also when a native test failed: the libraries were built before it ran
-      - name: save the built libraries
+      # Also when a native test failed, but only once every library folder holds
+      # the stamp the Makefile writes after a build of it succeeds
+      - name: the built libraries are complete
+        id: libraries-built
         if: ${{ !cancelled() && steps.toolchain.outputs.libraries-hit != 'true' }}
+        run: |
+          for dir in $LIBRARY_DIRS; do test -f "$dir/built" || exit 0; done
+          echo "complete=true" >>"$GITHUB_OUTPUT"
+      - name: save the built libraries
+        if: ${{ !cancelled() && steps.libraries-built.outputs.complete == 'true' }}
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ${{ env.LIBRARY_DIRS }}
