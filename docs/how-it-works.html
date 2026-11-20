@@ -146,10 +146,10 @@ footer { color: var(--muted); font-size: 13.5px; border-top: 1px solid var(--lin
 
   <main>
     <header>
-      <span class="eyebrow">email-canister · v0.3.0</span>
+      <span class="eyebrow">email-canister · v0.4.0</span>
       <h1>How email-canister works</h1>
       <p class="lede">email-canister is a product: a repository whose versioned releases hold the code a domain needs to run its own mail on the Internet Computer. A deployment serves one domain with two canisters you control, a C++ backend that receives, stores, indexes and sends mail, and a webmail that users sign in to with Internet Identity, plus a small domain canister for a domain registered elsewhere. The domain also needs a Caffeine app, which is not part of a release: it serves the domain's website, and sends mail through the release's bridge code added to its backend. This page explains each part, where it lives, how mail moves through them, and what you take on by relying on it.</p>
-      <div class="meta"><span>Covers release v0.3.0</span><span>Source: docs/design.md, docs/setup-guide.md, bridge/README.md, webmail/brand/README.md, scripts/make-release-zip.sh</span></div>
+      <div class="meta"><span>Covers release v0.4.0</span><span>Source: docs/design.md, docs/setup-guide.md, bridge/README.md, webmail/brand/README.md, scripts/make-release-zip.sh</span></div>
     </header>
 
     <section id="overview">
@@ -764,7 +764,7 @@ footer { color: var(--muted); font-size: 13.5px; border-top: 1px solid var(--lin
             <tr><td><span class="sev sev-high">High</span><br>Others can read the mail</td><td>Node operators can read canister memory, and the mail gateway's operator can read outbound mail. Mail is stored unencrypted.</td><td>Treat it like a hosted mail service, not end-to-end encryption. Use encrypted attachments for sensitive content. Encryption at rest is on the roadmap.</td></tr>
             <tr><td><span class="sev sev-high">High</span><br>Controllers can change the code</td><td>A controller can install a wasm that reads every mailbox, regardless of the access model, or add their own principal as a member of any mailbox.</td><td>Keep the controller list short and known. Compare the running module hash with a release using <code>check.sh</code>.</td></tr>
             <tr><td><span class="sev sev-med">Medium</span><br>The sign-in origin is permanent</td><td>Changing it gives every user a new principal, so nobody can reach their mailbox.</td><td>Fix the origin before the first user. Each user sets up Internet Identity recovery: losing the identity means losing access.</td></tr>
-            <tr><td><span class="sev sev-med">Medium</span><br>Limited spam filtering</td><td>Only the gateway's SPF and DKIM checks and allow and block rules apply, and each mailbox's blocked senders, whose mail goes to Spam. There is no content filtering.</td><td>Keep addresses off public pages where possible. Block a sender from the reader.</td></tr>
+            <tr><td><span class="sev sev-med">Medium</span><br>Limited spam filtering</td><td>Only the gateway's SPF and DKIM checks and allow and block rules apply, and each mailbox's blocked senders, whose mail goes to Spam. There is no content filtering.</td><td>Keep addresses off public pages where possible. Mark a message as Spam in the reader, and block its sender from the note that follows.</td></tr>
             <tr><td><span class="sev sev-med">Medium</span><br>The sender is not verified</td><td>Without a DMARC check, a message can show any <code>From</code> address. The webmail names the delivering domain when it differs, but cannot tell a forgery from a mail service's own bounce domain.</td><td>Confirm unexpected requests, such as payments or password changes, another way.</td></tr>
             <tr><td><span class="sev sev-med">Medium</span><br>MX records out of step with the gateway</td><td>If the gateway's hosts change and your MX records do not, mail stops arriving.</td><td><code>check.sh</code> compares your MX records with the gateway's.</td></tr>
             <tr><td><span class="sev sev-med">Medium</span><br>Domain expiry</td><td>An expired domain stops all mail, and a new owner could receive it.</td><td>Auto-renew, with a payment method that will still work.</td></tr>
@@ -778,7 +778,7 @@ footer { color: var(--muted); font-size: 13.5px; border-top: 1px solid var(--lin
     </section>
 
     <footer>
-      <p>Updated for release v0.3.0. The source of truth is the repository: <code>docs/design.md</code> for the design and its measurements, <code>docs/setup-guide.md</code> for deploying, and <code>ROADMAP.md</code> for what comes next, including aliases, mailbox states and per-mailbox rate limits.</p>
+      <p>Updated for release v0.4.0. The source of truth is the repository: <code>docs/design.md</code> for the design and its measurements, <code>docs/setup-guide.md</code> for deploying, and <code>ROADMAP.md</code> for what comes next, including aliases, mailbox states and per-mailbox rate limits.</p>
     </footer>
   </main>
 </div>
