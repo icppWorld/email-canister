@@ -56,9 +56,18 @@ jobs:
           (cd webmail && npm ci)
       - name: static checks
         run: make check-static
+      # Here and not in `tests`: they read docs and version strings too
+      - name: Python tests
+        run: make test-python
 
   tests:
     runs-on: ubuntu-22.04
+    env:
+      # The library folders the Makefile builds, cached between runs
+      LIBRARY_DIRS: |
+        build-library
+        build-library-native
+        test/relay_stub/build-library
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
@@ -70,27 +79,80 @@ jobs:
           node-version: "22"
           cache: npm
           cache-dependency-path: webmail/package-lock.json
+      # wasi-sdk and Rust with its tools, which icpp installs only when missing.
+      # They follow from the icpp-pro version alone.
+      - name: the icpp-pro version
+        id: icpp
+        run: |
+          version=$(grep -x 'icpp-pro==[^ ]*' requirements.txt)
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+      - name: restore the toolchain
+        id: toolchain
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.icpp
+          key: icpp-${{ runner.os }}-${{ steps.icpp.outputs.version }}
       - name: install the toolchain
+        env:
+          TOOLCHAIN_RESTORED: ${{ steps.toolchain.outputs.cache-hit }}
         run: |
           pip install -r requirements.txt
-          icpp install-wasi-sdk
-          icpp install-rust
+          # The toolchain reinstalls these even when they are there, so only
+          # when the cache, keyed on its version, did not bring them
+          if [ "$TOOLCHAIN_RESTORED" != true ]; then
+            icpp install-wasi-sdk
+            icpp install-rust
+          fi
           npm install -g @icp-sdk/icp-cli@${ICP_CLI_VERSION}
           (cd webmail && npm ci)
           # didc, which the native tests encode and decode Candid with
-          curl -fsSL -o /tmp/didc.tar.xz "https://github.com/dfinity/candid/releases/download/didc-v${DIDC_VERSION}/didc-x86_64-unknown-linux-gnu.tar.xz"
+          curl -fsSL --retry 3 --retry-all-errors -o /tmp/didc.tar.xz "https://github.com/dfinity/candid/releases/download/didc-v${DIDC_VERSION}/didc-x86_64-unknown-linux-gnu.tar.xz"
           echo "${DIDC_SHA256}  /tmp/didc.tar.xz" | sha256sum -c -
           tar -xJf /tmp/didc.tar.xz -C /tmp
           sudo install /tmp/didc-x86_64-unknown-linux-gnu/didc /usr/local/bin/didc
           # The tests use the runner's own Google Chrome (channel "chrome"),
           # so nothing is installed from the Ubuntu mirrors
           google-chrome --version
+      - name: save the toolchain
+        if: steps.toolchain.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.icpp
+          key: ${{ steps.toolchain.outputs.cache-primary-key }}
+      # The vendored and toolchain libraries, keyed on the stamps the Makefile
+      # checks, so a cache that is found holds what the build would make. The
+      # release and the reproducible build never use it.
+      - name: the library stamps
+        id: stamps
+        run: |
+          stamps=$(make -s library-stamps)
+          test "$(grep -cx '[0-9a-f]\{64\}' <<<"$stamps")" = 3
+          echo "hash=$(shasum -a 256 <<<"$stamps" | cut -c1-64)" >>"$GITHUB_OUTPUT"
+      - name: restore the built libraries
+        id: libraries
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ env.LIBRARY_DIRS }}
+          key: libraries-${{ runner.os }}-${{ steps.stamps.outputs.hash }}
+      # The network launcher and the wasms icp fetches, such as its sync plugin
+      - name: restore icp's downloads
+        id: icp-pkg
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.local/share/icp-cli/pkg
+          key: icp-pkg-${{ runner.os }}-${{ env.ICP_CLI_VERSION }}-${{ hashFiles('icp.yaml') }}
       - name: build
         run: make build-all build-relay-stub
-      - name: Python tests
-        run: make test-python
       - name: native tests
         run: make test-native
+      # Saved once the native libraries are built too, and even when a later
+      # test fails
+      - name: save the built libraries
+        if: steps.libraries.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ env.LIBRARY_DIRS }}
+          key: ${{ steps.libraries.outputs.cache-primary-key }}
       - name: domain canister tests
         run: make test-domain
       - name: start a local replica
@@ -102,7 +164,16 @@ jobs:
           GH_TOKEN: ${{ github.token }} # downloads a past release to upgrade from
         run: make test-canister
       - name: webmail tests
+        id: e2e
         run: make test-e2e
+      # Once the webmail tests have fetched the sync plugin, and only when they
+      # passed, so a download cut off half way is not kept
+      - name: save icp's downloads
+        if: steps.icp-pkg.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.local/share/icp-cli/pkg
+          key: ${{ steps.icp-pkg.outputs.cache-primary-key }}
 
   # The relay bridge in a Caffeine-style app on PocketIC, in its own container
   bridge:
