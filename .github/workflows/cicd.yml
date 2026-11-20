@@ -73,30 +73,17 @@ jobs:
           node-version: "22"
           cache: npm
           cache-dependency-path: webmail/package-lock.json
-      # wasi-sdk and Rust with its tools, which icpp installs only when missing
-      - name: cache the toolchain
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: ~/.icpp
-          key: icpp-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
-      # The network launcher and the wasms icp fetches, such as its sync plugin
-      - name: cache icp's downloads
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: ~/.local/share/icp-cli/pkg
-          key: icp-pkg-${{ runner.os }}-${{ env.ICP_CLI_VERSION }}-${{ hashFiles('icp.yaml') }}
-      # The vendored and toolchain libraries. The Makefile builds them again
-      # anyway when its stamp does not match, so a stale cache costs only time.
-      # The release and the reproducible build never use it.
-      - name: restore the built libraries
-        id: libraries
+      # wasi-sdk and Rust with its tools, which icpp installs only when missing.
+      # They follow from the icpp-pro version alone.
+      - name: the icpp-pro version
+        id: icpp
+        run: echo "version=$(grep '^icpp-pro==' requirements.txt)" >>"$GITHUB_OUTPUT"
+      - name: restore the toolchain
+        id: toolchain
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
-          path: |
-            build-library
-            build-library-native
-            test/relay_stub/build-library
-          key: libraries-${{ runner.os }}-${{ hashFiles('requirements.txt', 'icpp.toml', 'icpp-test.toml', 'vendor/**', 'shims/**', 'src/store/sqlite_vfs.c', 'test/relay_stub/icpp.toml') }}
+          path: ~/.icpp
+          key: icpp-${{ runner.os }}-${{ steps.icpp.outputs.version }}
       - name: install the toolchain
         run: |
           pip install -r requirements.txt
@@ -112,6 +99,34 @@ jobs:
           # The tests use the runner's own Google Chrome (channel "chrome"),
           # so nothing is installed from the Ubuntu mirrors
           google-chrome --version
+      - name: save the toolchain
+        if: steps.toolchain.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.icpp
+          key: ${{ steps.toolchain.outputs.cache-primary-key }}
+      # The vendored and toolchain libraries, keyed on the stamps the Makefile
+      # checks, so a cache that is found holds what the build would make. The
+      # release and the reproducible build never use it.
+      - name: the library stamps
+        id: stamps
+        run: echo "hash=$(make -s library-stamps | shasum -a 256 | cut -c1-64)" >>"$GITHUB_OUTPUT"
+      - name: restore the built libraries
+        id: libraries
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            build-library
+            build-library-native
+            test/relay_stub/build-library
+          key: libraries-${{ runner.os }}-${{ steps.stamps.outputs.hash }}
+      # The network launcher and the wasms icp fetches, such as its sync plugin
+      - name: restore icp's downloads
+        id: icp-pkg
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.local/share/icp-cli/pkg
+          key: icp-pkg-${{ runner.os }}-${{ env.ICP_CLI_VERSION }}-${{ hashFiles('icp.yaml') }}
       - name: build
         run: make build-all build-relay-stub
       - name: native tests
@@ -138,7 +153,15 @@ jobs:
           GH_TOKEN: ${{ github.token }} # downloads a past release to upgrade from
         run: make test-canister
       - name: webmail tests
+        id: e2e
         run: make test-e2e
+      # Once the webmail tests have fetched the sync plugin, whatever their result
+      - name: save icp's downloads
+        if: ${{ !cancelled() && steps.e2e.conclusion != 'skipped' && steps.icp-pkg.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.local/share/icp-cli/pkg
+          key: ${{ steps.icp-pkg.outputs.cache-primary-key }}
 
   # The relay bridge in a Caffeine-style app on PocketIC, in its own container
   bridge:
