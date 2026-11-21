@@ -20,7 +20,7 @@ const size_t k_open_mailboxes = 32;
 
 // The registry and the work index: what the timers, the SMTP handlers and
 // post_upgrade read without opening a mailbox file. Version 1 is the layout
-// of the first release that has a control.db, so it needs no migration yet.
+// of the first release that has a control.db; k_control_steps change it.
 const char *const k_control_schema = R"sql(
 CREATE TABLE settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 
@@ -236,6 +236,21 @@ ALTER TABLE messages ADD COLUMN sender_address TEXT NOT NULL DEFAULT ''; -- set 
 )sql",
 };
 
+// The changes to control.db after version 1: step i takes it from version
+// i + 1 to i + 2, at init and post_upgrade
+const std::vector<const char *> k_control_steps = {
+    // Version 2: the mailboxes whose expired Trash and Spam mail the ingest
+    // pump deletes
+    R"sql(
+ALTER TABLE mailboxes ADD COLUMN clean_due INTEGER NOT NULL DEFAULT 0; -- expired Trash and Spam mail may wait for the pump
+CREATE INDEX mailboxes_clean_due ON mailboxes(id) WHERE clean_due > 0;
+)sql",
+};
+
+int64_t control_version() {
+  return 1 + static_cast<int64_t>(k_control_steps.size());
+}
+
 struct OpenMailbox {
   sqlite3 *db;
   uint64_t used;   // when it was last asked for
@@ -337,8 +352,9 @@ void open() {
                  "upgrade: reinstall it, which erases its mail");
   }
   g_control = open_or_trap("control.db", k_control_cache_kib);
-  const int64_t schema = user_version(g_control);
-  if (schema > 1) IC_API::trap("control.db is from a newer release");
+  int64_t schema = user_version(g_control);
+  if (schema > control_version())
+    IC_API::trap("control.db is from a newer release");
   if (schema == 0) {
     exec_or_trap(g_control, k_control_schema);
     // Outbox keys stay unique at the bridge even if this canister is reinstalled
@@ -347,6 +363,19 @@ void open() {
     if (!prefix || !prefix.text(1, now).done()) {
       IC_API::trap("cannot store the outbox prefix");
     }
+    schema = 1;
+  }
+  if (schema < control_version()) {
+    Transaction upgrade(g_control);
+    if (!upgrade) IC_API::trap("cannot begin the upgrade of control.db");
+    for (int64_t version = schema; version < control_version(); ++version)
+      exec_or_trap(g_control,
+                   k_control_steps[static_cast<size_t>(version - 1)]);
+    const std::string set =
+        "PRAGMA user_version = " + std::to_string(control_version());
+    exec_or_trap(g_control, set.c_str());
+    if (!upgrade.commit())
+      IC_API::trap("cannot commit the upgrade of control.db");
   }
   make_dir("m");
 }
@@ -373,6 +402,11 @@ bool Transaction::commit() {
   if (m_db == nullptr || !exec(m_db, "COMMIT")) return false;
   m_db = nullptr;
   return true;
+}
+
+void Transaction::rollback() {
+  if (m_db != nullptr) exec(m_db, "ROLLBACK");
+  m_db = nullptr;
 }
 
 #ifdef EMAIL_CANISTER_TEST_HOOKS

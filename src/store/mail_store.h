@@ -112,14 +112,30 @@ std::vector<SeenBy> seen_by(const Mailbox &box, int64_t uid);
 int64_t delete_messages(const Mailbox &box, const std::vector<uint64_t> &uids,
                         int64_t folder);
 
-// Moves the messages to `folder`, and deletes some of the mail that has been
-// in Trash or Spam too long. Returns how many moved, or -1 on failure.
+// Moves the messages to `folder`, and marks the mailbox for a cleanup. Mail
+// that arrived more than 30 days ago is deleted instead of going to Spam, and
+// does not count. Returns how many moved, or -1 on failure.
 int64_t move_messages(const Mailbox &box, const std::vector<uint64_t> &uids,
                       int64_t folder, int64_t now_ns);
 
-// Deletes up to a few messages that have been in Trash or Spam too long, in
-// the caller's write. False on failure.
-bool delete_expired(const Mailbox &box, int64_t now_ns);
+// Mail in Trash is deleted 30 days after it left the Inbox, and mail in Spam
+// 30 days after it arrived, by turns of the ingest pump, each a write of its
+// own, so a message that cannot be deleted never stops delivery.
+
+// Marks the mailbox for a cleanup, after new mail, a move or a delivery
+// refused for its quota. In control.db alone. False on failure.
+bool clean_soon(int64_t mailbox);
+// Ends the mailbox's cleanups until the next mark, as after one that failed
+bool stop_cleaning(int64_t mailbox);
+// Whether any mailbox is marked, or the registry cannot tell
+bool clean_pending();
+// Claims a marked mailbox, the one after the mailbox cleaned last: Claimed,
+// or Again when its file cannot be opened, as open_for_pump does
+Claim claim_clean(int64_t now_ns, int64_t defer_ns, int64_t &mailbox);
+// Deletes up to 20 expired messages, and ends the mailbox's cleanups once
+// none is left. Waits, still marked, while a download holds the file. False
+// on failure.
+bool clean_expired(int64_t mailbox, int64_t now_ns);
 
 // Words in the query must all match, and are never read as FTS5 syntax. A page
 // can be short, even empty, with a cursor: the instruction budget ran out.

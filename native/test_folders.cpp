@@ -23,9 +23,56 @@ std::string listed(const std::string &test, int number) {
 
 std::string fox(const std::string &test) { return me_of(test, USER_A, "fox"); }
 
+const int64_t k_day_ns = 86'400'000'000'000;
+
 void later_by_days(int days) {
   ic0mock_set_time_override(IC_API::time() +
-                            static_cast<uint64_t>(days) * 86'400'000'000'000);
+                            static_cast<uint64_t>(days) *
+                                static_cast<uint64_t>(k_day_ns));
+}
+
+// Sets when the messages arrived, `days` ago: seeded mail arrived at 0, which
+// the clock, counted natively from boot, may or may not be 30 days past
+void arrived(const std::string &test, const std::string &uids, int days) {
+  const int64_t at = static_cast<int64_t>(IC_API::time()) - days * k_day_ns;
+  CALL(test, dev_file_exec,
+       "(\"fox\", \"UPDATE messages SET received_ns = " + std::to_string(at) +
+           " WHERE uid IN (" + uids + ")\")",
+       CONTROLLER);
+}
+
+std::string fox_id() {
+  return std::to_string(
+      control_integer("SELECT id FROM mailboxes WHERE local = 'fox'"));
+}
+
+bool clean_due() {
+  return control_integer(
+             "SELECT clean_due FROM mailboxes WHERE local = 'fox'") == 1;
+}
+
+// A cleanup turn of the pump, which natively no timer runs
+void clean(const std::string &test) {
+  CALL(test, ingest_clean, "(" + fox_id() + ")", SELF);
+}
+
+// Mail for fox from `user`@sender.example
+std::string mail_from(const std::string &user) {
+  return "(record { envelope = opt record { from = record { user = \"" + user +
+         "\"; domain = \"sender.example\" }; to = vec { record { user = "
+         "\"fox\"; domain = \"mail.example\" } } }; message = opt record { "
+         "headers = vec { record { name = \"Subject\"; value = \"" +
+         user +
+         "\" } }; body = blob \"hello\" }; gateway_flags = null; "
+         "message_id = opt \"gateway-1\" })";
+}
+
+// Delivers mail_from(`user`) as far as the queue, and returns its row
+std::string queue_mail(const std::string &test, const std::string &user) {
+  expect(test, CALL(test, smtp_request, mail_from(user), CONTROLLER),
+         "variant { Ok");
+  return std::to_string(control_integer(
+      "SELECT max(id) FROM queue WHERE mailbox_id = " + fox_id()));
 }
 
 } // namespace
@@ -33,6 +80,7 @@ void later_by_days(int days) {
 void test_folders(MockIC &) {
   add_mailbox("fox's mailbox", USER_A, "fox");
   CALL("seed fox's mailbox", dev_seed, "(\"fox\", 1, 4)", CONTROLLER);
+  arrived("fox's mail arrived now", "1, 2, 3, 4", 0);
   {
     const std::string test = "new mail is in the Inbox";
     const std::string inbox = listed(test, 0);
@@ -156,37 +204,123 @@ void test_folders(MockIC &) {
   }
 
   CALL("seed fox's mailbox again", dev_seed, "(\"fox\", 5, 25)", CONTROLLER);
+  TRAPS("only the canister cleans a mailbox", ingest_clean, "(1)", CONTROLLER,
+        "only this canister can call this method");
   {
-    const std::string test = "Trash empties itself after 30 days, 20 at a time";
+    const std::string test = "Trash empties itself after 30 days, 20 per turn";
     expect(test, move(test, uid_vec(5, 25), 1), "(25 : nat64)");
     expect(test, fox(test), "message_count = 28 : ");
+    check(test, clean_due(), "a move did not mark the mailbox for a cleanup");
     later_by_days(29);
+    clean(test);
+    expect(test, fox(test), "message_count = 28 : ");
+    check(test, !clean_due(), "a cleanup that found nothing kept the mark");
+    later_by_days(2);
+    // A move leaves the deleting to the pump
     expect(test, move(test, "vec {}", 1), "(0 : nat64)");
     expect(test, fox(test), "message_count = 28 : ");
-    later_by_days(2);
-    move(test, "vec {}", 1);
+    check(test, clean_due(), "a move did not mark the mailbox again");
+    clean(test);
     expect(test, fox(test), "message_count = 8 : ");
-    move(test, "vec {}", 1);
+    check(test, clean_due(), "a cleanup that found 20 ended the mark");
+    clean(test);
     expect(test, fox(test), "message_count = 3 : ");
+    check(test, !clean_due(), "the last cleanup kept the mark");
     expect(test, listed(test, 1), "items = vec {}");
     expect(test, CALL(test, admin_check, "(\"fox\", null)", CONTROLLER),
            "result = \"ok\"");
   }
   {
-    const std::string test = "a move from Spam to Trash keeps its 30 days";
-    expect(test, move(test, "vec { 1 }", 2), "(1 : nat64)");
-    later_by_days(20);
+    const std::string test = "mail past its 30 days is restored, not deleted";
+    arrived(test, "1, 2", 0);
     expect(test, move(test, "vec { 1 }", 1), "(1 : nat64)");
-    later_by_days(11);
-    move(test, "vec {}", 1);
-    expect(test, fox(test), "message_count = 2 : ");
-  }
-  {
-    const std::string test = "mail past its 30 days does not count as moved";
     expect(test, move(test, "vec { 2 }", 2), "(1 : nat64)");
     later_by_days(31);
-    expect(test, move(test, "vec { 2 }", 1), "(0 : nat64)");
-    expect(test, fox(test), "message_count = 1 : ");
+    // Restore, and Not spam, before the pump reached them
+    expect(test, move(test, "vec { 1 }", 0), "(1 : nat64)");
+    expect(test, move(test, "vec { 2 }", 0), "(1 : nat64)");
+    clean(test);
+    expect(test, fox(test), "message_count = 3 : ");
+    const std::string inbox = listed(test, 0);
+    expect(test, inbox, "uid = 1 : ");
+    expect(test, inbox, "uid = 2 : ");
+  }
+
+  CALL("seed fox's mailbox for Spam", dev_seed, "(\"fox\", 30, 4)", CONTROLLER);
+  {
+    const std::string test = "Spam's 30 days count from the mail's arrival";
+    arrived(test, "30", 25);
+    expect(test, move(test, "vec { 30 }", 2), "(1 : nat64)");
+    later_by_days(4);
+    clean(test);
+    expect(test, listed(test, 2), "uid = 30 : ");
+    later_by_days(2);
+    clean(test);
+    expect_not(test, listed(test, 2), "uid = 30 : ");
+    expect(test, fox(test), "message_count = 6 : ");
+  }
+  {
+    const std::string test = "a move from Spam to Trash keeps Spam's time";
+    arrived(test, "31", 25);
+    expect(test, move(test, "vec { 31 }", 2), "(1 : nat64)");
+    expect(test, move(test, "vec { 31 }", 1), "(1 : nat64)");
+    later_by_days(6);
+    clean(test);
+    expect_not(test, listed(test, 1), "uid = 31 : ");
+    expect(test, fox(test), "message_count = 5 : ");
+  }
+  {
+    const std::string test = "mail marked as Spam 30 days after it arrived is "
+                             "deleted, and does not count as moved";
+    arrived(test, "32", 31);
+    arrived(test, "33", 0);
+    const std::string unseen = field(fox(test), "unseen");
+    expect(test, move(test, "vec { 32; 33 }", 2), "(1 : nat64)");
+    const std::string spam = listed(test, 2);
+    expect(test, spam, "uid = 33 : ");
+    expect_not(test, spam, "uid = 32 : ");
+    expect(test, fox(test), "message_count = 4 : ");
+    expect_equal(test, field(fox(test), "unseen"),
+                 std::to_string(std::stoll(unseen) - 2));
+    expect(test, CALL(test, admin_check, "(\"fox\", null)", CONTROLLER),
+           "result = \"ok\"");
+  }
+  {
+    const std::string test = "mail from a blocked envelope sender keeps its "
+                             "arrival as Spam's time";
+    CALL(test, mail_block, "(\"fox\", \"late@sender.example\")", USER_A);
+    const std::string row = queue_mail(test, "late");
+    later_by_days(10); // the move comes 10 days after the arrival
+    CALL(test, ingest_move, "(" + row + ")", SELF);
+    expect(test, listed(test, 2), "envelope_from = \"late@sender.example\"");
+    later_by_days(21);
+    clean(test);
+    expect_not(test, listed(test, 2), "late@sender.example");
+    CALL(test, mail_unblock, "(\"fox\", \"late@sender.example\")", USER_A);
+  }
+  {
+    const std::string test = "mail that cannot be deleted stops its cleanup "
+                             "only";
+    arrived(test, "4", 0);
+    expect(test, move(test, "vec { 4 }", 1), "(1 : nat64)");
+    later_by_days(31);
+    CALL(test, dev_file_exec,
+         "(\"fox\", \"CREATE TRIGGER damaged BEFORE DELETE ON messages WHEN "
+         "old.uid = 4 BEGIN SELECT RAISE(ABORT, 'damaged'); END\")",
+         CONTROLLER);
+    TRAPS(test, ingest_clean, "(" + fox_id() + ")", SELF,
+          "the expired mail could not be deleted");
+    // Delivery and moves go on
+    CALL(test, ingest_move, "(" + queue_mail(test, "prompt") + ")", SELF);
+    expect(test, listed(test, 0), "envelope_from = \"prompt@sender.example\"");
+    expect(test, move(test, "vec { 1 }", 1), "(1 : nat64)");
+    CALL(test, dev_file_exec, "(\"fox\", \"DROP TRIGGER damaged\")",
+         CONTROLLER);
+    clean(test);
+    expect_not(test, listed(test, 1), "uid = 4 : ");
+    expect(test, listed(test, 1), "uid = 1 : ");
+    expect(test, CALL(test, admin_check, "(\"fox\", null)", CONTROLLER),
+           "result = \"ok\"");
     ic0mock_clear_time_override();
   }
 

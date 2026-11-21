@@ -1,6 +1,7 @@
 #include "support.h"
 
 #include "api.h"
+#include "db.h"
 
 #include <array>
 #include <cctype>
@@ -149,6 +150,11 @@ size_t count(const std::string &text, const std::string &part) {
     ++n;
   }
   return n;
+}
+
+int64_t control_integer(const std::string &sql) {
+  db::Stmt select(db::control(), sql.c_str());
+  return select && select.row() ? select.column_integer(0) : -1;
 }
 
 std::string me_of(const std::string &test, const std::string &caller,

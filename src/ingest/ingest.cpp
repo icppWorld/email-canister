@@ -134,12 +134,13 @@ IC_Async ingest_pump_async() {
   // mailbox alone. Upgrades take turns with the rest, so that mailboxes
   // already upgraded keep receiving while the others wait. Parsing goes
   // before moving, so that a message is searchable soon after its move. A
-  // mailbox whose parse cannot be claimed does not hold up the moves.
+  // mailbox whose parse cannot be claimed does not hold up the moves. The
+  // cleanup of expired mail waits until nothing else is to be done.
   int64_t mailbox = 0;
   int64_t id = 0;
   const auto now = static_cast<int64_t>(IC_API::time());
   const auto defer = static_cast<int64_t>(k_defer_ns);
-  enum class Work { Upgrade, Parse, Move } work = Work::Move;
+  enum class Work { Upgrade, Parse, Move, Clean } work = Work::Move;
   store::Claim claim = store::Claim::Empty;
   bool failed = false;
   bool not_run = false; // a call that the IC never ran
@@ -161,7 +162,11 @@ IC_Async ingest_pump_async() {
                 Work::Parse) ||
            take(store::claim_move(k_max_attempts, now, defer, id), Work::Move);
   };
-  if (g_upgrade_turn ? upgrade() || receive() : receive() || upgrade())
+  const auto clean = [&] {
+    return take(store::claim_clean(now, defer, mailbox), Work::Clean);
+  };
+  if ((g_upgrade_turn ? upgrade() || receive() : receive() || upgrade()) ||
+      clean())
     g_upgrade_turn = work != Work::Upgrade;
   else if (failed) claim = store::Claim::Failed;
   if (claim == store::Claim::Claimed) {
@@ -204,6 +209,17 @@ IC_Async ingest_pump_async() {
             co_await IC_Call::unbounded_wait(self, "ingest_merge")
                 .with_arg(CandidTypeNat64{static_cast<uint64_t>(mailbox)});
         (void)merged; // the next merge makes up for a failed one
+      }
+    } else if (work == Work::Clean) {
+      IC_CallResult<IC_CallReply> result =
+          co_await IC_Call::unbounded_wait(self, "ingest_clean")
+              .with_arg(CandidTypeNat64{static_cast<uint64_t>(mailbox)});
+      // One that failed after it ran waits for the next mark, so a message
+      // that cannot be deleted never makes the pump loop. One that never ran
+      // is tried again later.
+      if (!result) {
+        not_run = !ran(result.error());
+        if (!not_run) store::stop_cleaning(mailbox);
       }
     } else {
       IC_CallResult<IC_CallReply> result =
@@ -301,6 +317,19 @@ void ingest_upgrade_file() {
   ic_api.to_wire();
 }
 
+void ingest_clean() {
+  IC_API ic_api(CanisterUpdate{std::string(__func__)}, false);
+  require_self(ic_api);
+  uint64_t mailbox = 0;
+  ic_api.from_wire(CandidTypeNat64{&mailbox});
+  if (!store::clean_expired(static_cast<int64_t>(mailbox),
+                            static_cast<int64_t>(IC_API::time()))) {
+    IC_API::trap("the expired mail could not be deleted");
+  }
+  dev_record_cost(__func__);
+  ic_api.to_wire();
+}
+
 void ingest_merge() {
   IC_API ic_api(CanisterUpdate{std::string(__func__)}, false);
   require_self(ic_api);
@@ -323,7 +352,7 @@ void start(const std::string &canister_self) {
   int64_t deferred = 0;
   // -1, a failed count, arms too
   if (store::backlog(now) != 0 || store::deferred_until(now, deferred) ||
-      store::upgrade_pending())
+      store::upgrade_pending() || store::clean_pending())
     arm();
 }
 

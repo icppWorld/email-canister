@@ -8,6 +8,7 @@
 #include "allowlist.h"
 #include "api.h"
 #include "ic_api.h"
+#include "ingest.h"
 #include "mail_store.h"
 #include "owner.h"
 
@@ -216,8 +217,9 @@ void mail_delete() {
 }
 
 // Moves messages between the Inbox, Trash and Spam, and returns how many
-// moved; a uid that does not exist is skipped. Mail stays in Trash and Spam
-// for 30 days.
+// moved; a uid that does not exist is skipped. Mail stays in Trash for 30
+// days, and in Spam until 30 days after it arrived: older mail marked as Spam
+// is deleted at once.
 void mail_move() {
   IC_API ic_api(CanisterUpdate{std::string(__func__)}, false);
   std::vector<uint64_t> uids;
@@ -228,6 +230,7 @@ void mail_move() {
   const int64_t moved = store::move_messages(
       box, uids, to_folder(folder), static_cast<int64_t>(IC_API::time()));
   if (moved < 0) IC_API::trap("the move failed");
+  ingest::arm(); // to clean out expired mail
   ic_api.to_wire(nat64(moved));
 }
 

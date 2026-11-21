@@ -676,6 +676,18 @@ void dev_file_exec() {
   ic_api.to_wire();
 }
 
+// Whether the mailbox is marked for a cleanup of its expired mail
+void dev_clean_due() {
+  IC_API ic_api(CanisterQuery{std::string(__func__)}, false);
+  require_controller(ic_api);
+  std::string local;
+  ic_api.from_wire(CandidTypeText{&local});
+  db::Stmt select(db::control(),
+                  "SELECT clean_due FROM mailboxes WHERE local = ?");
+  if (!select || !select.text(1, local).row()) IC_API::trap("no such mailbox");
+  ic_api.to_wire(CandidTypeBool{select.column_integer(0) != 0});
+}
+
 // Damages the root page of one of a mailbox file's tables
 void dev_damage_file() {
   IC_API ic_api(CanisterUpdate{std::string(__func__)}, false);

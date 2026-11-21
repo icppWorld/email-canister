@@ -17,6 +17,7 @@ void ingest_pump() WASM_SYMBOL_EXPORTED("canister_update ingest_pump");
 void ingest_move() WASM_SYMBOL_EXPORTED("canister_update ingest_move");
 void ingest_process() WASM_SYMBOL_EXPORTED("canister_update ingest_process");
 void ingest_merge() WASM_SYMBOL_EXPORTED("canister_update ingest_merge");
+void ingest_clean() WASM_SYMBOL_EXPORTED("canister_update ingest_clean");
 void ingest_upgrade_file()
     WASM_SYMBOL_EXPORTED("canister_update ingest_upgrade_file");
 
@@ -97,4 +98,5 @@ void dev_file_exec() WASM_SYMBOL_EXPORTED("canister_update dev_file_exec");
 void dev_damage_file() WASM_SYMBOL_EXPORTED("canister_update dev_damage_file");
 void dev_fail_statements()
     WASM_SYMBOL_EXPORTED("canister_update dev_fail_statements");
+void dev_clean_due() WASM_SYMBOL_EXPORTED("canister_query dev_clean_due");
 #endif

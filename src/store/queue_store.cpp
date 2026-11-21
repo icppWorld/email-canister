@@ -2,7 +2,6 @@
 
 #include "allowlist.h"
 #include "db.h"
-#include "ic_api.h"
 #include "mail_store.h"
 
 namespace {
@@ -20,8 +19,9 @@ struct QueueRow {
 };
 
 // Puts a message into its file, with a uid and modseq from the registry: in
-// Spam when its envelope sender is blocked, else in the Inbox
-bool store_in_file(sqlite3 *file_db, const QueueRow &row, int64_t now_ns) {
+// Spam when its envelope sender is blocked, else in the Inbox. Spam's 30 days
+// count from its arrival.
+bool store_in_file(sqlite3 *file_db, const QueueRow &row) {
   const std::optional<bool> spam =
       store::is_blocked(file_db, row.envelope_from);
   if (!spam) return false;
@@ -55,7 +55,7 @@ bool store_in_file(sqlite3 *file_db, const QueueRow &row, int64_t now_ns) {
                       .text(6, row.dedupe_key)
                       .integer(7, row.raw_bytes)
                       .integer(8, folder)
-                      .integer(9, *spam ? now_ns : 0)
+                      .integer(9, *spam ? row.received_ns : 0)
                       .done()) {
     return false;
   }
@@ -182,7 +182,7 @@ bool deferred_until(int64_t now_ns, int64_t &at_ns) {
       db::control(),
       "SELECT min(retry_after_ns) FROM mailboxes m WHERE retry_after_ns > 0 AND "
       "retry_after_ns > ?1 AND retry_after_ns < ?3 AND schema <= ?2 AND "
-      "(unparsed > 0 OR "
+      "(unparsed > 0 OR clean_due > 0 OR "
       "" WAITS_FOR_UPGRADE(
           "?2") " OR EXISTS(SELECT 1 FROM queue q "
                 "WHERE q.mailbox_id = m.id AND q.quarantined = 0))");
@@ -278,7 +278,6 @@ bool move(int64_t queue_id, int64_t dedupe_since_ns) {
   }
   MailboxWrite write(row.mailbox);
   if (!write) return false;
-  const auto now = static_cast<int64_t>(IC_API::time());
 
   bool ok = false;
   {
@@ -289,12 +288,12 @@ bool move(int64_t queue_id, int64_t dedupe_since_ns) {
     if (ok && seen.column_integer(0) != 0) {
       ok = release_quota(row.mailbox, row.raw_bytes);
     } else if (ok) {
-      ok = store_in_file(write.file(), row, now);
+      ok = store_in_file(write.file(), row);
     }
   }
-  // New mail clears out a little old mail from Trash and Spam
-  ok = ok &&
-       store::delete_expired(store::Mailbox{row.mailbox, write.file()}, now);
+  // New mail has the pump clear out old mail from Trash and Spam, in a write
+  // of its own: a message that cannot be deleted then stops no delivery
+  ok = ok && clean_soon(row.mailbox);
   db::Stmt prune(db::control(),
                  "DELETE FROM dedupe WHERE id IN (SELECT id FROM dedupe "
                  "WHERE at_ns < ? ORDER BY at_ns LIMIT ?)");

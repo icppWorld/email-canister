@@ -212,6 +212,11 @@ void smtp_request() {
     case store::Insert::Full:
       return smtp_reply_err(ic_api, 451, "try again later");
     case store::Insert::OverQuota:
+      // Expired mail may make room before the sender retries. The mark for
+      // the pump comes after the rollback, which would undo it.
+      transaction.rollback();
+      store::clean_soon(mailbox);
+      ingest::arm();
       return smtp_reply_err(ic_api, 452, "mailbox full");
     case store::Insert::Stored:
       stored = true;

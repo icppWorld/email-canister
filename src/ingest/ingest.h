@@ -2,9 +2,9 @@
 // parses and indexes it there.
 //
 // smtp_request only queues a message in control.db, so that accepting mail
-// stays cheap and never depends on the parser. A timer then hands one move or
-// one parse at a time to a call to this canister: one that traps there rolls
-// back alone.
+// stays cheap and never depends on the parser. A timer then hands one move,
+// one parse or one cleanup of expired mail at a time to a call to this
+// canister: one that traps there rolls back alone.
 
 #pragma once
 

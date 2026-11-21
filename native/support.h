@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <string>
 
 #include "mock_ic.h"
@@ -87,6 +88,9 @@ inline std::string uid_vec(int first, int count) {
     out += " " + std::to_string(uid) + ";";
   return out + " }";
 }
+
+// One integer from control.db, or -1
+int64_t control_integer(const std::string &sql);
 
 // The caller's MailboxInfo of `local`, from mail_me
 std::string me_of(const std::string &test, const std::string &caller,

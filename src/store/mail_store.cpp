@@ -12,7 +12,8 @@
 namespace {
 
 const size_t k_preview_chars = 200;
-// Mail in Trash or Spam is deleted after 30 days, a few messages at a time
+// Mail in Trash or Spam is deleted after 30 days, a few messages per turn of
+// the ingest pump
 const int64_t k_keep_filed_ns = 30LL * 24 * 3600 * 1'000'000'000;
 const int64_t k_expired_per_write = 20;
 uint64_t g_search_budget = 3'000'000'000; // a query may use 5B
@@ -21,6 +22,8 @@ int64_t g_purge_step_bytes = 1LL << 30;
 // The mailbox parsed last: the next parse takes the one after it, so that a
 // mailbox whose claim keeps failing holds up no other
 int64_t g_parsed_last = 0;
+// The same for the cleanups: a mailbox with much expired mail holds up none
+int64_t g_cleaned_last = 0;
 const size_t k_max_query_bytes = 512;
 const size_t k_max_query_words = 16;
 
@@ -367,9 +370,10 @@ bool process(int64_t mailbox, int64_t id) {
                 .text(4, text)
                 .done() &&
             count.integer(1, mailbox).done();
+  // Mail that arrived more than 30 days ago is deleted instead
   if (ok && *spam)
     ok = file_messages(box, {static_cast<uint64_t>(uid)}, Spam,
-                       static_cast<int64_t>(IC_API::time())) == 1;
+                       static_cast<int64_t>(IC_API::time())) >= 0;
   return ok && write.commit();
 }
 
@@ -577,32 +581,94 @@ int64_t delete_messages(const Mailbox &box, const std::vector<uint64_t> &uids,
   return deleted >= 0 && write.commit() ? deleted : -1;
 }
 
-bool delete_expired(const Mailbox &box, int64_t now_ns) {
+// Deletes up to a write's worth of the mail that has been in Trash or Spam
+// too long, in the caller's write. Returns how many it found, or -1.
+static int64_t delete_expired(const Mailbox &box, int64_t now_ns) {
   std::vector<uint64_t> uids;
   {
     db::Stmt select(box.file, "SELECT uid FROM messages WHERE folder != 0 "
                               "AND folder_ns < ? LIMIT ?");
-    if (!select) return false;
+    if (!select) return -1;
     select.integer(1, now_ns - k_keep_filed_ns).integer(2, k_expired_per_write);
     while (select.row())
       uids.push_back(static_cast<uint64_t>(select.column_integer(0)));
-    if (select.failed()) return false;
+    if (select.failed()) return -1;
   }
-  return uids.empty() || remove_messages(box, uids) >= 0;
+  if (!uids.empty() && remove_messages(box, uids) < 0) return -1;
+  return static_cast<int64_t>(uids.size());
 }
 
-// Puts the messages in `folder`, in the caller's write. Returns how many
+bool clean_soon(int64_t mailbox) {
+  db::Stmt mark(db::control(), "UPDATE mailboxes SET clean_due = 1 WHERE "
+                               "id = ? AND clean_due = 0 AND vacant = 0 AND "
+                               "purging = 0");
+  return mark && mark.integer(1, mailbox).done();
+}
+
+bool stop_cleaning(int64_t mailbox) {
+  db::Stmt stop(db::control(),
+                "UPDATE mailboxes SET clean_due = 0 WHERE id = ?");
+  return stop && stop.integer(1, mailbox).done();
+}
+
+bool clean_pending() {
+  // A query that fails may hide a due mailbox: it counts as one
+  db::Stmt select(db::control(), "SELECT 1 FROM mailboxes WHERE clean_due > 0 "
+                                 "AND retry_after_ns < ?");
+  return !select || select.integer(1, k_held_ns).row() || select.failed();
+}
+
+Claim claim_clean(int64_t now_ns, int64_t defer_ns, int64_t &mailbox) {
+  {
+    // A download and a hold keep the pumps away through retry_after_ns. A
+    // file of another version waits for its upgrade or its release.
+    db::Stmt select(db::control(),
+                    "SELECT id FROM mailboxes WHERE clean_due > 0 AND "
+                    "retry_after_ns <= ?1 AND schema = ?2 AND vacant = 0 AND "
+                    "purging = 0 AND needs_repair = '' "
+                    "ORDER BY id <= ?3, id LIMIT 1");
+    if (!select) return Claim::Failed;
+    if (!select.integer(1, now_ns)
+             .integer(2, db::mailbox_version())
+             .integer(3, g_cleaned_last)
+             .row()) {
+      return select.failed() ? Claim::Failed : Claim::Empty;
+    }
+    mailbox = select.column_integer(0);
+    g_cleaned_last = mailbox;
+  }
+  sqlite3 *file = nullptr;
+  return open_for_pump(mailbox, now_ns + defer_ns, file);
+}
+
+bool clean_expired(int64_t mailbox, int64_t now_ns) {
+  // A download holds the file: the cleanup waits, still due, until it ends
+  if (exporting(mailbox)) return true;
+  MailboxWrite write(mailbox);
+  if (!write) return false;
+  const int64_t found = delete_expired(Mailbox{mailbox, write.file()}, now_ns);
+  if (found < 0) return false;
+  // Fewer than a write takes: none is left until the next due mark
+  if (found < k_expired_per_write && !stop_cleaning(mailbox)) return false;
+  return write.commit();
+}
+
+// Puts the messages in `folder`, in the caller's write. Mail that arrived more
+// than 30 days ago is deleted instead of going to Spam. Returns how many
 // moved, or -1.
 static int64_t file_messages(const Mailbox &box,
                              const std::vector<uint64_t> &uids, int64_t folder,
                              int64_t now_ns) {
-  db::Stmt find(box.file, "SELECT folder, flags FROM messages WHERE uid = ?");
-  // folder_ns is when the message left the Inbox, so a move between Trash
-  // and Spam keeps its 30 days
-  db::Stmt update(box.file,
-                  "UPDATE messages SET folder = ?1, folder_ns = CASE "
-                  "WHEN ?1 = 0 THEN 0 WHEN folder = 0 THEN ?2 ELSE folder_ns "
-                  "END, modseq = ?3 WHERE uid = ?4");
+  db::Stmt find(
+      box.file,
+      "SELECT folder, flags, received_ns FROM messages WHERE uid = ?");
+  // Spam's 30 days count from the message's arrival, Trash's from when it
+  // left the Inbox, so a move from Spam to Trash keeps its time
+  db::Stmt update(box.file, "UPDATE messages SET folder = ?1, folder_ns = CASE "
+                            "WHEN ?1 = 0 THEN 0 WHEN ?1 = 2 THEN received_ns "
+                            "WHEN folder = 0 THEN ?2 ELSE folder_ns "
+                            "END, modseq = ?3 WHERE uid = ?4");
+  std::vector<uint64_t> expired;
   int64_t modseq = 0; // taken at the first move
   int64_t moved = 0;
   int64_t unseen = 0;
@@ -616,8 +682,13 @@ static int64_t file_messages(const Mailbox &box,
     }
     const int64_t from = find.column_integer(0);
     const int64_t flags = find.column_integer(1);
+    const int64_t received_ns = find.column_integer(2);
     find.reset();
     if (from == folder) continue;
+    if (folder == Spam && received_ns < now_ns - k_keep_filed_ns) {
+      expired.push_back(uids[i]);
+      continue;
+    }
     if (modseq == 0) modseq = next_modseq(box.id);
     unseen += counts_unseen(flags, folder) - counts_unseen(flags, from);
     update.reset();
@@ -628,19 +699,19 @@ static int64_t file_messages(const Mailbox &box,
                            .done();
     ++moved;
   }
-  return ok && add_unseen(box.id, unseen) ? moved : -1;
+  ok = ok && add_unseen(box.id, unseen) &&
+       (expired.empty() || remove_messages(box, expired) >= 0);
+  return ok ? moved : -1;
 }
 
 int64_t move_messages(const Mailbox &box, const std::vector<uint64_t> &uids,
                       int64_t folder, int64_t now_ns) {
   MailboxWrite write(box);
   if (!write) return -1;
-  // Expired mail goes first, up to 20 messages, so a move does not count
-  // what this call deletes. Expired mail the cleanup has not reached is still
-  // listed, and moves like any other.
-  if (!delete_expired(box, now_ns)) return -1;
+  // Expired mail the cleanup has not reached is still listed, and moves like
+  // any other: the pump deletes the rest in a write of its own
   const int64_t moved = file_messages(box, uids, folder, now_ns);
-  return moved >= 0 && write.commit() ? moved : -1;
+  return moved >= 0 && clean_soon(box.id) && write.commit() ? moved : -1;
 }
 
 Page search(const Mailbox &box, int64_t folder, const std::string &query,
@@ -741,7 +812,7 @@ int64_t purge_step(int64_t mailbox) {
                    "since_merge = 0, parse_id = 0, parse_attempts = 0, "
                    "parse_error = '', retry_after_ns = 0, outbox_due_ns = 0, "
                    "export_until_ns = 0, export_principal = '', "
-                   "needs_repair = '' WHERE id = ?");
+                   "needs_repair = '', clean_due = 0 WHERE id = ?");
     // Its members go with it: a new mailbox at the address starts without
     db::Stmt members(db::control(), "DELETE FROM members WHERE mailbox_id = ?");
     if (!control || !clear_queue(mailbox) || !reset ||
