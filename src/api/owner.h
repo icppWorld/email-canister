@@ -5,8 +5,11 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstddef>
+#include <cstdint>
 #include <initializer_list>
 #include <string>
+#include <vector>
 
 #include "allowlist.h"
 #include "ic_api.h"
@@ -60,4 +63,10 @@ inline store::Mailbox require_writable_file(const store::Entry &entry) {
         "downloading: the mailbox is being downloaded, try again once that ends");
   }
   return require_file(entry);
+}
+
+const size_t k_max_batch = 200; // messages deleted, moved or flagged at once
+
+inline void require_batch(const std::vector<uint64_t> &ids) {
+  if (ids.size() > k_max_batch) IC_API::trap("too many messages at once");
 }

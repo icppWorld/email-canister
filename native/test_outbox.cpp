@@ -20,6 +20,13 @@ std::string used_bytes(const std::string &test) {
   return field(CALL(test, mail_me, "()", USER_B), "used_bytes");
 }
 
+// Queues a message in bob's outbox, and returns its id
+std::string queue(const std::string &test, const std::string &client_id) {
+  const std::string sent = CALL(
+      test, mail_send, in("bob", Send{.client_id = client_id}.args()), USER_B);
+  return sent.substr(1, sent.find_first_of(" :)") - 1);
+}
+
 // The ids in an outbox page, in order
 std::vector<std::string> ids(const std::string &page) {
   std::vector<std::string> out;
@@ -218,5 +225,52 @@ void test_outbox(MockIC &) {
     CALL(test, mail_outbox_delete,
          "(\"bob\", " + other.substr(1, other.find_first_of(" :)") - 1) + ")",
          USER_B);
+  }
+  {
+    // One write deletes them all, but mail being sent stays: a call may have
+    // reached the bridge. An id repeated, or not there, is skipped.
+    const std::string test = "many messages are deleted at once";
+    const std::string before = used_bytes(test);
+    const std::string sending = queue(test, "many-0");
+    CALL(test, dev_file_exec,
+         "(\"bob\", \"UPDATE outbox SET state = 1 WHERE id = " + sending +
+             "\")",
+         CONTROLLER);
+    const std::string with_sending = used_bytes(test);
+    const std::string first = queue(test, "many-1");
+    const std::string second = queue(test, "many-2");
+    check(test, used_bytes(test) != with_sending, "queued mail used no quota");
+    expect_equal(test,
+                 CALL(test, mail_outbox_delete_many,
+                      "(\"bob\", vec { " + first + "; " + sending +
+                          "; 999999; " + second + "; " + first + " })",
+                      USER_B),
+                 "(vec { " + first + " : nat64; " + second + " : nat64 })");
+    expect_equal(test, used_bytes(test), with_sending);
+    TRAPS(test, mail_outbox_get, "(\"bob\", " + first + ")", USER_B,
+          "no such message");
+    expect(test,
+           CALL(test, mail_outbox_get, "(\"bob\", " + sending + ")", USER_B),
+           "state = 1 : ");
+    // Mail that never left frees its client_id: a retry queues it again
+    const std::string again = queue(test, "many-1");
+    check(test, again != first, "a retry got the deleted message's id back");
+    CALL(test, mail_outbox_delete, "(\"bob\", " + again + ")", USER_B);
+    expect_equal(
+        test, CALL(test, mail_outbox_delete_many, "(\"bob\", vec {})", USER_B),
+        "(vec {})");
+    TRAPS("201 messages are too many to delete from the outbox at once",
+          mail_outbox_delete_many, "(\"bob\", " + uid_vec(1, 201) + ")", USER_B,
+          "too many messages at once");
+    // Once its outcome is known it may go too
+    CALL(test, dev_file_exec,
+         "(\"bob\", \"UPDATE outbox SET state = 3 WHERE id = " + sending +
+             "\")",
+         CONTROLLER);
+    expect_equal(test,
+                 CALL(test, mail_outbox_delete_many,
+                      "(\"bob\", vec { " + sending + " })", USER_B),
+                 "(vec { " + sending + " : nat64 })");
+    expect_equal(test, used_bytes(test), before);
   }
 }

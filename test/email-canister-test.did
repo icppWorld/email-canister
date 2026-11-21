@@ -212,6 +212,7 @@ service : () -> {
     "mail_outbox_get" : (text, nat64) -> (OutboxMessage) query;
     "mail_outbox_resend" : (text, nat64) -> ();
     "mail_outbox_delete" : (text, nat64) -> ();
+    "mail_outbox_delete_many" : (text, vec nat64) -> (vec nat64);
     "mail_export_freeze" : (text, opt nat64) -> (ExportInfo); // the started_ns it renews
     "mail_export_thaw" : (text, nat64) -> (); // the download's started_ns
     "mail_export_chunk" : (text, ExportChunkRequest) -> (ExportChunk) query;

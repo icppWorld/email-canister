@@ -64,6 +64,8 @@ void mail_outbox_resend()
     WASM_SYMBOL_EXPORTED("canister_update mail_outbox_resend");
 void mail_outbox_delete()
     WASM_SYMBOL_EXPORTED("canister_update mail_outbox_delete");
+void mail_outbox_delete_many()
+    WASM_SYMBOL_EXPORTED("canister_update mail_outbox_delete_many");
 void mail_export_freeze()
     WASM_SYMBOL_EXPORTED("canister_update mail_export_freeze");
 void mail_export_thaw()

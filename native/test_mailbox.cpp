@@ -33,6 +33,7 @@ const OwnerCall k_owner_calls[] = {
     {mail_outbox_get, "mail_outbox_get", "(1)"},
     {mail_outbox_resend, "mail_outbox_resend", "(1)"},
     {mail_outbox_delete, "mail_outbox_delete", "(1)"},
+    {mail_outbox_delete_many, "mail_outbox_delete_many", "(vec { 1 })"},
     {mail_export_freeze, "mail_export_freeze", "(null)"},
     {mail_export_thaw, "mail_export_thaw", "(1)"},
     {mail_export_chunk, "mail_export_chunk",

@@ -74,6 +74,8 @@ void test_export(MockIC &) {
         "(\"bob\", " + message + ")", USER_B, "downloading:");
   TRAPS("a download holds off an outbox delete", mail_outbox_delete,
         "(\"bob\", " + message + ")", USER_B, "downloading:");
+  TRAPS("a download holds off a delete of many", mail_outbox_delete_many,
+        "(\"bob\", vec { " + message + " })", USER_B, "downloading:");
   TRAPS("a download holds off a send", mail_send,
         in("bob", Send{.client_id = "held"}.args()), USER_B, "downloading:");
 
