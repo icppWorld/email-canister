@@ -38,12 +38,20 @@ test.describe.configure({ mode: 'serial' })
 
 test.beforeAll(() => freshBackend({ onboard: false }))
 
-test('serves a strict content security policy and the SMTP handoff', async ({
+test('serves a strict content security policy, caching that shows a new deploy, and the SMTP handoff', async ({
   page,
 }) => {
+  const loaded: string[] = []
+  page.on('response', (reply) => {
+    if (/\/(assets\/[^/]+|brand\.css)$/.test(new URL(reply.url()).pathname))
+      loaded.push(reply.url())
+  })
   // Through the browser, because Node does not resolve *.localhost
   const response = await page.goto(env.url)
-  const policy = (await response!.allHeaders())['content-security-policy']
+  const headers = await response!.allHeaders()
+  // The page is checked for a new version on each load
+  expect(headers['cache-control']).toBe('no-cache')
+  const policy = headers['content-security-policy']
   expect(policy).toContain("default-src 'none'")
   expect(policy).toContain("script-src 'self'")
   expect(policy).toContain("font-src 'self';")
@@ -54,31 +62,30 @@ test('serves a strict content security policy and the SMTP handoff', async ({
     return reply.text()
   })
   expect(handoff.trim()).toBe(env.backend)
-})
 
-test('the page is checked for a new version on each load, and its hashed files are kept', async ({
-  page,
-}) => {
-  const scripts: string[] = []
-  page.on('response', (reply) => {
-    if (/\/assets\/[^/]+\.js$/.test(reply.url())) scripts.push(reply.url())
-  })
-  const response = await page.goto(env.url)
-  const headers = await response!.allHeaders()
-  expect(headers['cache-control']).toBe('no-cache')
-  // The other rules still apply to the page
-  expect(headers['content-security-policy']).toContain("default-src 'none'")
-  await expect.poll(() => scripts.length).toBeGreaterThan(0)
-  // Through the browser, because Node does not resolve *.localhost
-  const script = await page.evaluate(async (url) => {
-    const reply = await fetch(url, { cache: 'no-store' })
-    return {
-      cache: reply.headers.get('cache-control'),
-      policy: reply.headers.get('content-security-policy'),
-    }
-  }, scripts[0])
-  expect(script.cache).toBe('public, max-age=31536000, immutable')
-  expect(script.policy).toContain("default-src 'none'")
+  // The build's files, whose names carry a hash of their content, are kept
+  // for good; the brand's, whose names stay, are checked like the page. The
+  // other headers apply to them too.
+  await expect
+    .poll(() => loaded.filter((url) => /\.js$/.test(url)).length)
+    .toBeGreaterThan(0)
+  expect(loaded.some((url) => /\/assets\/[^/]+\.css$/.test(url))).toBe(true)
+  expect(loaded.some((url) => /\/brand\.css$/.test(url))).toBe(true)
+  for (const url of loaded) {
+    const reply = await page.evaluate(async (url) => {
+      const reply = await fetch(url, { cache: 'no-store' })
+      return {
+        cache: reply.headers.get('cache-control'),
+        policy: reply.headers.get('content-security-policy'),
+      }
+    }, url)
+    expect(reply.cache, url).toBe(
+      /\/brand\.css$/.test(url)
+        ? 'no-cache'
+        : 'public, max-age=31536000, immutable'
+    )
+    expect(reply.policy, url).toContain("default-src 'none'")
+  }
 })
 
 test("shows the deployment's brand, from e2e/brand", async ({ page }) => {
