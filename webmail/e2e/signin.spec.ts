@@ -14,6 +14,9 @@ test('a user signs in through the local Internet Identity', async ({
     .getByRole('button', { name: 'Sign in with Internet Identity' })
     .click()
   const ii = await popup
+  // A popup window, so this page stays visible: a page in a hidden tab gets
+  // its timers slowed, and the sign-in's heartbeat then times out
+  expect(await ii.evaluate(() => window.locationbar.visible)).toBe(false)
   // The screens of the Internet Identity that icp-cli 1.8.0 serves. The local
   // Internet Identity asks for a seed index in place of a passkey.
   // An index can create only one identity on a network, so each run takes
