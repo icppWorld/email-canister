@@ -258,7 +258,8 @@ void test_folders(MockIC &mock_ic) {
         "only this canister can call this method");
   {
     const std::string test = "Trash empties itself after 30 days, 20 per turn";
-    expect(test, move(test, uid_vec(5, 25), 1), "(25 : nat64, ");
+    // A long reply prints over several lines: the count ends in a comma
+    expect(test, move(test, uid_vec(5, 25), 1), "25 : nat64,");
     expect(test, fox(test), "message_count = 28 : ");
     later_by_days(29);
     // Nothing has expired: a move costs the pump no turn
@@ -508,12 +509,12 @@ void test_folders(MockIC &mock_ic) {
     CALL(test, dev_seed, "(\"fox\", 100, 21)", CONTROLLER);
     const auto last =
         static_cast<int>(fox_integer("SELECT max(uid) FROM messages"));
-    expect(test, move(test, uid_vec(last - 20, 21), 1), "(21 : nat64, ");
+    expect(test, move(test, uid_vec(last - 20, 21), 1), "21 : nat64,");
     CALL(test, dev_seed, "(\"vixen\", 1, 21)", CONTROLLER);
     expect(
         test,
         CALL(test, mail_move, "(\"vixen\", " + uid_vec(1, 21) + ", 1)", USER_A),
-        "(21 : nat64, ");
+        "21 : nat64,");
     later_by_days(31);
     move(test, "vec {}", 1);
     CALL(test, mail_move, "(\"vixen\", vec {}, 1)", USER_A);
