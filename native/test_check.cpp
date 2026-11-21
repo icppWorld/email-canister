@@ -4,6 +4,7 @@
 #include <string>
 
 #include "api.h"
+#include "db.h"
 #include "ic0.h"
 #include "ic_api.h"
 #include "support.h"
@@ -58,6 +59,12 @@ const std::string k_list = list_args("10");
 } // namespace
 
 void test_check(MockIC &) {
+  // The release's schema version, before the steps the tests add: each
+  // version below keeps its place relative to it
+  const int64_t release = db::mailbox_version();
+  const auto version = [release](int64_t ahead) {
+    return std::to_string(release + ahead);
+  };
   TRAPS("only a controller checks a mailbox", admin_check, "(\"bob\", null)",
         USER_B, "controllers only");
   TRAPS("a check refuses an address that has no entry", admin_check,
@@ -158,38 +165,42 @@ void test_check(MockIC &) {
   }
   {
     const std::string test = "a file newer than the registry is held";
-    file_exec(test, "bob", "PRAGMA user_version = 8");
+    file_exec(test, "bob", "PRAGMA user_version = " + version(4));
     // The file's own version is checked before any check holds it
     TRAPS("a file of another version is not used", mail_list, in("bob", k_list),
           USER_B, "busy: the mailbox cannot be opened");
     const std::string result = inspect(test, "bob");
     expect(test, result,
-           "the schema version is 8 in the file, 5 in the "
-           "registry");
+           "the schema version is " + version(4) + " in the file, " +
+               version(1) + " in the registry");
     TRAPS("a newer file refuses its owner", mail_list, in("bob", k_list),
           USER_B, "this mailbox needs repair");
   }
   {
     const std::string test = "an upgrade holds a file out of step with its "
                              "registry";
-    file_exec(test, "cleo", "PRAGMA user_version = 7");
-    file_exec(test, "erin", "PRAGMA user_version = 4");
+    file_exec(test, "cleo", "PRAGMA user_version = " + version(3));
+    file_exec(test, "erin", "PRAGMA user_version = " + version(0));
     // A step that fails on every file that has the table already
     CALL(test, dev_schema_step, "(\"CREATE TABLE extra(x)\")", CONTROLLER);
     upgrade_round(test);
-    expect(
-        test, entry(test, "cleo"),
-        "needs_repair = opt \"the file has schema version 7, its registry 5");
+    expect(test, entry(test, "cleo"),
+           "needs_repair = opt \"the file has schema version " + version(3) +
+               ", its registry " + version(1));
     TRAPS("a file ahead of its registry is not used", mail_list,
           in("cleo", k_list), USER_C, "this mailbox needs repair");
     // Not upgraded from its own version, where its step would fail
-    expect(
-        test, entry(test, "erin"),
-        "needs_repair = opt \"the file has schema version 4, its registry 5");
+    expect(test, entry(test, "erin"),
+           "needs_repair = opt \"the file has schema version " + version(0) +
+               ", its registry " + version(1));
   }
   {
     const std::string test = "a step that fails holds the mailbox on its third "
                              "failure";
+    const std::string failed_step =
+        "needs_repair = opt \"the schema upgrade failed: the step to schema "
+        "version " +
+        version(2) + " failed";
     // A canister low on cycles fails every upgrade for a while. alice's
     // first failure came with the round above; this is her second.
     upgrade_now(test);
@@ -201,9 +212,7 @@ void test_check(MockIC &) {
           in("alice", k_list), USER_A, "busy: the mailbox is being upgraded");
     later();
     upgrade_now(test); // the third
-    expect(test, entry(test, "alice"),
-           "needs_repair = opt \"the schema upgrade failed: the step to "
-           "schema version 6 failed");
+    expect(test, entry(test, "alice"), failed_step);
     TRAPS("a failed upgrade refuses the owner", mail_list, in("alice", k_list),
           USER_A, "this mailbox needs repair");
     // A check of one table reports on that table only
@@ -215,9 +224,7 @@ void test_check(MockIC &) {
     TRAPS("a freed file waits for its upgrade", mail_list, in("alice", k_list),
           USER_A, "busy: the mailbox is being upgraded");
     upgrade_every_file(test);
-    expect(test, entry(test, "alice"),
-           "needs_repair = opt \"the schema upgrade failed: the step to "
-           "schema version 6 failed");
+    expect(test, entry(test, "alice"), failed_step);
   }
   ic0mock_clear_time_override();
 }

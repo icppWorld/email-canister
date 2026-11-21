@@ -565,11 +565,14 @@ void test_folders(MockIC &mock_ic) {
         test,
         CALL(test, mail_unblock, "(\"fox\", \"SPAMMER@example.com\")", USER_A),
         "(true)");
-    // Unblocked already
+    // Unblocked already: the write is rolled back, never committed
+    db::fail_statements("UPDATE counters SET message_count");
     expect(
         test,
         CALL(test, mail_unblock, "(\"fox\", \"spammer@example.com\")", USER_A),
         "(false)");
+    check(test, db::fail_statements("") == 0,
+          "an unblock that changed nothing committed its write");
     expect(test, CALL(test, mail_blocked, "(\"fox\")", USER_A), "(vec {})");
   }
   {
@@ -600,16 +603,20 @@ void test_folders(MockIC &mock_ic) {
          "(\"fox\", \"ALTER TABLE blocked RENAME TO kept\")", CONTROLLER);
     TRAPS("a blocked list with no table", mail_blocked, "(\"fox\")", USER_A,
           "the blocked list cannot be read");
-    // One that fails after its first rows, as a damaged page would
+    // One that fails after its first rows, as a damaged page would: the
+    // index gives the rows in the list's order, newest first, with no sort,
+    // so 999 come back before the oldest, a2, fails
     CALL(test, dev_file_exec,
-         "(\"fox\", \"CREATE VIEW blocked AS SELECT * FROM kept UNION ALL "
-         "SELECT 'x@example.com', 'p', abs(-9223372036854775807 - 1)\")",
+         "(\"fox\", \"CREATE INDEX by_time ON kept(at_ns DESC, address); "
+         "CREATE VIEW blocked AS SELECT address, CASE address WHEN "
+         "'a2@example.com' THEN abs(-9223372036854775807 - 1) ELSE "
+         "blocked_by END AS blocked_by, at_ns FROM kept\")",
          CONTROLLER);
     TRAPS("a blocked list that fails partway", mail_blocked, "(\"fox\")",
           USER_A, "the blocked list cannot be read");
     CALL(test, dev_file_exec,
-         "(\"fox\", \"DROP VIEW blocked; ALTER TABLE kept RENAME TO "
-         "blocked\")",
+         "(\"fox\", \"DROP VIEW blocked; DROP INDEX by_time; ALTER TABLE kept "
+         "RENAME TO blocked\")",
          CONTROLLER);
     expect(test, CALL(test, mail_blocked, "(\"fox\")", USER_A),
            "\"more@example.com\"");

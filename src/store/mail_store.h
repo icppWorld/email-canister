@@ -166,8 +166,8 @@ struct Blocked {
   std::string blocked_by;
   int64_t at_ns{0};
 };
-// The list, newest first, in `found`. False when it cannot be read.
-bool blocked(const Mailbox &box, std::vector<Blocked> &found);
+// The list, newest first; nullopt when it cannot be read
+std::optional<std::vector<Blocked>> blocked(const Mailbox &box);
 // Whether mail from `address` goes to Spam; nullopt when that cannot be read
 std::optional<bool> is_blocked(sqlite3 *file, const std::string &address);
 

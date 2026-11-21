@@ -801,20 +801,21 @@ std::optional<bool> unblock(const Mailbox &box, const std::string &address) {
   MailboxWrite write(box);
   db::Stmt remove(box.file, "DELETE FROM blocked WHERE address = ?");
   if (!write || !remove || !remove.text(1, address).done()) return std::nullopt;
-  const bool existed = db::changes(box.file) != 0;
+  if (db::changes(box.file) == 0) return false; // rolled back: nothing changed
   if (!write.commit()) return std::nullopt;
-  return existed;
+  return true;
 }
 
-bool blocked(const Mailbox &box, std::vector<Blocked> &found) {
-  found.clear();
+std::optional<std::vector<Blocked>> blocked(const Mailbox &box) {
   db::Stmt select(box.file, "SELECT address, blocked_by, at_ns FROM blocked "
                             "ORDER BY at_ns DESC, address");
-  if (!select) return false;
+  if (!select) return std::nullopt;
+  std::vector<Blocked> found;
   while (select.row())
     found.push_back({select.column_text(0), select.column_text(1),
                      select.column_integer(2)});
-  return !select.failed();
+  if (select.failed()) return std::nullopt;
+  return found;
 }
 
 std::optional<bool> is_blocked(sqlite3 *file, const std::string &address) {

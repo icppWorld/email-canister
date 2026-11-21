@@ -274,13 +274,12 @@ void mail_blocked() {
     return r;
   };
   // An empty list would pass for a cleared one
-  std::vector<store::Blocked> list;
-  if (!store::blocked(box, list))
-    IC_API::trap("the blocked list cannot be read");
+  const auto list = store::blocked(box);
+  if (!list) IC_API::trap("the blocked list cannot be read");
   std::vector<CandidType> items;
   // Few members block, so each name is looked up once
   std::map<std::string, std::optional<std::string>> names;
-  for (const store::Blocked &b : list) {
+  for (const store::Blocked &b : *list) {
     auto name = names.find(b.blocked_by);
     if (name == names.end())
       name = names.emplace(b.blocked_by, store::name_of(b.blocked_by)).first;
