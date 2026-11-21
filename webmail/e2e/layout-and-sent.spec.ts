@@ -383,7 +383,9 @@ test('a note that takes the place of a focused one has buttons of its own, none 
   moving.release()
   await expect(messageRow(page, 'Keyed stilt')).toHaveCount(0)
   await expect(note.getByRole('button', { name: 'Undo' })).not.toBeFocused()
-  // The focus went with the old note's button, so nothing holds the new one
+  // The focus went with the old note's button, so nothing holds the new one.
+  // Without the fix this fails only where the browser removes a focused button
+  // without a blur, as Chromium does.
   await expect(note.locator('span')).toHaveCount(0, { timeout: 12_000 })
   await context.close()
 })

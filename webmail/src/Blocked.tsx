@@ -26,6 +26,12 @@ export function BlockedSenders({
     try {
       const blocked = await backend.mail_blocked()
       if (request !== latestLoad.current) return
+      // Once a reply no longer lists an address, a later listing of it is a
+      // block made again
+      const listed = new Set(blocked.map((b) => b.address))
+      for (const address of unblocked.current) {
+        if (!listed.has(address)) unblocked.current.delete(address)
+      }
       setList(blocked.filter((b) => !unblocked.current.has(b.address)))
       setError('')
     } catch (e) {

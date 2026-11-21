@@ -37,9 +37,6 @@ const BATCH = 100
 // A search page can come back empty with a cursor, when the canister's budget
 // ran out before a match: a load reads on by itself up to this many pages
 const SEARCH_CALLS = 5
-// Passes of Empty over the folder, each from the top: one also deletes mail
-// an earlier pass missed, as mail moved in behind its cursor
-const EMPTY_PASSES = 3
 
 export type Folder = 'inbox' | 'trash' | 'spam'
 
@@ -160,8 +157,9 @@ function movedText(
 // went with them: a refused move leaves the blocks as they are. A refusal
 // offers the action again, which goes on from the step that failed. Mail moved
 // back into Spam more than 30 days after it arrived is deleted instead, which
-// its note says. Without messages it changes only the blocks, under a label
-// that promises no mail. Made here, so the toast holds only what it needs.
+// its note says, a refusal's too. Without messages it changes only the blocks,
+// under a label that promises no mail. Made here, so the toast holds only what
+// it needs.
 function undo(
   backend: Mailbox,
   uids: bigint[],
@@ -173,6 +171,7 @@ function undo(
   let blocks = block
   let unblocks = unblock
   const back: Moved = { moved: [], deleted: 0, gone: 0 }
+  let tried = false
   return {
     label,
     reload: true,
@@ -181,7 +180,10 @@ function undo(
       left = left.slice(done.length)
       back.moved.push(...result.moved)
       back.deleted += result.deleted
-      back.gone += result.gone
+      // A retry finds what an earlier try moved, whose reply was lost, back
+      // already: it says nothing of mail no longer there
+      back.gone = tried ? 0 : result.gone
+      tried = true
       if (error) throw error
       // Each apart, so a refused one leaves the others to go through; only
       // the refused ones are tried again
@@ -194,11 +196,17 @@ function undo(
       const unblocked = unblocks.length
       unblocks = refused(unblocks, 0)
       blocks = refused(blocks, unblocked)
+      const text =
+        back.deleted + back.gone > 0
+          ? movedText(back, FOLDERS[from].name, '')
+          : ''
       const refusal = replies.find((r) => r.status === 'rejected')
-      if (refusal) throw refusal.reason
-      if (back.deleted + back.gone > 0) {
-        return { text: movedText(back, FOLDERS[from].name, '') }
+      if (refusal) {
+        throw text
+          ? new Error(`${text}. ${errorText(refusal.reason)}`)
+          : refusal.reason
       }
+      if (text) return { text }
     },
   }
 }
@@ -662,7 +670,8 @@ export function Inbox({
       notify({
         text: movedText(result, FOLDERS[to].name, ''),
         // Only what the canister moved: mail deleted for good cannot come
-        // back, and mail another member moved stays where they put it
+        // back, and mail another member moved before this click is not
+        // pulled back
         actions:
           result.moved.length > 0
             ? [undo(backend, result.moved, folder)]
@@ -760,11 +769,9 @@ export function Inbox({
     if (error) throw error
   }
 
-  // Every message in Trash or Spam, page by page. Each pass follows the
+  // Every message in Trash or Spam, page by page. The walk follows the
   // cursor, so a page that still lists mail deleted already, as a replica
-  // that lags can, neither repeats nor ends it. Passes go on from the top
-  // until one lists nothing, so mail missing from a page, or moved in behind
-  // the cursor, goes too. A last pass that still found mail is noted.
+  // that lags can, neither repeats nor ends it.
   const empty = async () => {
     if (
       !window.confirm(
@@ -773,32 +780,21 @@ export function Inbox({
     )
       return
     try {
-      for (let pass = 1; ; pass++) {
-        let found = 0
-        let cursor: [] | [bigint] = []
-        do {
-          const page = await backend.mail_list({
-            folder: here,
-            cursor,
-            limit: BigInt(BATCH),
-          })
-          found += page.items.length
-          if (page.items.length > 0) {
-            await backend.mail_delete(
-              page.items.map((m) => m.uid),
-              here
-            )
-          }
-          cursor = page.cursor
-        } while (cursor.length > 0)
-        if (found === 0) break
-        if (pass === EMPTY_PASSES) {
-          notify({
-            text: `Some mail may still be in ${FOLDERS[folder].name}: empty it again`,
-          })
-          break
+      let cursor: [] | [bigint] = []
+      do {
+        const page = await backend.mail_list({
+          folder: here,
+          cursor,
+          limit: BigInt(BATCH),
+        })
+        if (page.items.length > 0) {
+          await backend.mail_delete(
+            page.items.map((m) => m.uid),
+            here
+          )
         }
-      }
+        cursor = page.cursor
+      } while (cursor.length > 0)
     } finally {
       // Also after a refusal: what went before is gone from the list
       setSelected(null)
