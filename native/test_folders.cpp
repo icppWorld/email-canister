@@ -157,7 +157,8 @@ void test_folders(MockIC &mock_ic) {
   }
   {
     const std::string test = "a move to Trash takes unread mail off the count";
-    expect(test, move(test, "vec { 1; 2; 99 }", 1), "(2 : nat64, ");
+    expect_equal(test, move(test, "vec { 1; 2; 99 }", 1),
+                 "(2 : nat64, vec { 1 : nat64; 2 : nat64 }, vec {})");
     const std::string trash = listed(test, 1);
     expect(test, trash, "uid = 2 : ");
     expect(test, trash, "folder = 1 : ");
@@ -165,7 +166,8 @@ void test_folders(MockIC &mock_ic) {
     expect(test, fox(test), "unseen = 2 : ");
     expect(test, fox(test), "message_count = 4 : ");
     // Already there: nothing moves
-    expect(test, move(test, "vec { 1 }", 1), "(0 : nat64, ");
+    expect_equal(test, move(test, "vec { 1 }", 1),
+                 "(0 : nat64, vec {}, vec {})");
   }
   {
     const std::string test = "reading mail in Trash leaves the count alone";
@@ -191,17 +193,20 @@ void test_folders(MockIC &mock_ic) {
   {
     const std::string test = "a restore counts unread mail again";
     // uid 1 was read in Trash, uid 2 was not
-    expect(test, move(test, "vec { 1; 2 }", 0), "(2 : nat64, ");
+    expect_equal(test, move(test, "vec { 1; 2 }", 0),
+                 "(2 : nat64, vec { 1 : nat64; 2 : nat64 }, vec {})");
     expect(test, fox(test), "unseen = 3 : ");
     expect(test, listed(test, 1), "items = vec {}");
   }
   {
     const std::string test = "Spam keeps unread mail off the count too";
-    expect(test, move(test, "vec { 3 }", 2), "(1 : nat64, ");
+    expect_equal(test, move(test, "vec { 3 }", 2),
+                 "(1 : nat64, vec { 3 : nat64 }, vec {})");
     expect(test, fox(test), "unseen = 2 : ");
     expect(test, listed(test, 2), "uid = 3 : ");
     // From Spam to Trash, still off the count
-    expect(test, move(test, "vec { 3 }", 1), "(1 : nat64, ");
+    expect_equal(test, move(test, "vec { 3 }", 1),
+                 "(1 : nat64, vec { 3 : nat64 }, vec {})");
     expect(test, fox(test), "unseen = 2 : ");
     expect(test, CALL(test, admin_check, "(\"fox\", null)", CONTROLLER),
            "result = \"ok\"");
@@ -257,13 +262,13 @@ void test_folders(MockIC &mock_ic) {
     expect(test, fox(test), "message_count = 28 : ");
     later_by_days(29);
     // Nothing has expired: a move costs the pump no turn
-    expect(test, move(test, "vec {}", 1), "(0 : nat64, ");
+    expect_equal(test, move(test, "vec {}", 1), "(0 : nat64, vec {}, vec {})");
     check(test, !clean_due(), "a move marked a mailbox with nothing expired");
     clean(test);
     expect(test, fox(test), "message_count = 28 : ");
     later_by_days(2);
     // A move leaves the deleting to the pump
-    expect(test, move(test, "vec {}", 1), "(0 : nat64, ");
+    expect_equal(test, move(test, "vec {}", 1), "(0 : nat64, vec {}, vec {})");
     expect(test, fox(test), "message_count = 28 : ");
     check(test, clean_due(), "a move did not mark the expired mail");
     clean(test);
@@ -279,12 +284,16 @@ void test_folders(MockIC &mock_ic) {
   {
     const std::string test = "mail past its 30 days is restored, not deleted";
     arrived(test, "1, 2", 0);
-    expect(test, move(test, "vec { 1 }", 1), "(1 : nat64, ");
-    expect(test, move(test, "vec { 2 }", 2), "(1 : nat64, ");
+    expect_equal(test, move(test, "vec { 1 }", 1),
+                 "(1 : nat64, vec { 1 : nat64 }, vec {})");
+    expect_equal(test, move(test, "vec { 2 }", 2),
+                 "(1 : nat64, vec { 2 : nat64 }, vec {})");
     later_by_days(31);
     // Restore, and Not spam, before the pump reached them
-    expect(test, move(test, "vec { 1 }", 0), "(1 : nat64, ");
-    expect(test, move(test, "vec { 2 }", 0), "(1 : nat64, ");
+    expect_equal(test, move(test, "vec { 1 }", 0),
+                 "(1 : nat64, vec { 1 : nat64 }, vec {})");
+    expect_equal(test, move(test, "vec { 2 }", 0),
+                 "(1 : nat64, vec { 2 : nat64 }, vec {})");
     clean(test);
     expect(test, fox(test), "message_count = 3 : ");
     const std::string inbox = listed(test, 0);
@@ -296,7 +305,8 @@ void test_folders(MockIC &mock_ic) {
   {
     const std::string test = "Spam's 30 days count from the mail's arrival";
     arrived(test, "30", 25);
-    expect(test, move(test, "vec { 30 }", 2), "(1 : nat64, ");
+    expect_equal(test, move(test, "vec { 30 }", 2),
+                 "(1 : nat64, vec { 30 : nat64 }, vec {})");
     later_by_days(4);
     clean(test);
     expect(test, listed(test, 2), "uid = 30 : ");
@@ -308,8 +318,12 @@ void test_folders(MockIC &mock_ic) {
   {
     const std::string test = "a move from Spam to Trash keeps Spam's time";
     arrived(test, "31", 25);
-    expect(test, move(test, "vec { 31 }", 2), "(1 : nat64, ");
-    expect(test, move(test, "vec { 31 }", 1), "(1 : nat64, ");
+    expect_equal(test, move(test, "vec { 31 }", 2),
+                 "(1 : nat64, vec { 31 : nat64 }, vec {})");
+    // Past 30 days since it arrived by now: only a move into Spam deletes
+    arrived(test, "31", 31);
+    expect_equal(test, move(test, "vec { 31 }", 1),
+                 "(1 : nat64, vec { 31 : nat64 }, vec {})");
     later_by_days(6);
     clean(test);
     expect_not(test, listed(test, 1), "uid = 31 : ");
@@ -354,7 +368,8 @@ void test_folders(MockIC &mock_ic) {
     const std::string test = "mail that cannot be deleted stops its cleanup "
                              "only";
     arrived(test, "4", 0);
-    expect(test, move(test, "vec { 4 }", 1), "(1 : nat64, ");
+    expect_equal(test, move(test, "vec { 4 }", 1),
+                 "(1 : nat64, vec { 4 : nat64 }, vec {})");
     later_by_days(31);
     CALL(test, dev_file_exec,
          "(\"fox\", \"CREATE TRIGGER damaged BEFORE DELETE ON messages WHEN "
@@ -365,7 +380,8 @@ void test_folders(MockIC &mock_ic) {
     // Delivery and moves go on
     CALL(test, ingest_move, "(" + queue_mail(test, "prompt") + ")", SELF);
     expect(test, listed(test, 0), "envelope_from = \"prompt@sender.example\"");
-    expect(test, move(test, "vec { 1 }", 1), "(1 : nat64, ");
+    expect_equal(test, move(test, "vec { 1 }", 1),
+                 "(1 : nat64, vec { 1 : nat64 }, vec {})");
     CALL(test, dev_file_exec, "(\"fox\", \"DROP TRIGGER damaged\")",
          CONTROLLER);
     clean(test);
@@ -407,7 +423,8 @@ void test_folders(MockIC &mock_ic) {
         fox_integer("SELECT uid FROM messages WHERE id = " + id));
     expect(test, listed(test, 2), "uid = " + uid + " : ");
     // Not spam, before the parse
-    expect(test, move(test, "vec { " + uid + " }", 0), "(1 : nat64, ");
+    expect_equal(test, move(test, "vec { " + uid + " }", 0),
+                 "(1 : nat64, vec { " + uid + " : nat64 }, vec {})");
     CALL(test, ingest_process, "(" + fox_id() + ", " + id + ")", SELF);
     check(test,
           fox_integer("SELECT folder FROM messages WHERE state = 1 AND id = " +
@@ -439,13 +456,14 @@ void test_folders(MockIC &mock_ic) {
     const std::string test = "a mark made while a cleanup fails stays";
     // Something to parse for the turns between the cleanups
     CALL(test, ingest_move, "(" + queue_mail(test, "rook") + ")", SELF);
-    expect(test, move(test, "vec { 2 }", 1), "(1 : nat64, ");
+    expect_equal(test, move(test, "vec { 2 }", 1),
+                 "(1 : nat64, vec { 2 : nat64 }, vec {})");
     CALL(test, dev_file_exec,
          "(\"fox\", \"UPDATE messages SET folder_ns = 1 WHERE uid = 2; "
          "CREATE TRIGGER damaged BEFORE DELETE ON messages WHEN old.uid = 2 "
          "BEGIN SELECT RAISE(ABORT, 'damaged'); END\")",
          CONTROLLER);
-    expect(test, move(test, "vec {}", 1), "(0 : nat64, ");
+    expect_equal(test, move(test, "vec {}", 1), "(0 : nat64, vec {}, vec {})");
     check(test, clean_due(), "a move did not mark the expired mail");
     mock_ic.register_method("ingest_clean", ingest_clean_after_a_mark);
     for (int turn = 0; turn < 3 && !g_marked_meanwhile; ++turn)
