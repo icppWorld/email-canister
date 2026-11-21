@@ -141,7 +141,8 @@ export const MESSAGE_QUEUED = 0n
 export const MESSAGE_QUARANTINED = 2n
 export const FLAG_SEEN = 1n
 export const FLAG_FLAGGED = 2n
-// Trash and Spam keep mail for 30 days
+// Trash keeps mail for 30 days from when it left the Inbox, Spam for 30 days
+// from its arrival
 export const FOLDER_INBOX = 0n
 export const FOLDER_TRASH = 1n
 export const FOLDER_SPAM = 2n

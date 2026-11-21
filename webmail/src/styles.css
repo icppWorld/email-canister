@@ -558,6 +558,10 @@ button.star.on .icon {
   background: transparent;
   text-decoration: underline;
 }
+/* In the note's own text colour: the focus ring's can be its background */
+.toast :focus-visible {
+  outline-color: currentColor;
+}
 .blocked {
   height: 100%;
   overflow-y: auto;
@@ -589,9 +593,6 @@ button.star.on .icon {
   display: flex;
   gap: 8px;
   align-items: center;
-}
-.toolbar h2 {
-  margin: 0 auto 0 0;
 }
 /* A narrow reader puts its actions on more than one line */
 .reader > .toolbar {

@@ -356,6 +356,70 @@ test('an unblock made while the list reloads stays', async ({ browser }) => {
   await context.close()
 })
 
+test('a note that takes the place of another has buttons of its own, none of them focused', async ({
+  browser,
+}) => {
+  deliver({ subject: 'Keyed avocet', body: '<p>An avocet.</p>' })
+  deliver({ subject: 'Keyed stilt', body: '<p>A stilt.</p>' })
+  await waitDrained()
+  const { context, page } = await signedIn(browser, USER_A)
+  const rows = page.locator('li.message-row')
+  await search(page, 'avocet')
+  await expect(rows).toHaveCount(1)
+  await messageRow(page, 'Keyed avocet').hover()
+  await page.getByRole('button', { name: 'Delete: Keyed avocet' }).click()
+  const note = page.getByTestId('toast')
+  await expect(note).toHaveText(/moved to Trash/)
+  await search(page, 'stilt')
+  await expect(rows).toHaveCount(1)
+  const moving = await hold(page, 'mail_move')
+  await messageRow(page, 'Keyed stilt').hover()
+  await page.getByRole('button', { name: 'Delete: Keyed stilt' }).click()
+  await moving.seen
+  // The first note's Undo holds the focus when the second takes its place
+  const first = note.getByRole('button', { name: 'Undo' })
+  await first.focus()
+  await expect(first).toBeFocused()
+  moving.release()
+  await expect(messageRow(page, 'Keyed stilt')).toHaveCount(0)
+  await expect(note.getByRole('button', { name: 'Undo' })).not.toBeFocused()
+  await context.close()
+})
+
+test("a focused button in a note has a ring in the note's text colour, light and dark", async ({
+  browser,
+}) => {
+  deliver({ subject: 'Ringed dunlin', body: '<p>A dunlin.</p>' })
+  await waitDrained()
+  const { context, page } = await signedIn(browser, USER_A)
+  await search(page, 'dunlin')
+  await messageRow(page, 'Ringed dunlin').hover()
+  await page.getByRole('button', { name: 'Delete: Ringed dunlin' }).click()
+  const note = page.getByTestId('toast')
+  await expect(note).toHaveText(/moved to Trash/)
+  // By the keyboard, which :focus-visible needs
+  const undo = note.getByRole('button', { name: 'Undo' })
+  await page.keyboard.press('Tab')
+  await undo.focus()
+  expect(await undo.evaluate((el) => el.matches(':focus-visible'))).toBe(true)
+  for (const colorScheme of ['light', 'dark'] as const) {
+    await page.emulateMedia({ colorScheme })
+    const look = await undo.evaluate((el) => {
+      const button = getComputedStyle(el)
+      return {
+        ring: button.outlineColor,
+        style: button.outlineStyle,
+        text: button.color,
+        background: getComputedStyle(el.closest('.toast')!).backgroundColor,
+      }
+    })
+    expect(look.style, colorScheme).toBe('solid')
+    expect(look.ring, colorScheme).toBe(look.text)
+    expect(look.ring, colorScheme).not.toBe(look.background)
+  }
+  await context.close()
+})
+
 test('the compose window minimises and fills the screen, keeping what it holds', async ({
   browser,
 }) => {

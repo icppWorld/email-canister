@@ -187,6 +187,26 @@ export async function hold(
   return { seen, release }
 }
 
+// Answers the page's reads of `method` as a replica that lags would: `back`
+// takes a change back while the canister answers, and `again` makes it once
+// more before the reply reaches the page
+export async function stale(
+  page: Page,
+  method: string,
+  back: () => Promise<unknown>,
+  again: () => Promise<unknown>
+): Promise<void> {
+  await page.route('**/api/*/canister/*/*', async (route) => {
+    if (!callsTo(route.request(), method)) return route.fallback()
+    const url = new URL(route.request().url())
+    url.hostname = '127.0.0.1'
+    await back()
+    const response = await route.fetch({ url: url.toString() })
+    await again()
+    await route.fulfill({ response })
+  })
+}
+
 // The page's requests for `method`, as they are sent
 export function watch(page: Page, method: string): Request[] {
   const seen: Request[] = []
@@ -337,6 +357,20 @@ export async function uidOf(
   return uid
 }
 
+// Sets a message's arrival (received_ns), or when it left the Inbox
+// (folder_ns), `days` earlier
+export const backdate = (
+  local: string,
+  uid: bigint,
+  column: 'received_ns' | 'folder_ns',
+  days: number
+) =>
+  backend(
+    'dev_file_exec',
+    `("${local}", "UPDATE messages SET ${column} = ${column} - ` +
+      `${BigInt(days) * 86_400_000_000_000n} WHERE uid = ${uid}")`
+  )
+
 // Ends the page's sign-in, as an expiry would
 export const endSignIn = (page: Page) =>
   page.evaluate(() => {
@@ -375,8 +409,7 @@ export const folder = (page: Page, name: string) =>
 
 export const reader = (page: Page) => page.locator('article.reader')
 
-// The open message to Spam, once it has loaded: Reply waits for that. Only
-// then does the note this leaves know the sender, to offer the block.
+// The open message to Spam, once it has loaded: Reply waits for that
 export async function spamFromReader(page: Page): Promise<void> {
   await expect(
     reader(page).getByRole('button', { name: 'Reply' })

@@ -1,16 +1,18 @@
 // A short note at the bottom of the page about what was just done, with
 // actions such as Undo
 
+import { Fragment } from 'react'
+
 export type ToastAction = {
   label: string
-  // Says more than the label, such as whom a block is for
-  title?: string
   run: () => Promise<void> | void
   // The action changes mail, so the list and counts load again
   reload?: true
 }
 
 export type Toast = { text: string; actions?: ToastAction[] }
+// A note as shown, with an id of its own
+export type ShownToast = Toast & { id: number }
 
 export function ToastBar({
   toast,
@@ -18,7 +20,7 @@ export function ToastBar({
   onClose,
   onHold,
 }: {
-  toast: Toast | null
+  toast: ShownToast | null
   onAction: (action: ToastAction) => void
   onClose: () => void
   // True while the pointer is over it or the focus is in it
@@ -44,13 +46,14 @@ export function ToastBar({
       }
     >
       {toast && (
-        <>
+        // By the note, so one that takes another's place has buttons of its
+        // own: a focused one would run the new note's action
+        <Fragment key={toast.id}>
           <span>{toast.text}</span>
           {toast.actions?.map((action) => (
             <button
               key={action.label}
               className="bare"
-              title={action.title}
               onClick={() => onAction(action)}
             >
               {action.label}
@@ -59,7 +62,7 @@ export function ToastBar({
           <button className="bare" aria-label="Dismiss" onClick={onClose}>
             ×
           </button>
-        </>
+        </Fragment>
       )}
     </div>
   )

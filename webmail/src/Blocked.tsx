@@ -17,15 +17,17 @@ export function BlockedSenders({
   const [list, setList] = useState<Blocked[] | null>(null)
   const [error, setError] = useState('')
 
-  // Only the newest load shows: one read before an unblock would bring the
-  // address back
+  // Only the newest load shows, without what was unblocked here while it was
+  // under way: its read may come from before the unblock
   const latestLoad = useRef(0)
+  const unblocked = useRef(new Set<string>())
   const load = useCallback(async () => {
     const request = ++latestLoad.current
+    unblocked.current = new Set()
     try {
       const blocked = await backend.mail_blocked()
       if (request !== latestLoad.current) return
-      setList(blocked)
+      setList(blocked.filter((b) => !unblocked.current.has(b.address)))
       setError('')
     } catch (e) {
       if (request === latestLoad.current) setError(errorText(e))
@@ -43,9 +45,11 @@ export function BlockedSenders({
       setError(errorText(e))
       return
     }
+    // No reload: a replica that has not seen the unblock yet would bring the
+    // address back
+    unblocked.current.add(address)
     setList((blocked) => blocked?.filter((b) => b.address !== address) ?? null)
     setError('')
-    load()
   }
 
   return (
