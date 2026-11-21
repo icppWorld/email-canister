@@ -487,7 +487,9 @@ test('remote images load only after Show images, and only that time', async ({
       // Neither may leak: a link that connects ahead, and a looser referrer
       `<link rel="preconnect" href="https://ahead.example.test">` +
       `<meta name="referrer" content="unsafe-url">` +
-      `<p>razorbill</p><img src="${pic}" alt="Remote pic">` +
+      // with a referrer policy of its own, and a template
+      `<p>razorbill</p><img src="${pic}" alt="Remote pic" referrerpolicy="unsafe-url">` +
+      `<template><p>kept aside</p></template>` +
       `<div style="background:url(${bg})">x</div>` +
       // Loaded once the frame has reached past the remote image
       `<img src="data:image/png;base64,${PIXEL}" alt="Local pic">` +
@@ -533,6 +535,8 @@ test('remote images load only after Show images, and only that time', async ({
   const frame = page.frameLocator('iframe.body')
   await expect(frame.locator('link')).toHaveCount(0)
   await expect(frame.locator('iframe')).toHaveCount(0)
+  await expect(frame.locator('template')).toHaveCount(0)
+  await expect(frame.locator('[referrerpolicy]')).toHaveCount(0)
   await expect(frame.locator('meta[content="unsafe-url"]')).toHaveCount(0)
 
   await showImages.click()

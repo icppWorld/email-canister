@@ -305,8 +305,10 @@ export type FramedBody = { body: string; paper: boolean; remote: boolean }
 // connects ahead, such as preconnect, which would tell the sender the message
 // was read; a meta could loosen the frame's referrer policy; a template can
 // become a shadow root, and a frame holds a document of its own, which a check
-// here does not see into.
-const LEFT_OUT = 'link, meta, template, iframe, frame'
+// here does not see into. A <frame> needs no entry: a body cannot hold one.
+const LEFT_OUT = 'link, meta, template, iframe'
+// An element's own referrer policy, which would win over the frame's
+const LEFT_OUT_ATTRIBUTE = 'referrerpolicy'
 
 // The message as the frame parses it: inside the body of the frame's document
 function parsedInFrame(body: string): Document {
@@ -316,17 +318,21 @@ function parsedInFrame(body: string): Document {
   )
 }
 
-// The message without what the frame leaves out, checked on the parse the
-// frame makes of it: markup written out and parsed again can grow elements
-// the first parse did not have, so it is repeated until a parse finds none. A
-// message that keeps growing them is shown as its text.
+// The message without the elements and the attribute the frame leaves out,
+// checked on the parse the frame makes of it: markup written out and parsed
+// again can grow elements the first parse did not have, so it is repeated
+// until a parse finds none. A message that keeps growing them is shown as its
+// text.
 function withoutLeftOut(html: string): { body: string; doc: Document } {
   let body = html
   for (let pass = 0; pass < 4; pass += 1) {
     const doc = parsedInFrame(body)
-    const found = doc.querySelectorAll(LEFT_OUT)
+    const found = doc.querySelectorAll(`${LEFT_OUT}, [${LEFT_OUT_ATTRIBUTE}]`)
     if (found.length === 0) return { body, doc }
-    found.forEach((element) => element.remove())
+    found.forEach((element) => {
+      if (element.matches(LEFT_OUT)) element.remove()
+      else element.removeAttribute(LEFT_OUT_ATTRIBUTE)
+    })
     body = doc.documentElement.outerHTML
   }
   const text = escapeHtml(parsedInFrame(body).body.textContent ?? '')
