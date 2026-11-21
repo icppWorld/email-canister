@@ -1,11 +1,12 @@
 // A short note at the bottom of the page about what was just done, with
 // actions such as Undo
 
-import { Fragment } from 'react'
+import { Fragment, useEffect, useRef } from 'react'
 
 export type ToastAction = {
   label: string
-  run: () => Promise<void> | void
+  // May return a note on what it did
+  run: () => Promise<Toast | void> | void
   // The action changes mail, so the list and counts load again
   reload?: true
 }
@@ -26,9 +27,22 @@ export function ToastBar({
   // True while the pointer is over it or the focus is in it
   onHold: (held: boolean) => void
 }) {
+  const bar = useRef<HTMLDivElement>(null)
+  // A new note's buttons take the place of the old ones, a focused one too,
+  // which some browsers drop with no blur: the hold is read again
+  const id = toast?.id
+  useEffect(() => {
+    const element = bar.current
+    if (id === undefined || !element) return
+    onHold(
+      element.matches(':hover') || element.contains(document.activeElement)
+    )
+  }, [id, onHold])
+
   // The live region stays on the page, so a new note is announced
   return (
     <div
+      ref={bar}
       className="toast"
       role="status"
       data-testid="toast"

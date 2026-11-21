@@ -39,10 +39,12 @@ import {
   signInAgain,
   spamFromReader,
   stale,
+  toastButton,
   uidOf,
   undo,
   USER_A,
   waitDrained,
+  watch,
 } from './support'
 
 test.describe.configure({ mode: 'serial' })
@@ -477,23 +479,27 @@ test('an Undo that fails after a new sign-in leaves no note', async ({
   await context.close()
 })
 
-// Snow has the mailbox snipe, Tern skua and Uma auklet, with seeded mail in
-// Trash
+// Snow has the mailbox snipe, Tern skua, Uma auklet and Vera knot, with
+// seeded mail in Trash
 const SNOW = '4b'.repeat(32)
 const TERN = '4c'.repeat(32)
 const UMA = '4d'.repeat(32)
+const VERA = '4e'.repeat(32)
 
-// The seeded mail of a mailbox of its own, in Trash, shown there
+// 120 seeded messages of a mailbox of its own in Trash, shown there, and
+// `inbox` more in the Inbox
 async function seededTrash(
   browser: Browser,
   local: string,
-  seed: string
+  seed: string,
+  inbox = 0
 ): Promise<{ context: BrowserContext; page: Page; uids: bigint[] }> {
   joinMailbox(local, seed)
-  backend('dev_seed', `("${local}", 1 : nat64, 120 : nat64)`)
+  backend('dev_seed', `("${local}", 1 : nat64, ${120 + inbox} : nat64)`)
   const member = await asUser(seed, env.url, env.backend)
   const uids = Array.from({ length: 120 }, (_, n) => BigInt(n + 1))
-  expect(await member.mail_move(local, uids, FOLDER_TRASH)).toBe(120n)
+  const [moved] = await member.mail_move(local, uids, FOLDER_TRASH)
+  expect(moved).toBe(120n)
   const { context, page } = await signedIn(browser, seed)
   await expect(page.getByTestId('address')).toHaveText(`${local}@${DOMAIN}`)
   await folder(page, 'Trash')
@@ -526,15 +532,16 @@ test('Empty Trash refused part way leaves only what is still there', async ({
   await page.unrouteAll({ behavior: 'wait' })
   let lists = 0
   await page.route('**/api/*/canister/*/*', (route) =>
-    callsTo(route.request(), 'mail_list') && ++lists > 1
+    callsTo(route.request(), 'mail_list') && ++lists > 2
       ? route.abort('failed')
       : route.fallback()
   )
   page.once('dialog', (dialog) => dialog.accept())
   await page.getByRole('button', { name: 'Empty Trash' }).click()
-  // One page holds the rest. The reload and the agent's 3 tries more, then at
-  // once, not at the next timed refresh.
-  await expect.poll(() => lists, { timeout: 60_000 }).toBe(5)
+  // A pass whose one page holds the rest, and one that finds nothing. The
+  // reload and the agent's 3 tries more, then at once, not at the next timed
+  // refresh.
+  await expect.poll(() => lists, { timeout: 60_000 }).toBe(6)
   await expect(
     page.getByRole('region', { name: 'Messages' }).getByRole('alert')
   ).toBeVisible({ timeout: 2_000 })
@@ -775,7 +782,7 @@ test('ticked messages to Spam block each sender once, and Undo lifts only those 
   await context.close()
 })
 
-test('a block whose reply is lost leaves the other senders blocked, and Undo lifts both', async ({
+test('a block whose reply is lost leaves the other senders blocked, and Undo lifts only theirs', async ({
   browser,
 }) => {
   for (const bird of ['ruff', 'reeve']) {
@@ -817,15 +824,17 @@ test('a block whose reply is lost leaves the other senders blocked, and Undo lif
   expect(await blockedAddresses(alice)).toEqual(
     expect.arrayContaining(['reeve@sender.example', 'ruff@sender.example'])
   )
+  // ruff may have been blocked before: with no reply, its block stays
   await undo(page)
   await expect(messageRow(page, 'Wading')).toHaveCount(2)
   const after = await blockedAddresses(alice)
   expect(after).not.toContain('reeve@sender.example')
-  expect(after).not.toContain('ruff@sender.example')
+  expect(after).toContain('ruff@sender.example')
+  await alice.mail_unblock('alice', 'ruff@sender.example')
   await context.close()
 })
 
-test('an unblock refused in Undo still brings the message back, and says why', async ({
+test('an unblock refused in Undo still brings the message back, says why, and its retry only unblocks', async ({
   browser,
 }) => {
   deliver({
@@ -847,15 +856,22 @@ test('an unblock refused in Undo still brings the message back, and says why', a
       ? route.abort('failed')
       : route.fallback()
   )
+  const moves = watch(page, 'mail_move')
   await undo(page)
   // The refusal, after the agent's own retries, and the message is back
   await expect(note).toHaveText(/^(?!Message moved to Spam)\S/, {
     timeout: 60_000,
   })
+  await page.getByTestId('toast').hover()
   await expect(messageRow(page, 'Stuck sanderling')).toHaveCount(1)
-  await page.unrouteAll()
+  // The retry only unblocks: the message is not moved again
+  await page.unrouteAll({ behavior: 'wait' })
+  await undo(page)
   const alice = await asAlice()
-  await alice.mail_unblock('alice', 'sanderling@sender.example')
+  await expect
+    .poll(() => blockedAddresses(alice))
+    .not.toContain('sanderling@sender.example')
+  expect(moves).toHaveLength(1)
   await context.close()
 })
 
@@ -1047,7 +1063,7 @@ test("the reader's Mark unread marks the message unread and closes it", async ({
   await context.close()
 })
 
-test('mail marked as Spam more than 30 days after it arrived is deleted for good, with no Undo', async ({
+test('mail marked as Spam more than 30 days after it arrived is deleted for good, with Unblock and no Undo', async ({
   browser,
 }) => {
   deliver({
@@ -1078,7 +1094,12 @@ test('mail marked as Spam more than 30 days after it arrived is deleted for good
     })
     expect(items).toHaveLength(0)
   }
-  await alice.mail_unblock('alice', 'auk@sender.example')
+  // The block alone can be taken back
+  expect(await blockedAddresses(alice)).toContain('auk@sender.example')
+  await toastButton(page, 'Unblock')
+  await expect
+    .poll(() => blockedAddresses(alice))
+    .not.toContain('auk@sender.example')
   await context.close()
 })
 
@@ -1248,33 +1269,52 @@ test('Block sender blocks the address the canister read, not the one the browser
   await context.close()
 })
 
-test('an unblock stays when a later read of the blocked senders lags behind it', async ({
+test('an unblock stays, with no read after it, and later reads that lag behind it leave it off', async ({
   browser,
 }) => {
+  deliver({ subject: 'Marked smew', body: '<p>A smew.</p>' })
+  await waitDrained()
   const alice = await asAlice()
   await alice.mail_block('alice', 'lagging@sender.example')
   const { context, page } = await signedIn(browser, USER_A)
+  // A note whose Undo reloads the page later
+  await search(page, 'Marked smew')
+  await messageRow(page, 'Marked smew').hover()
+  await page.getByRole('button', { name: 'Delete: Marked smew' }).click()
+  const note = page.getByTestId('toast')
+  await expect(note).toHaveText(/moved to Trash/)
   await menuItem(page, 'More', 'Blocked senders')
   const blocked = page.getByRole('region', { name: 'Blocked senders' })
   await expect(blocked).toContainText('lagging@sender.example')
+  // Every read from here on lags behind the unblock
   await stale(
     page,
     'mail_blocked',
     () => alice.mail_block('alice', 'lagging@sender.example'),
     () => alice.mail_unblock('alice', 'lagging@sender.example')
   )
+  const reads = watch(page, 'mail_blocked')
+  // Held by the focus until the Unblock, then 8 seconds more
+  await note.getByRole('button', { name: 'Undo' }).focus()
+  const unblocked = page.waitForResponse((response) =>
+    callsTo(response.request(), 'mail_unblock')
+  )
   await blocked
     .getByRole('listitem')
     .filter({ hasText: 'lagging@sender.example' })
     .getByRole('button', { name: 'Unblock' })
     .click()
+  await unblocked
   await expect(blocked).not.toContainText('lagging@sender.example')
-  // A moment more, for a read after the unblock to show
-  await page.waitForTimeout(2_000)
-  await expect(blocked).not.toContainText('lagging@sender.example', {
-    timeout: 1_000,
-  })
+  // A later load, whose reply shows by a block made since
+  await alice.mail_block('alice', 'marker@sender.example')
+  await undo(page)
+  await expect(blocked).toContainText('marker@sender.example')
+  await expect(blocked).not.toContainText('lagging@sender.example')
+  // That load's read alone: none followed the unblock
+  expect(reads).toHaveLength(1)
   expect(await blockedAddresses(alice)).not.toContain('lagging@sender.example')
+  await alice.mail_unblock('alice', 'marker@sender.example')
   await context.close()
 })
 
@@ -1289,7 +1329,8 @@ test('Empty Trash goes on past a page that lists mail no longer there', async ({
   page.once('dialog', (dialog) => dialog.accept())
   await page.getByRole('button', { name: 'Empty Trash' }).click()
   await listing.seen
-  expect(await tern.mail_move('skua', uids.slice(20), FOLDER_INBOX)).toBe(100n)
+  const [moved] = await tern.mail_move('skua', uids.slice(20), FOLDER_INBOX)
+  expect(moved).toBe(100n)
   listing.release()
   await expect(page.getByText('Nothing in Trash.')).toBeVisible()
   const { items } = await tern.mail_list('skua', {
@@ -1370,5 +1411,128 @@ test('a search goes on past pages the canister ended before a match, and never s
   } finally {
     budgets('3_000_000_000')
   }
+  await context.close()
+})
+
+test('Undo of a Delete brings back only what it moved, not mail another member moved already', async ({
+  browser,
+}) => {
+  for (const n of [1, 2]) {
+    deliver({ subject: `Shared ibis ${n}`, body: '<p>An ibis.</p>' })
+  }
+  await waitDrained()
+  const alice = await asAlice()
+  const first = await uidOf(alice, 'alice', 'Shared ibis 1')
+  const { context, page } = await signedIn(browser, USER_A)
+  await search(page, 'ibis')
+  await expect(messageRow(page, 'Shared ibis')).toHaveCount(2)
+  // As another member would, while the list still shows it
+  await alice.mail_move('alice', [first], FOLDER_TRASH)
+  const bulk = page.getByRole('toolbar', { name: 'Selected messages' })
+  await bulk.getByLabel('Select all').check()
+  await bulk.getByRole('button', { name: 'Delete', exact: true }).click()
+  const note = page.getByTestId('toast')
+  await expect(note.locator('span')).toHaveText(
+    'Message moved to Trash. 1 was no longer here'
+  )
+  await undo(page)
+  await expect(messageRow(page, 'Shared ibis 2')).toHaveCount(1)
+  await expect(messageRow(page, 'Shared ibis 1')).toHaveCount(0)
+  const { items } = await alice.mail_search('alice', {
+    query: 'ibis',
+    folder: FOLDER_TRASH,
+    cursor: [],
+    limit: 10n,
+  })
+  expect(items.map((m) => m.uid)).toEqual([first])
+  await context.close()
+})
+
+test('Undo of Not spam on mail that arrived more than 30 days ago says it was deleted for good', async ({
+  browser,
+}) => {
+  deliver({ subject: 'Elderly scoter', body: '<p>A scoter.</p>' })
+  await waitDrained()
+  const alice = await asAlice()
+  const uid = await uidOf(alice, 'alice', 'Elderly scoter')
+  await alice.mail_move('alice', [uid], FOLDER_SPAM)
+  // After the move, which then kept it: the move back into Spam does not
+  backdate('alice', uid, 'received_ns', 31)
+  const { context, page } = await signedIn(browser, USER_A)
+  await folder(page, 'Spam')
+  await messageRow(page, 'Elderly scoter').click()
+  await page.getByRole('button', { name: 'Not spam', exact: true }).click()
+  const note = page.getByTestId('toast').locator('span')
+  await expect(note).toHaveText('Message moved to the Inbox')
+  await undo(page)
+  await expect(note).toHaveText(
+    'Message deleted for good: it arrived more than 30 days ago'
+  )
+  for (const folder of [FOLDER_INBOX, FOLDER_SPAM]) {
+    const { items } = await alice.mail_search('alice', {
+      query: 'scoter',
+      folder,
+      cursor: [],
+      limit: 1n,
+    })
+    expect(items).toHaveLength(0)
+  }
+  await context.close()
+})
+
+test('a block made before stays after Undo when its block during Spam was refused', async ({
+  browser,
+}) => {
+  deliver({
+    subject: 'Prior razorbill',
+    body: '<p>A razorbill.</p>',
+    from: 'Razorbill <razorbill@sender.example>',
+  })
+  await waitDrained()
+  // After the delivery, so the message stays in the Inbox
+  const alice = await asAlice()
+  await alice.mail_block('alice', 'razorbill@sender.example')
+  const { context, page } = await signedIn(browser, USER_A)
+  await openMail(page, 'razorbill')
+  await expect(page.getByTestId('subject')).toHaveText('Prior razorbill')
+  await page.route('**/api/*/canister/*/*', (route) =>
+    callsTo(route.request(), 'mail_block') &&
+    !callsTo(route.request(), 'mail_blocked')
+      ? route.abort('failed')
+      : route.fallback()
+  )
+  await spamFromReader(page)
+  const note = page.getByTestId('toast')
+  await expect(note.locator('span')).toHaveText(
+    /^Message moved to Spam\. Blocking razorbill@sender\.example failed: /,
+    { timeout: 60_000 }
+  )
+  await undo(page)
+  await expect(messageRow(page, 'Prior razorbill')).toHaveCount(1)
+  expect(await blockedAddresses(alice)).toContain('razorbill@sender.example')
+  await alice.mail_unblock('alice', 'razorbill@sender.example')
+  await context.close()
+})
+
+test('Empty Trash also deletes mail moved into Trash behind its walk', async ({
+  browser,
+}) => {
+  const { context, page } = await seededTrash(browser, 'knot', VERA, 1)
+  const vera = await asUser(VERA, env.url, env.backend)
+  // Moved in after the walk's first page, newer than all it lists
+  const deleting = await hold(page, 'mail_delete')
+  page.once('dialog', (dialog) => dialog.accept())
+  await page.getByRole('button', { name: 'Empty Trash' }).click()
+  await deleting.seen
+  const [moved] = await vera.mail_move('knot', [121n], FOLDER_TRASH)
+  expect(moved).toBe(1n)
+  deleting.release()
+  await expect(page.getByText('Nothing in Trash.')).toBeVisible()
+  const { items } = await vera.mail_list('knot', {
+    folder: FOLDER_TRASH,
+    cursor: [],
+    limit: 10n,
+  })
+  expect(items).toHaveLength(0)
   await context.close()
 })

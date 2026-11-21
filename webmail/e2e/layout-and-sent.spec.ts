@@ -356,7 +356,7 @@ test('an unblock made while the list reloads stays', async ({ browser }) => {
   await context.close()
 })
 
-test('a note that takes the place of another has buttons of its own, none of them focused', async ({
+test('a note that takes the place of a focused one has buttons of its own, none of them focused, and closes by itself', async ({
   browser,
 }) => {
   deliver({ subject: 'Keyed avocet', body: '<p>An avocet.</p>' })
@@ -383,6 +383,8 @@ test('a note that takes the place of another has buttons of its own, none of the
   moving.release()
   await expect(messageRow(page, 'Keyed stilt')).toHaveCount(0)
   await expect(note.getByRole('button', { name: 'Undo' })).not.toBeFocused()
+  // The focus went with the old note's button, so nothing holds the new one
+  await expect(note.locator('span')).toHaveCount(0, { timeout: 12_000 })
   await context.close()
 })
 

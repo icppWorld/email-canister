@@ -37,9 +37,9 @@ const BATCH = 100
 // A search page can come back empty with a cursor, when the canister's budget
 // ran out before a match: a load reads on by itself up to this many pages
 const SEARCH_CALLS = 5
-// Spam keeps mail for 30 days from its arrival: a move there deletes older
-// mail instead
-const SPAM_KEEP_NS = 30n * 86_400n * 1_000_000_000n
+// Passes of Empty over the folder, each from the top: one also deletes mail
+// an earlier pass missed, as mail moved in behind its cursor
+const EMPTY_PASSES = 3
 
 export type Folder = 'inbox' | 'trash' | 'spam'
 
@@ -83,22 +83,43 @@ async function attempt(
 }
 
 // A call for many messages, in parts the canister takes. Returns the uids it
-// got through, how many of them the canister counted as changed, and the
-// refusal that stopped it.
+// got through, and the refusal that stopped it.
 async function inBatches(
   uids: bigint[],
-  call: (part: bigint[]) => Promise<bigint | void>
-): Promise<{ done: bigint[]; count: number; error?: unknown }> {
-  let count = 0
+  call: (part: bigint[]) => Promise<unknown>
+): Promise<{ done: bigint[]; error?: unknown }> {
   for (let at = 0; at < uids.length; at += BATCH) {
     try {
-      const changed = await call(uids.slice(at, at + BATCH))
-      if (typeof changed === 'bigint') count += Number(changed)
+      await call(uids.slice(at, at + BATCH))
     } catch (error) {
-      return { done: uids.slice(0, at), count, error }
+      return { done: uids.slice(0, at), error }
     }
   }
-  return { done: uids, count }
+  return { done: uids }
+}
+
+// What a move did, as the canister replied: the uids it moved, how many it
+// deleted for good instead (mail moved into Spam more than 30 days after it
+// arrived), and how many it did neither to, being no longer in the folder, as
+// when another member moved them
+type Moved = { moved: bigint[]; deleted: number; gone: number }
+
+// A move of many messages, in parts the canister takes. Returns the uids it
+// got through, what it did to them, and the refusal that stopped it.
+async function moveAll(
+  backend: Mailbox,
+  uids: bigint[],
+  to: Folder
+): Promise<{ done: bigint[]; result: Moved; error?: unknown }> {
+  const moved: bigint[] = []
+  let deleted = 0
+  const { done, error } = await inBatches(uids, async (part) => {
+    const [, these, gone] = await backend.mail_move(part, FOLDERS[to].number)
+    moved.push(...these)
+    deleted += gone.length
+  })
+  const gone = done.length - moved.length - deleted
+  return { done, result: { moved, deleted, gone }, error }
 }
 
 // "Message", "this message" or "3 messages"
@@ -109,65 +130,9 @@ const messages = (count: number, one: string) =>
 const starring = (flags: bigint): [bigint, bigint] =>
   flags & FLAG_FLAGGED ? [0n, FLAG_FLAGGED] : [FLAG_FLAGGED, 0n]
 
-// Brings messages back to the folder they left, then puts back the blocks that
-// went with them: a refused move leaves the blocks as they are, and a refusal
-// offers Undo again, which does it all once more. Made here, so the toast
-// holds only what it needs.
-function undo(
-  backend: Mailbox,
-  uids: bigint[],
-  from: bigint,
-  { block = [], unblock = [] }: { block?: string[]; unblock?: string[] } = {}
-): ToastAction {
-  return {
-    label: 'Undo',
-    reload: true,
-    run: async () => {
-      const { error } = await inBatches(uids, (part) =>
-        backend.mail_move(part, from)
-      )
-      if (error) throw error
-      // Each apart, so a refused one leaves the others to go through
-      const changes = await Promise.allSettled([
-        ...unblock.map((address) => backend.mail_unblock(address)),
-        ...block.map((address) => backend.mail_block(address)),
-      ])
-      const refused = changes.find((c) => c.status === 'rejected')
-      if (refused) throw refused.reason
-    },
-  }
-}
-
-// What a move did, by what the canister counted as moved: mail to Spam that
-// arrived more than 30 days ago was deleted instead, and the rest it did not
-// count was no longer in the folder, as when another member moved it. back:
-// the messages Undo can bring back.
-type Moved = { count: number; deleted: number; gone: number; back: bigint[] }
-
-function moved(
-  listed: Map<bigint, Summary>,
-  done: bigint[],
-  count: number,
-  to: Folder
-): Moved {
-  const cutoff = BigInt(Date.now()) * 1_000_000n - SPAM_KEEP_NS
-  const old = new Set(
-    to === 'spam'
-      ? done.filter((uid) => (listed.get(uid)?.received_ns ?? cutoff) < cutoff)
-      : []
-  )
-  const deleted = Math.min(old.size, done.length - count)
-  return {
-    count,
-    deleted,
-    gone: done.length - count - deleted,
-    back: done.filter((uid) => !old.has(uid)),
-  }
-}
-
 // The note of a move, with `also` for what came with it, such as a block
 function movedText(
-  { count, deleted, gone }: Moved,
+  { moved, deleted, gone }: Moved,
   to: string,
   also: string
 ): string {
@@ -175,8 +140,8 @@ function movedText(
   // The first part says "Message" or "3 messages", the others only the number
   const many = (n: number) =>
     parts.length === 0 ? messages(n, 'Message') : `${n}`
-  if (count > 0) {
-    parts.push(`${many(count)} moved to ${to}${also && ` and ${also}`}`)
+  if (moved.length > 0) {
+    parts.push(`${many(moved.length)} moved to ${to}${also && ` and ${also}`}`)
   }
   if (deleted > 0) {
     const they = deleted === 1 ? 'it' : 'they'
@@ -187,8 +152,55 @@ function movedText(
   if (gone > 0) {
     parts.push(`${many(gone)} ${gone === 1 ? 'was' : 'were'} no longer here`)
   }
-  if (also && count === 0) parts.push(also)
+  if (also && moved.length === 0) parts.push(also)
   return parts.join('. ')
+}
+
+// Brings messages back to the folder they left, then puts back the blocks that
+// went with them: a refused move leaves the blocks as they are. A refusal
+// offers the action again, which goes on from the step that failed. Mail moved
+// back into Spam more than 30 days after it arrived is deleted instead, which
+// its note says. Without messages it changes only the blocks, under a label
+// that promises no mail. Made here, so the toast holds only what it needs.
+function undo(
+  backend: Mailbox,
+  uids: bigint[],
+  from: Folder,
+  { block = [], unblock = [] }: { block?: string[]; unblock?: string[] } = {},
+  label = 'Undo'
+): ToastAction {
+  let left = uids
+  let blocks = block
+  let unblocks = unblock
+  const back: Moved = { moved: [], deleted: 0, gone: 0 }
+  return {
+    label,
+    reload: true,
+    run: async () => {
+      const { done, result, error } = await moveAll(backend, left, from)
+      left = left.slice(done.length)
+      back.moved.push(...result.moved)
+      back.deleted += result.deleted
+      back.gone += result.gone
+      if (error) throw error
+      // Each apart, so a refused one leaves the others to go through; only
+      // the refused ones are tried again
+      const replies = await Promise.allSettled([
+        ...unblocks.map((address) => backend.mail_unblock(address)),
+        ...blocks.map((address) => backend.mail_block(address)),
+      ])
+      const refused = (list: string[], offset: number) =>
+        list.filter((_, i) => replies[offset + i].status === 'rejected')
+      const unblocked = unblocks.length
+      unblocks = refused(unblocks, 0)
+      blocks = refused(blocks, unblocked)
+      const refusal = replies.find((r) => r.status === 'rejected')
+      if (refusal) throw refusal.reason
+      if (back.deleted + back.gone > 0) {
+        return { text: movedText(back, FOLDERS[from].name, '') }
+      }
+    },
+  }
 }
 
 function when(summary: Summary): string {
@@ -634,45 +646,43 @@ export function Inbox({
     new Map([...(selected ? [selected] : []), ...items].map((m) => [m.uid, m]))
 
   // Out of this folder, for the caller to say so. What moved before a
-  // refusal leaves the list, and when the canister moved fewer than asked,
-  // the list loads again.
+  // refusal leaves the list, and when some of it was no longer here, the
+  // list loads again.
   const moveOut = async (uids: bigint[], to: Folder) => {
-    const before = listed()
-    const { done, count, error } = await inBatches(uids, (part) =>
-      backend.mail_move(part, FOLDERS[to].number)
-    )
-    if (anyUnread(done)) onCounts()
-    drop(done)
-    const result = moved(before, done, count, to)
-    if (result.gone > 0) reload()
-    return { done, result, before, error }
+    const outcome = await moveAll(backend, uids, to)
+    if (anyUnread(outcome.done)) onCounts()
+    drop(outcome.done)
+    if (outcome.result.gone > 0) reload()
+    return outcome
   }
-
-  // Undo only for what moved: mail deleted for good cannot come back
-  const noted = (result: Moved, actions: ToastAction[]) =>
-    result.count > 0 ? actions : undefined
 
   const move = async (uids: bigint[], to: Folder) => {
     const { done, result, error } = await moveOut(uids, to)
     if (done.length > 0) {
       notify({
         text: movedText(result, FOLDERS[to].name, ''),
-        actions: noted(result, [undo(backend, result.back, here)]),
+        // Only what the canister moved: mail deleted for good cannot come
+        // back, and mail another member moved stays where they put it
+        actions:
+          result.moved.length > 0
+            ? [undo(backend, result.moved, folder)]
+            : undefined,
       })
     }
     if (error) throw error
   }
 
   // To Spam blocks the From address of each message, and from Spam to the
-  // Inbox unblocks it, both as the canister replies. Undo takes back the
-  // blocks this click made, and those whose reply was lost, which may have
-  // been made; it blocks again only what this click unblocked. Spam blocks no
-  // address of the mailbox's own domain or its subdomains, which spam often
-  // claims to be from. Mail with no From address only moves. The reader
+  // Inbox unblocks it. Undo takes back only what the canister replied this
+  // click changed: a refused or lost call may have met a block made before,
+  // which stays. With no mail moved, the note offers that alone. Spam blocks
+  // no address of the mailbox's own domain or its subdomains, which spam
+  // often claims to be from. Mail with no From address only moves. The reader
   // closes with the move, so the note says what failed after it.
   const judge = async (uids: bigint[], to: 'spam' | 'inbox') => {
     const spam = to === 'spam'
-    const { done, result, before, error } = await moveOut(uids, to)
+    const before = listed()
+    const { done, result, error } = await moveOut(uids, to)
     const ours = (address: string) =>
       address.endsWith(`@${kept(domain)}`) ||
       address.endsWith(`.${kept(domain)}`)
@@ -707,13 +717,15 @@ export function Inbox({
           `. ${spam ? 'Blocking' : 'Unblocking'} ${who(refused)}` +
           ` failed: ${errorText(refusal)}`
       }
-      const blocks = spam
-        ? { unblock: [...changed, ...refused] }
-        : { block: changed }
-      notify({
-        text,
-        actions: noted(result, [undo(backend, result.back, here, blocks)]),
-      })
+      const changes = spam ? { unblock: changed } : { block: changed }
+      let actions: ToastAction[] | undefined
+      if (result.moved.length > 0) {
+        actions = [undo(backend, result.moved, folder, changes)]
+      } else if (changed.length > 0) {
+        const label = spam ? 'Unblock' : 'Block again'
+        actions = [undo(backend, [], folder, changes, label)]
+      }
+      notify({ text, actions })
     }
     if (error) throw error
   }
@@ -748,9 +760,11 @@ export function Inbox({
     if (error) throw error
   }
 
-  // Every message in Trash or Spam, page by page. The walk follows the
+  // Every message in Trash or Spam, page by page. Each pass follows the
   // cursor, so a page that still lists mail deleted already, as a replica
-  // that lags can, neither repeats nor ends it.
+  // that lags can, neither repeats nor ends it. Passes go on from the top
+  // until one lists nothing, so mail missing from a page, or moved in behind
+  // the cursor, goes too. A last pass that still found mail is noted.
   const empty = async () => {
     if (
       !window.confirm(
@@ -759,21 +773,32 @@ export function Inbox({
     )
       return
     try {
-      let cursor: [] | [bigint] = []
-      do {
-        const page = await backend.mail_list({
-          folder: here,
-          cursor,
-          limit: BigInt(BATCH),
-        })
-        if (page.items.length > 0) {
-          await backend.mail_delete(
-            page.items.map((m) => m.uid),
-            here
-          )
+      for (let pass = 1; ; pass++) {
+        let found = 0
+        let cursor: [] | [bigint] = []
+        do {
+          const page = await backend.mail_list({
+            folder: here,
+            cursor,
+            limit: BigInt(BATCH),
+          })
+          found += page.items.length
+          if (page.items.length > 0) {
+            await backend.mail_delete(
+              page.items.map((m) => m.uid),
+              here
+            )
+          }
+          cursor = page.cursor
+        } while (cursor.length > 0)
+        if (found === 0) break
+        if (pass === EMPTY_PASSES) {
+          notify({
+            text: `Some mail may still be in ${FOLDERS[folder].name}: empty it again`,
+          })
+          break
         }
-        cursor = page.cursor
-      } while (cursor.length > 0)
+      }
     } finally {
       // Also after a refusal: what went before is gone from the list
       setSelected(null)
@@ -788,7 +813,7 @@ export function Inbox({
     notify({
       text: made ? `Blocked ${address}` : `${address} was blocked already`,
       actions: made
-        ? [undo(backend, [], here, { unblock: [address] })]
+        ? [undo(backend, [], folder, { unblock: [address] })]
         : undefined,
     })
   }

@@ -257,7 +257,8 @@ export function App() {
     // Its end belongs to the session it began in
     const session = latestBackend.current
     try {
-      await action.run()
+      const note = await action.run()
+      if (note && session === latestBackend.current) showToast(note)
     } catch (e) {
       // With the action again, to try once more
       if (session === latestBackend.current) {
