@@ -69,8 +69,9 @@ jobs:
 
   # Whether the build and the tests run, and the tree this run tests. They are
   # skipped for a pull request that changes only docs, which `static` checks,
-  # and for a push to main whose tree a pull request's run passed. That run
-  # tested the merge commit, whose first parent is the base it was built on
+  # and for a push to main whose tree the run of the pull request it merges
+  # passed. That run tested the merge commit, whose first parent is the base
+  # it was built on
   changes:
     runs-on: ubuntu-22.04
     permissions:
@@ -99,18 +100,9 @@ jobs:
               echo "Only docs changed"
             fi
           elif [ "$EVENT" = push ]; then
-            # A run of this workflow that passed this tree, for a pull request
-            # from this repository: a fork's run could upload any marker. An
-            # API call that fails runs the tests
-            for id in $(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/artifacts?name=passed-tree-$tree&per_page=100" \
-                --jq '.artifacts[] | select(.expired | not) | select(.workflow_run.head_repository_id == .workflow_run.repository_id) | .workflow_run.id'); do
-              run_of=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id" --jq '[.path, .event, .conclusion] | join(" ")' || true)
-              if [ "$run_of" = ".github/workflows/cicd.yml pull_request success" ]; then
-                run=false
-                echo "Run $id passed this tree"
-                break
-              fi
-            done
+            # Skipped only when the pull request this push merges passed it
+            run=$(scripts/passed-tree.sh "$tree" | sed -n 's/^run-tests=//p')
+            [ "$run" = false ] || run=true
           fi
           echo "run-tests=$run" >>"$GITHUB_OUTPUT"
 

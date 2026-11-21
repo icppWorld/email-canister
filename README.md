@@ -35,6 +35,7 @@ The backend is built with icpp-pro, pinned in `requirements.txt`. Every build an
 Setup, once:
 - Python 3.11 with `pip install -r requirements.txt`
 - Node.js 22 and the `icp` CLI
+- `jq`, for the test of the CI's test reuse
 - a local identity without funds for the tests: `icp identity new email-canister-test --storage plaintext`
 
 ```bash
