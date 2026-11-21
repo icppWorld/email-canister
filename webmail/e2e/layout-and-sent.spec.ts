@@ -1226,7 +1226,11 @@ test('a refused delete in Sent shows at once, while the list reloads, and leaves
   // Once the list is back, the mail is still there, unticked, and the
   // refusal still shows
   await loading.seen
+  const reloaded = page.waitForResponse((r) =>
+    callsTo(r.request(), 'mail_outbox_list')
+  )
   loading.release()
+  await reloaded
   await expect(sent.getByRole('listitem')).toHaveCount(2)
   for (const box of boxes) await expect(box).not.toBeChecked()
   await expect(sent.getByRole('alert')).toBeVisible()
