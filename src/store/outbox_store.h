@@ -135,5 +135,10 @@ bool outbox_get(const Mailbox &box, int64_t id, OutboxSummary &summary,
 // Return why it was refused, or an empty string
 std::string outbox_resend(const Mailbox &box, int64_t id, int64_t now_ns);
 std::string outbox_delete(const Mailbox &box, int64_t id);
+// Deletes the messages in one write, and fills `deleted` with their ids. One
+// that is being sent, or is not there, is skipped. False when the write
+// failed, when nothing changed.
+bool outbox_delete_many(const Mailbox &box, const std::vector<uint64_t> &ids,
+                        std::vector<uint64_t> &deleted);
 
 } // namespace store

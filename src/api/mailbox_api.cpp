@@ -15,7 +15,6 @@
 namespace {
 
 const uint64_t k_max_page = 100;
-const size_t k_max_batch = 200; // messages deleted, moved or flagged at once
 
 CandidTypeNat64 nat64(int64_t value) {
   return CandidTypeNat64{static_cast<uint64_t>(value)};
@@ -61,10 +60,6 @@ int64_t to_folder(uint64_t folder) {
   if (folder > static_cast<uint64_t>(store::k_last_folder))
     IC_API::trap("no such folder");
   return static_cast<int64_t>(folder);
-}
-
-void require_batch(const std::vector<uint64_t> &uids) {
-  if (uids.size() > k_max_batch) IC_API::trap("too many messages at once");
 }
 
 // The address in lower case, as SQLite's lower() makes it; traps when it is

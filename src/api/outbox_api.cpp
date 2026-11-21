@@ -238,3 +238,17 @@ void mail_outbox_delete() {
   if (!refused.empty()) IC_API::trap(refused);
   ic_api.to_wire();
 }
+
+// Deletes the messages in one write, and returns the ids deleted; one that is
+// being sent, or is not there, is skipped
+void mail_outbox_delete_many() {
+  IC_API ic_api(CanisterUpdate{std::string(__func__)}, false);
+  std::vector<uint64_t> ids;
+  const store::Mailbox box =
+      require_writable_file(read_mailbox(ic_api, {CandidTypeVecNat64{&ids}}));
+  require_batch(ids);
+  std::vector<uint64_t> deleted;
+  if (!store::outbox_delete_many(box, ids, deleted))
+    IC_API::trap("the delete failed");
+  ic_api.to_wire(CandidTypeVecNat64{deleted});
+}

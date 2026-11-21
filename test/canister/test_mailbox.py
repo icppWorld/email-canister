@@ -89,6 +89,7 @@ MAILBOX_CALLS = {
     "mail_outbox_get": "(1 : nat64)",
     "mail_outbox_resend": "(1 : nat64)",
     "mail_outbox_delete": "(1 : nat64)",
+    "mail_outbox_delete_many": "(vec { 1 : nat64 })",
     "mail_export_freeze": "(null)",
     "mail_export_thaw": "(0 : nat64)",
     "mail_export_chunk": "(record { offset = 0 : nat64; length = 10 : nat64 })",

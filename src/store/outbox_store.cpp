@@ -110,6 +110,40 @@ bool refresh_due(int64_t mailbox, sqlite3 *file_db) {
          update.integer(1, due.column_integer(0)).integer(2, mailbox).done();
 }
 
+enum class Removed { Done, Missing, Sending, Failed };
+
+// Deletes one message in the caller's MailboxWrite, and adds the bytes it
+// frees to `bytes`; the caller gives them back to the quota
+Removed remove_message(const store::Mailbox &box, int64_t id, int64_t &bytes) {
+  int64_t size = 0;
+  bool untried = false;
+  {
+    db::Stmt select(box.file,
+                    "SELECT state, bytes, attempts, generation FROM outbox "
+                    "WHERE id = ?");
+    if (!select) return Removed::Failed;
+    if (!select.integer(1, id).row()) {
+      return select.failed() ? Removed::Failed : Removed::Missing;
+    }
+    if (select.column_integer(0) == store::OutSending) return Removed::Sending;
+    size = select.column_integer(1);
+    // A resend starts its attempts again, but the first try may have gone out
+    untried = select.column_integer(0) == store::OutQueued &&
+              select.column_integer(2) == 0 && select.column_integer(3) == 0;
+  }
+  if (!delete_rows(box.file, id)) return Removed::Failed;
+  // Mail that never left frees its client_id: a retry sends it once
+  if (untried) {
+    db::Stmt forget(db::control(),
+                    "DELETE FROM sends WHERE mailbox_id = ? AND outbox_id = ?");
+    if (!forget || !forget.integer(1, box.id).integer(2, id).done()) {
+      return Removed::Failed;
+    }
+  }
+  bytes += size;
+  return Removed::Done;
+}
+
 } // namespace
 
 namespace store {
@@ -479,38 +513,46 @@ std::string outbox_resend(const Mailbox &box, int64_t id, int64_t now_ns) {
 }
 
 std::string outbox_delete(const Mailbox &box, int64_t id) {
-  int64_t bytes = 0;
-  bool untried = false;
-  {
-    db::Stmt select(box.file,
-                    "SELECT state, bytes, attempts, generation FROM outbox "
-                    "WHERE id = ?");
-    if (!select) return "the delete failed";
-    if (!select.integer(1, id).row()) {
-      return select.failed() ? "the delete failed" : "no such message";
-    }
-    if (select.column_integer(0) == OutSending) {
-      return "this message is being sent";
-    }
-    bytes = select.column_integer(1);
-    // A resend starts its attempts again, but the first try may have gone out
-    untried = select.column_integer(0) == OutQueued &&
-              select.column_integer(2) == 0 && select.column_integer(3) == 0;
-  }
   MailboxWrite write(box);
-  if (!write || !delete_rows(box.file, id) || !release_quota(box.id, bytes) ||
-      !refresh_due(box.id, box.file)) {
+  if (!write) return "the delete failed";
+  int64_t bytes = 0;
+  switch (remove_message(box, id, bytes)) {
+  case Removed::Done:
+    break;
+  case Removed::Missing:
+    return "no such message";
+  case Removed::Sending:
+    return "this message is being sent";
+  case Removed::Failed:
     return "the delete failed";
   }
-  // Mail that never left frees its client_id: a retry sends it once
-  if (untried) {
-    db::Stmt forget(db::control(),
-                    "DELETE FROM sends WHERE mailbox_id = ? AND outbox_id = ?");
-    if (!forget || !forget.integer(1, box.id).integer(2, id).done()) {
-      return "the delete failed";
+  return release_quota(box.id, bytes) && refresh_due(box.id, box.file) &&
+                 write.commit()
+             ? ""
+             : "the delete failed";
+}
+
+bool outbox_delete_many(const Mailbox &box, const std::vector<uint64_t> &ids,
+                        std::vector<uint64_t> &deleted) {
+  MailboxWrite write(box);
+  if (!write) return false;
+  int64_t bytes = 0;
+  // A repeated id is gone by its second turn, so its bytes count once
+  for (const uint64_t id : ids) {
+    switch (remove_message(box, static_cast<int64_t>(id), bytes)) {
+    case Removed::Done:
+      deleted.push_back(id);
+      break;
+    case Removed::Missing:
+    case Removed::Sending:
+      break;
+    case Removed::Failed:
+      return false;
     }
   }
-  return write.commit() ? "" : "the delete failed";
+  if (deleted.empty()) return true; // nothing to write
+  return release_quota(box.id, bytes) && refresh_due(box.id, box.file) &&
+         write.commit();
 }
 
 } // namespace store

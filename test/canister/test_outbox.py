@@ -145,6 +145,20 @@ def used(local: str = "alice") -> int:
     return number(entry_line(local), "used_bytes")
 
 
+def delete_many(messages: List[int], user: str = USER_A, local: str = "") -> str:
+    ids = "; ".join(f"{message} : nat64" for message in messages)
+    return mail(
+        "mail_outbox_delete_many", local or MAILBOX[user], f"(vec {{ {ids} }})", user
+    )
+
+
+def deleted_ids(output: str) -> List[int]:
+    """The ids in a vec nat64 reply, which may span several lines"""
+    return [
+        int(n.replace("_", "")) for n in re.findall(r"([\d_]+)\s*:\s*nat64", output)
+    ]
+
+
 @pytest.fixture(scope="module", autouse=True)
 def canister(network: str, identity: str) -> None:
     icp(
@@ -446,6 +460,18 @@ def test__deleted_queued_mail_is_never_sent() -> None:
     assert used() == before
 
 
+def test__mail_deleted_many_at_once_is_never_sent() -> None:
+    before = used()
+    crash("before_call")
+    first, second = send(), send()
+    assert sorted(deleted_ids(delete_many([first, second]))) == [first, second]
+    crash("")
+    # bob's later message is sent once the worker has passed alice's
+    wait_for(send(USER_B), SENT, USER_B)
+    assert stats()["calls"] == 1
+    assert used() == before
+
+
 def test__a_download_holds_the_outbox_until_it_ends() -> None:
     crash("before_call")
     message = send()
@@ -511,6 +537,25 @@ def test__outbox_is_private_to_its_owner() -> None:
         USER_B,
     )
     assert "Mine alone" not in listed
+    assert state(message) == SENT
+
+
+def test__outbox_deletes_many_for_its_owner_only() -> None:
+    message = send(subject="Kept")
+    wait_for(message, SENT)
+    # Ids are per mailbox: bob's must not reach this one
+    theirs = mail(
+        "mail_outbox_list",
+        MAILBOX[USER_B],
+        "(record { cursor = null; limit = 100 : nat64 })",
+        USER_B,
+    )
+    assert all(
+        int(n.replace("_", "")) < message
+        for n in re.findall(r"\bid = ([\d_]+)", theirs)
+    )
+    assert NO_MAILBOX in delete_many([message], USER_B, MAILBOX[USER_A])
+    assert deleted_ids(delete_many([message], USER_B)) == []
     assert state(message) == SENT
 
 
