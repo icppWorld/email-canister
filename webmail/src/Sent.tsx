@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import {
   errorText,
@@ -17,7 +17,7 @@ import { Bulk, RowPick, useTicks } from './Bulk'
 import { memberName, messages, noteOf, was } from './format'
 import { Icon } from './Icon'
 import { MessageBody } from './MessageBody'
-import { saveFile } from './mime'
+import { frameBody, saveFile } from './mime'
 import { Split } from './Splitter'
 import type { Toast } from './Toast'
 
@@ -93,6 +93,11 @@ function Details({
 }) {
   const [message, setMessage] = useState<OutboxMessage | null>(null)
   const [error, setError] = useState('')
+  // Built once per message: it parses the message
+  const framed = useMemo(
+    () => (message ? frameBody(message.html_body, []) : null),
+    [message]
+  )
 
   useEffect(() => {
     setMessage(null)
@@ -214,7 +219,7 @@ function Details({
           ))}
         </ul>
       )}
-      {message && <MessageBody html={message.html_body} />}
+      {framed && <MessageBody framed={framed} />}
     </article>
   )
 }

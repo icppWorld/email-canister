@@ -1,11 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 
-import {
-  frameBody,
-  sandboxDocument,
-  type PageStyle,
-  type ParsedAttachment,
-} from './mime'
+import { sandboxDocument, type FramedBody, type PageStyle } from './mime'
 
 function readPageStyle(): PageStyle {
   const root = getComputedStyle(document.documentElement)
@@ -35,26 +30,21 @@ function usePageStyle(): PageStyle {
   return page
 }
 
-// One array for every message without attachments, so the frame is not rebuilt on each render
-const NO_ATTACHMENTS: ParsedAttachment[] = []
-
-// No allow-* tokens at all: no scripts, forms, popups or same-origin access
+// No allow-* tokens at all: no scripts, forms, popups or same-origin access.
+// The message is framed by the caller, once per message (frameBody in mime.ts).
 export function MessageBody({
-  html,
-  attachments = NO_ATTACHMENTS,
+  framed,
+  images = false,
 }: {
-  html: string
-  attachments?: ParsedAttachment[]
+  framed: FramedBody
+  images?: boolean // its remote images are shown, after Show images
 }) {
   const page = usePageStyle()
-  // Built once per message: it parses the message and encodes its images
-  const { body, paper } = useMemo(
-    () => frameBody(html, attachments),
-    [html, attachments]
-  )
+  // A remote image shown is no longer the nothing a plain page allows
+  const paper = framed.paper || (images && framed.remote)
   const srcdoc = useMemo(
-    () => sandboxDocument(body, paper, page),
-    [body, paper, page]
+    () => sandboxDocument(framed.body, paper, page, images),
+    [framed.body, paper, page, images]
   )
   return (
     <iframe

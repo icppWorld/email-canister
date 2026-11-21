@@ -183,8 +183,9 @@ function plainElement(element: Element): boolean {
   )
 }
 
-// The frame allows only data: images, so any other image, such as a mail
-// service's remote tracking pixel, shows nothing of the message's own. It is
+// Until Show images the frame allows only data: images, so any other image,
+// such as a mail service's remote tracking pixel, shows nothing of the
+// message's own. It is
 // plain with the attributes and styles such pixels carry; anything that could
 // paint, such as a background, keeps the white page. The border:0 such
 // pixels carry also sets border-image, which is plain only while its source is
@@ -228,8 +229,7 @@ function unshownImage(element: Element): boolean {
   )
 }
 
-function wantsWhitePage(html: string): boolean {
-  const doc = new DOMParser().parseFromString(html, 'text/html')
+function wantsWhitePage(doc: Document): boolean {
   // Walked, so the first element that is not plain decides
   const walker = doc.createTreeWalker(
     doc.documentElement,
@@ -260,29 +260,64 @@ function pageStyleSheet(paper: boolean, page: PageStyle): string {
   )
 }
 
-// The message as the frame shows it, and whether it wants a white page, decided
-// on what the frame shows: an inline image is a data: URL by then. Neither
-// depends on the theme, so a theme change need not parse or encode it again.
+// Images the message would load from the network, which the frame blocks until
+// Show images: loading them tells the sender when the message was read, and
+// from where. An <img> or <picture> source, a background attribute, or a CSS
+// url() in a style attribute or a <style> element. A URL without a scheme
+// takes the page's. Styles in an attribute are read as the browser parsed
+// them, a <style> element as written: an escape there can hide a URL, which
+// only leaves the button out, as the frame's policy is what blocks it.
+// eslint-disable-next-line no-control-regex
+const REMOTE_URL = /^[\x00-\x20]*(https?:)?\/\//i
+// eslint-disable-next-line no-control-regex
+const REMOTE_SRCSET = /(^|,)[\x00-\x20]*(https?:)?\/\//i
+const REMOTE_CSS = /url\(\s*['"]?\s*(https?:)?\/\//i
+
+function hasRemoteImages(doc: Document): boolean {
+  const url = (element: Element, name: string) =>
+    (element.getAttribute(name) ?? '').replace(/[\t\n\r]/g, '')
+  return Array.from(doc.querySelectorAll('*')).some(
+    (element) =>
+      (element.localName === 'img' && REMOTE_URL.test(url(element, 'src'))) ||
+      REMOTE_SRCSET.test(url(element, 'srcset')) ||
+      REMOTE_URL.test(url(element, 'background')) ||
+      REMOTE_CSS.test((element as HTMLElement).style?.cssText ?? '') ||
+      (element.localName === 'style' &&
+        REMOTE_CSS.test(element.textContent ?? ''))
+  )
+}
+
+export type FramedBody = { body: string; paper: boolean; remote: boolean }
+
+// The message as the frame shows it, whether it wants a white page, and
+// whether it has remote images, decided on what the frame shows: an inline
+// image is a data: URL by then. None depends on the theme, so a theme change
+// need not parse or encode it again.
 export function frameBody(
   html: string,
   attachments: ParsedAttachment[]
-): { body: string; paper: boolean } {
+): FramedBody {
   const body = embedInlineImages(html, attachments)
-  return { body, paper: wantsWhitePage(body) }
+  const doc = new DOMParser().parseFromString(body, 'text/html')
+  return { body, paper: wantsWhitePage(doc), remote: hasRemoteImages(doc) }
 }
 
 // The document for <iframe sandbox="">. The policy comes first, so it applies
-// to everything the message contains, and allows nothing from the network.
-// The page style comes before the message, so the message's own styles win.
+// to everything the message contains, and allows nothing from the network but
+// https: images, and those only with `images`, after Show images. An image
+// loaded then sends no Referer. The page style comes before the message, so
+// the message's own styles win.
 export function sandboxDocument(
   body: string,
   paper: boolean,
-  page: PageStyle
+  page: PageStyle,
+  images = false
 ): string {
-  const policy = "default-src 'none'; img-src data:; style-src 'unsafe-inline'"
+  const policy = `default-src 'none'; img-src data:${images ? ' https:' : ''}; style-src 'unsafe-inline'`
   return (
     `<!doctype html><html><head><meta charset="utf-8">` +
     `<meta http-equiv="Content-Security-Policy" content="${policy}">` +
+    `<meta name="referrer" content="no-referrer">` +
     `<style>${pageStyleSheet(paper, page)}</style>` +
     `</head><body>${body}</body></html>`
   )

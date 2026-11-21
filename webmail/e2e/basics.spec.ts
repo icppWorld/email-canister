@@ -21,6 +21,7 @@ import {
   openMail,
   openMenu,
   principalOf,
+  reader,
   roleColour,
   send,
   sha256,
@@ -46,6 +47,8 @@ test('serves a strict content security policy and the SMTP handoff', async ({
   const policy = (await response!.allHeaders())['content-security-policy']
   expect(policy).toContain("default-src 'none'")
   expect(policy).toContain("script-src 'self'")
+  // https: for the message frames' images, which their own policy holds back
+  expect(policy).toContain("img-src 'self' data: https:;")
   expect(policy).toContain("font-src 'self';")
   expect(policy).toContain("connect-src 'self' https://icp0.io;")
   expect(policy).toContain("frame-ancestors 'none'")
@@ -430,6 +433,63 @@ for (const [word, element, body] of [
     await context.close()
   })
 }
+
+// Images from the sender's servers tell the sender when the message was read:
+// blocked until Show images, for that opening only
+test('remote images load only after Show images, and only that time', async ({
+  browser,
+}) => {
+  const pic = 'https://images.example.test/pic.png'
+  const bg = 'https://images.example.test/bg.png'
+  deliver({
+    subject: 'Remote razorbill',
+    body:
+      `<p>razorbill</p><img src="${pic}" alt="Remote pic">` +
+      `<div style="background:url(${bg})">x</div>`,
+  })
+  deliver({ subject: 'Local murrelet', body: '<p>murrelet</p>' })
+  await waitDrained()
+  const { context, page } = await signedIn(browser, USER_A)
+  // On the context, which sees the sandboxed frame's requests too
+  const requested: string[] = []
+  await context.route('https://images.example.test/**', (route) => {
+    requested.push(route.request().url())
+    return route.fulfill({
+      contentType: 'image/png',
+      headers: { 'Cache-Control': 'no-store' },
+      body: Buffer.from(PIXEL, 'base64'),
+    })
+  })
+  const showImages = reader(page).getByRole('button', { name: 'Show images' })
+  const picture = bodyOf(page).getByAltText('Remote pic')
+
+  await openMail(page, 'razorbill')
+  await expect(bodyOf(page).getByText('razorbill')).toBeVisible()
+  await expect(showImages).toBeVisible()
+  await page.waitForTimeout(300)
+  expect(requested).toEqual([])
+  await expect(picture).toHaveJSProperty('naturalWidth', 0)
+
+  await showImages.click()
+  await expect(picture).toHaveJSProperty('naturalWidth', 1)
+  await expect.poll(() => requested).toEqual(expect.arrayContaining([pic, bg]))
+  await expect(showImages).toHaveCount(0)
+
+  // A message without remote images has nothing to show
+  await openMail(page, 'murrelet')
+  await expect(bodyOf(page).getByText('murrelet')).toBeVisible()
+  await expect(showImages).toHaveCount(0)
+
+  // Opened again, its images are blocked again
+  const before = requested.length
+  await openMail(page, 'razorbill')
+  await expect(bodyOf(page).getByText('razorbill')).toBeVisible()
+  await expect(showImages).toBeVisible()
+  await page.waitForTimeout(300)
+  expect(requested).toHaveLength(before)
+  await expect(picture).toHaveJSProperty('naturalWidth', 0)
+  await context.close()
+})
 
 test('the Refresh button shows new mail straight away', async ({ browser }) => {
   const { context, page } = await signedIn(browser, USER_B)
