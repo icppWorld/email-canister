@@ -275,20 +275,21 @@ const REMOTE_URL = /^[\x00-\x20]*(https?:)?\/\//i
 // eslint-disable-next-line no-control-regex
 const REMOTE_SRCSET = /(^|,)[\x00-\x20]*(https?:)?\/\//i
 const REMOTE_CSS = /(url|image-set)\(\s*['"]?\s*(https?:)?\/\//i
-const SOURCES: Record<string, string[]> = {
-  img: ['src'],
-  input: ['src'],
-  image: ['href', 'xlink:href'],
-  video: ['poster'],
-}
+const SOURCES: [selector: string, attribute: string][] = [
+  ['img', 'src'],
+  ['input[type=image i]', 'src'],
+  ['image', 'href'],
+  ['image', 'xlink:href'],
+  ['video', 'poster'],
+]
 
 function hasRemoteImages(doc: Document): boolean {
   const remote = (element: Element, name: string) =>
     REMOTE_URL.test(attributeUrl(element, name))
   return Array.from(doc.querySelectorAll('*')).some(
     (element) =>
-      (SOURCES[element.localName] ?? []).some((name) =>
-        remote(element, name)
+      SOURCES.some(
+        ([selector, name]) => element.matches(selector) && remote(element, name)
       ) ||
       REMOTE_SRCSET.test(attributeUrl(element, 'srcset')) ||
       remote(element, 'background') ||
@@ -300,27 +301,48 @@ function hasRemoteImages(doc: Document): boolean {
 
 export type FramedBody = { body: string; paper: boolean; remote: boolean }
 
+// Elements the frame leaves out. Its policy does not cover a link that
+// connects ahead, such as preconnect, which would tell the sender the message
+// was read; a meta could loosen the frame's referrer policy; a template can
+// become a shadow root, which a check here does not see into.
+const LEFT_OUT = 'link, meta, template'
+
+// The message as the frame parses it: inside the body of the frame's document
+function parsedInFrame(body: string): Document {
+  return new DOMParser().parseFromString(
+    `<!doctype html><html><head></head><body>${body}</body></html>`,
+    'text/html'
+  )
+}
+
+// The message without what the frame leaves out, checked on the parse the
+// frame makes of it: markup written out and parsed again can grow elements
+// the first parse did not have, so it is repeated until a parse finds none. A
+// message that keeps growing them is shown as its text.
+function withoutLeftOut(html: string): { body: string; doc: Document } {
+  let body = html
+  for (let pass = 0; pass < 4; pass += 1) {
+    const doc = parsedInFrame(body)
+    const found = doc.querySelectorAll(LEFT_OUT)
+    if (found.length === 0) return { body, doc }
+    found.forEach((element) => element.remove())
+    body = doc.documentElement.outerHTML
+  }
+  const text = escapeHtml(parsedInFrame(body).body.textContent ?? '')
+  body = `<div style="white-space:pre-wrap">${text}</div>`
+  return { body, doc: parsedInFrame(body) }
+}
+
 // The message as the frame shows it, whether it wants a white page, and
 // whether it has remote images, decided on what the frame shows: an inline
 // image is a data: URL by then. None depends on the theme, so a theme change
-// need not parse or encode it again. Its <link> and <meta> elements are left
-// out: the frame's policy does not cover a link that connects ahead, such as
-// preconnect, which would tell the sender the message was read, and a meta
-// could loosen the frame's referrer policy.
+// need not parse or encode it again.
 export function frameBody(
   html: string,
   attachments: ParsedAttachment[]
 ): FramedBody {
-  const doc = new DOMParser().parseFromString(
-    embedInlineImages(html, attachments),
-    'text/html'
-  )
-  doc.querySelectorAll('link, meta').forEach((element) => element.remove())
-  return {
-    body: doc.documentElement.outerHTML,
-    paper: wantsWhitePage(doc),
-    remote: hasRemoteImages(doc),
-  }
+  const { body, doc } = withoutLeftOut(embedInlineImages(html, attachments))
+  return { body, paper: wantsWhitePage(doc), remote: hasRemoteImages(doc) }
 }
 
 // The document for <iframe sandbox="">. The policy comes first, so it applies

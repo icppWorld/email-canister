@@ -293,6 +293,13 @@ for (const [colorScheme, word, body] of [
       '0100000000000000-00000000-0000-0000-0000-000000000000-000000/AAAAAAAAAAAAAAAAAAAAAAAAAAA=473" ' +
       'style="display: none; width: 1px; height: 1px;">',
   ],
+  // A link or meta the frame leaves out paints nothing
+  [
+    'dark',
+    'pipit',
+    '<link rel="stylesheet" href="https://t.example/s.css">' +
+      '<meta property="og:title" content="x"><p>pipit</p>',
+  ],
   // Other services' pixels, and "data:" in a remote image's query
   [
     'dark',
@@ -450,7 +457,10 @@ test('remote images load only after Show images, and only that time', async ({
       `<p>razorbill</p><img src="${pic}" alt="Remote pic">` +
       `<div style="background:url(${bg})">x</div>` +
       // Loaded once the frame has reached past the remote image
-      `<img src="data:image/png;base64,${PIXEL}" alt="Local pic">`,
+      `<img src="data:image/png;base64,${PIXEL}" alt="Local pic">` +
+      // A link in a shadow root, and one that a second parse would grow
+      `<div><template shadowrootmode="open"><link rel="preconnect" href="https://ahead.example.test/shadow"></template></div>` +
+      `<math><mtext><table><mglyph><style><!--</style><img title="--&gt;&lt;link rel=preconnect href=https://ahead.example.test/grown&gt;">`,
   })
   deliver({ subject: 'Local murrelet', body: '<p>murrelet</p>' })
   deliver({
@@ -483,10 +493,10 @@ test('remote images load only after Show images, and only that time', async ({
   await expect(local).toHaveJSProperty('naturalWidth', 1)
   expect(requested).toEqual([])
   await expect(picture).toHaveJSProperty('naturalWidth', 0)
-  await expect(bodyOf(page).locator('link')).toHaveCount(0)
-  await expect(bodyOf(page).locator('meta[content="unsafe-url"]')).toHaveCount(
-    0
-  )
+  // The whole frame, its head and shadow roots included
+  const frame = page.frameLocator('iframe.body')
+  await expect(frame.locator('link')).toHaveCount(0)
+  await expect(frame.locator('meta[content="unsafe-url"]')).toHaveCount(0)
 
   await showImages.click()
   await expect(picture).toHaveJSProperty('naturalWidth', 1)
