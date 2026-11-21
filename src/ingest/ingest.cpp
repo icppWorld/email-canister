@@ -173,7 +173,9 @@ IC_Async ingest_pump_async() {
     return g_upgrade_turn ? upgrade() || receive() : receive() || upgrade();
   };
   if (g_clean_turn ? clean() || rest() : rest() || clean()) {
-    g_upgrade_turn = work != Work::Upgrade;
+    // A cleanup leaves the upgrades' turn as it was: were it to hand it back,
+    // upgrades and cleanups would take every turn between them
+    if (work != Work::Clean) g_upgrade_turn = work != Work::Upgrade;
     g_clean_turn = work != Work::Clean;
   } else if (failed) {
     claim = store::Claim::Failed;

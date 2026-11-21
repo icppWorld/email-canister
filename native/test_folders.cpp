@@ -4,6 +4,7 @@
 #include <utility>
 #include <vector>
 
+#include "allowlist.h"
 #include "api.h"
 #include "db.h"
 #include "ic0.h"
@@ -471,6 +472,31 @@ void test_folders(MockIC &mock_ic) {
           "no second cleanup claimed");
     check(test, second != first,
           "the mailbox cleaned last, still due, came first again");
+  }
+  {
+    const std::string test = "upgrades and cleanups leave turns to the parses";
+    // crew's and vixen's files wait for an upgrade, which holds each of them,
+    // its file being ahead of its registry: one upgrade turn each
+    const std::string current = std::to_string(db::mailbox_version());
+    const std::string behind = "UPDATE mailboxes SET schema = " + current +
+                               " - 1 WHERE local IN ('crew', 'vixen')";
+    check(test, db::exec(db::control(), behind.c_str()), "cannot set schema");
+    store::set_needs_repair(vixen, ""); // as a check that frees a file does
+    check(test, store::upgrade_pending(), "no upgrade pending");
+    // fox has a message to parse, and 21 expired: two cleanup turns
+    CALL(test, ingest_move, "(" + queue_mail(test, "kite") + ")", SELF);
+    check(test, clean_due(), "fox is not due for a cleanup");
+    const std::string unparsed = "SELECT sum(unparsed) FROM mailboxes";
+    const int64_t before = control_integer(unparsed);
+    for (int turn = 0; turn < 4; ++turn)
+      pump(test);
+    check(test, control_integer(unparsed) < before, "no parse in four turns");
+    const std::string restored =
+        "UPDATE mailboxes SET schema = " + current +
+        ", needs_repair = '', retry_after_ns = 0 WHERE local IN ('crew', "
+        "'vixen')";
+    check(test, db::exec(db::control(), restored.c_str()),
+          "cannot restore crew and vixen");
     ic0mock_clear_time_override();
   }
 

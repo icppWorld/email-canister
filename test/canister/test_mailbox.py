@@ -694,11 +694,12 @@ def message_count(local: str) -> int:
 
 
 def spam_past_its_30_days(local: str, marked: List[int]) -> None:
-    """Marks the messages as Spam, then backdates them once the pump's cleanup
-    after the move found nothing to delete: expired, and not yet deleted"""
+    """Marks the messages as Spam, then backdates them: expired, and not yet
+    deleted. The wait lets a cleanup still due from earlier end first, so that
+    it cannot delete them."""
     listed = "; ".join(f"{uid} : nat64" for uid in marked)
     mail("mail_move", local, f"(vec {{ {listed} }}, 2 : nat64)", USER_A)
-    wait_until(lambda: not clean_due(local), f"{local}'s cleanup")
+    wait_until(lambda: not clean_due(local), f"{local}'s earlier cleanup")
     where = ", ".join(str(uid) for uid in marked)
     call(
         "dev_file_exec",
