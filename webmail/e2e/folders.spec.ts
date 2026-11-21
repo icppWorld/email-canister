@@ -1410,6 +1410,16 @@ test('a search goes on past pages the canister ended before a match, and never s
     await search(page, 'dotterel')
     await expect(page.getByText('No matches yet.')).toBeVisible()
     await expect(page.getByText('No matches.', { exact: true })).toHaveCount(0)
+    // A new search never goes on from the cursor of the search before it
+    const next = await hold(page, 'mail_search')
+    await search(page, 'plover')
+    await next.seen
+    await expect(
+      page.getByRole('button', { name: 'Keep searching' })
+    ).toHaveCount(0)
+    next.release()
+    await page.unrouteAll({ behavior: 'wait' })
+    await search(page, 'dotterel')
     await page.getByRole('button', { name: 'Keep searching' }).click()
     await expect(messageRow(page, 'Hidden dotterel')).toHaveCount(1)
     await expect(

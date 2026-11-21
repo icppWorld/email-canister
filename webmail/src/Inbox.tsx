@@ -551,7 +551,11 @@ export function Inbox({
 }) {
   const here = FOLDERS[folder].number
   const [items, setItems] = useState<Summary[]>([])
-  const [cursor, setCursor] = useState<[] | [bigint]>([])
+  // Where the list goes on, and the search it belongs to
+  const [more, setMore] = useState<{ search: string; cursor: [] | [bigint] }>({
+    search: '',
+    cursor: [],
+  })
   const [selected, setSelected] = useState<Summary | null>(null)
   // The messages ticked for an action on all of them
   const [checked, setChecked] = useState<ReadonlySet<bigint>>(new Set())
@@ -606,7 +610,7 @@ export function Inbox({
         setItems((previous) =>
           append ? [...previous, ...page.items] : page.items
         )
-        setCursor(page.cursor)
+        setMore({ search, cursor: page.cursor })
         setError('')
       } catch (e) {
         if (request === latestLoad.current) setError(errorText(e))
@@ -907,11 +911,17 @@ export function Inbox({
     if (allBox.current) allBox.current.indeterminate = someTicked
   }, [someTicked])
 
-  // A search with a cursor left has not looked everywhere yet
+  // Only the search shown now goes on, from where its own pages ended
+  const cursor: [] | [bigint] = more.search === activeQuery ? more.cursor : []
+  // A search with a cursor left, or whose first page is on its way, has not
+  // looked everywhere yet
   let emptyHint = `Nothing in ${FOLDERS[folder].name}.`
   if (folder === 'inbox') emptyHint = 'No mail yet.'
   if (activeQuery) {
-    emptyHint = cursor.length > 0 ? 'No matches yet.' : 'No matches.'
+    emptyHint =
+      cursor.length > 0 || more.search !== activeQuery
+        ? 'No matches yet.'
+        : 'No matches.'
   }
 
   return (
