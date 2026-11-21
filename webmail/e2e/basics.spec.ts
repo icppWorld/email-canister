@@ -444,16 +444,29 @@ test('remote images load only after Show images, and only that time', async ({
   deliver({
     subject: 'Remote razorbill',
     body:
+      // Neither may leak: a link that connects ahead, and a looser referrer
+      `<link rel="preconnect" href="https://ahead.example.test">` +
+      `<meta name="referrer" content="unsafe-url">` +
       `<p>razorbill</p><img src="${pic}" alt="Remote pic">` +
-      `<div style="background:url(${bg})">x</div>`,
+      `<div style="background:url(${bg})">x</div>` +
+      // Loaded once the frame has reached past the remote image
+      `<img src="data:image/png;base64,${PIXEL}" alt="Local pic">`,
   })
   deliver({ subject: 'Local murrelet', body: '<p>murrelet</p>' })
+  deliver({
+    subject: 'Remote auklet',
+    body:
+      '<p>auklet</p><svg width="10" height="10">' +
+      '<image href="https://images.example.test/svg.png" width="10" height="10"/></svg>',
+  })
   await waitDrained()
   const { context, page } = await signedIn(browser, USER_A)
   // On the context, which sees the sandboxed frame's requests too
   const requested: string[] = []
+  const referrers: (string | undefined)[] = []
   await context.route('https://images.example.test/**', (route) => {
     requested.push(route.request().url())
+    referrers.push(route.request().headers()['referer'])
     return route.fulfill({
       contentType: 'image/png',
       headers: { 'Cache-Control': 'no-store' },
@@ -462,17 +475,23 @@ test('remote images load only after Show images, and only that time', async ({
   })
   const showImages = reader(page).getByRole('button', { name: 'Show images' })
   const picture = bodyOf(page).getByAltText('Remote pic')
+  const local = bodyOf(page).getByAltText('Local pic')
 
   await openMail(page, 'razorbill')
   await expect(bodyOf(page).getByText('razorbill')).toBeVisible()
   await expect(showImages).toBeVisible()
-  await page.waitForTimeout(300)
+  await expect(local).toHaveJSProperty('naturalWidth', 1)
   expect(requested).toEqual([])
   await expect(picture).toHaveJSProperty('naturalWidth', 0)
+  await expect(bodyOf(page).locator('link')).toHaveCount(0)
+  await expect(bodyOf(page).locator('meta[content="unsafe-url"]')).toHaveCount(
+    0
+  )
 
   await showImages.click()
   await expect(picture).toHaveJSProperty('naturalWidth', 1)
   await expect.poll(() => requested).toEqual(expect.arrayContaining([pic, bg]))
+  expect(referrers.filter(Boolean)).toEqual([])
   await expect(showImages).toHaveCount(0)
 
   // A message without remote images has nothing to show
@@ -480,12 +499,17 @@ test('remote images load only after Show images, and only that time', async ({
   await expect(bodyOf(page).getByText('murrelet')).toBeVisible()
   await expect(showImages).toHaveCount(0)
 
+  // An SVG image is a remote image too
+  await openMail(page, 'auklet')
+  await expect(bodyOf(page).getByText('auklet')).toBeVisible()
+  await expect(showImages).toBeVisible()
+
   // Opened again, its images are blocked again
   const before = requested.length
   await openMail(page, 'razorbill')
   await expect(bodyOf(page).getByText('razorbill')).toBeVisible()
   await expect(showImages).toBeVisible()
-  await page.waitForTimeout(300)
+  await expect(local).toHaveJSProperty('naturalWidth', 1)
   expect(requested).toHaveLength(before)
   await expect(picture).toHaveJSProperty('naturalWidth', 0)
   await context.close()

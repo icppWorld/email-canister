@@ -185,8 +185,8 @@ function plainElement(element: Element): boolean {
 
 // Until Show images the frame allows only data: images, so any other image,
 // such as a mail service's remote tracking pixel, shows nothing of the
-// message's own. It is
-// plain with the attributes and styles such pixels carry; anything that could
+// message's own. It is plain with the attributes and styles such pixels
+// carry; anything that could
 // paint, such as a background, keeps the white page. The border:0 such
 // pixels carry also sets border-image, which is plain only while its source is
 // none, or "initial" as some engines report it: a var() reads as "" and could
@@ -204,15 +204,17 @@ const IMAGE_ATTRIBUTES = new Set([
 ])
 const IMAGE_STYLE = /^(display|visibility|opacity|(min-|max-)?(width|height))$/
 
+// An attribute as a URL: URL parsing drops tabs and newlines anywhere
+const attributeUrl = (element: Element, name: string) =>
+  (element.getAttribute(name) ?? '').replace(/[\t\n\r]/g, '')
+
 function unshownImage(element: Element): boolean {
   if (element.localName !== 'img') return false
-  const url = (name: string) =>
-    (element.getAttribute(name) ?? '').replace(/[\t\n\r]/g, '')
   if (
     // A browser skips control characters and spaces before a URL's scheme
     // eslint-disable-next-line no-control-regex
-    /^[\x00-\x20]*data:/i.test(url('src')) ||
-    /(^|[\s,])data:/i.test(url('srcset'))
+    /^[\x00-\x20]*data:/i.test(attributeUrl(element, 'src')) ||
+    /(^|[\s,])data:/i.test(attributeUrl(element, 'srcset'))
   )
     return false
   const noBorderImage = /^(none|initial)$/.test(
@@ -262,8 +264,9 @@ function pageStyleSheet(paper: boolean, page: PageStyle): string {
 
 // Images the message would load from the network, which the frame blocks until
 // Show images: loading them tells the sender when the message was read, and
-// from where. An <img> or <picture> source, a background attribute, or a CSS
-// url() in a style attribute or a <style> element. A URL without a scheme
+// from where. An <img>, <picture> or <input type=image> source, an SVG
+// <image>, a video's poster, a background attribute, or a CSS url() or
+// image-set() in a style attribute or a <style> element. A URL without a scheme
 // takes the page's. Styles in an attribute are read as the browser parsed
 // them, a <style> element as written: an escape there can hide a URL, which
 // only leaves the button out, as the frame's policy is what blocks it.
@@ -271,16 +274,24 @@ function pageStyleSheet(paper: boolean, page: PageStyle): string {
 const REMOTE_URL = /^[\x00-\x20]*(https?:)?\/\//i
 // eslint-disable-next-line no-control-regex
 const REMOTE_SRCSET = /(^|,)[\x00-\x20]*(https?:)?\/\//i
-const REMOTE_CSS = /url\(\s*['"]?\s*(https?:)?\/\//i
+const REMOTE_CSS = /(url|image-set)\(\s*['"]?\s*(https?:)?\/\//i
+const SOURCES: Record<string, string[]> = {
+  img: ['src'],
+  input: ['src'],
+  image: ['href', 'xlink:href'],
+  video: ['poster'],
+}
 
 function hasRemoteImages(doc: Document): boolean {
-  const url = (element: Element, name: string) =>
-    (element.getAttribute(name) ?? '').replace(/[\t\n\r]/g, '')
+  const remote = (element: Element, name: string) =>
+    REMOTE_URL.test(attributeUrl(element, name))
   return Array.from(doc.querySelectorAll('*')).some(
     (element) =>
-      (element.localName === 'img' && REMOTE_URL.test(url(element, 'src'))) ||
-      REMOTE_SRCSET.test(url(element, 'srcset')) ||
-      REMOTE_URL.test(url(element, 'background')) ||
+      (SOURCES[element.localName] ?? []).some((name) =>
+        remote(element, name)
+      ) ||
+      REMOTE_SRCSET.test(attributeUrl(element, 'srcset')) ||
+      remote(element, 'background') ||
       REMOTE_CSS.test((element as HTMLElement).style?.cssText ?? '') ||
       (element.localName === 'style' &&
         REMOTE_CSS.test(element.textContent ?? ''))
@@ -292,14 +303,24 @@ export type FramedBody = { body: string; paper: boolean; remote: boolean }
 // The message as the frame shows it, whether it wants a white page, and
 // whether it has remote images, decided on what the frame shows: an inline
 // image is a data: URL by then. None depends on the theme, so a theme change
-// need not parse or encode it again.
+// need not parse or encode it again. Its <link> and <meta> elements are left
+// out: the frame's policy does not cover a link that connects ahead, such as
+// preconnect, which would tell the sender the message was read, and a meta
+// could loosen the frame's referrer policy.
 export function frameBody(
   html: string,
   attachments: ParsedAttachment[]
 ): FramedBody {
-  const body = embedInlineImages(html, attachments)
-  const doc = new DOMParser().parseFromString(body, 'text/html')
-  return { body, paper: wantsWhitePage(doc), remote: hasRemoteImages(doc) }
+  const doc = new DOMParser().parseFromString(
+    embedInlineImages(html, attachments),
+    'text/html'
+  )
+  doc.querySelectorAll('link, meta').forEach((element) => element.remove())
+  return {
+    body: doc.documentElement.outerHTML,
+    paper: wantsWhitePage(doc),
+    remote: hasRemoteImages(doc),
+  }
 }
 
 // The document for <iframe sandbox="">. The policy comes first, so it applies
