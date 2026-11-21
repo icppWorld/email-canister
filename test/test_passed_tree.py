@@ -47,17 +47,29 @@ def commit(repo: Path, name: str) -> str:
     return git(repo, "rev-parse", "HEAD")
 
 
-def merged(tmp_path: Path, changed: str = "src/code.cpp") -> tuple[Path, str]:
-    """A repo whose HEAD merges a pull request that changed `changed`; and
-    that pull request's head"""
+def merged(
+    tmp_path: Path, changed: str = "src/code.cpp", padding: int = 0
+) -> tuple[Path, str]:
+    """A repo whose HEAD merges a pull request that changed `changed`, and
+    `padding` more files after it; and that pull request's head"""
     repo = tmp_path / "repo"
     repo.mkdir()
     git(repo, "init", "-q", "-b", "main")
     git(repo, "config", "user.email", "test@example.com")
     git(repo, "config", "user.name", "test")
+    # Whatever the global configuration signs or hooks
+    git(repo, "config", "commit.gpgsign", "false")
+    git(repo, "config", "core.hooksPath", "/dev/null")
     commit(repo, "README.md")
     git(repo, "switch", "-qc", "pr")
-    pr_head = commit(repo, changed)
+    commit(repo, changed)
+    if padding:
+        for i in range(padding):
+            (repo / "pad" / f"{i:06}-{'x' * 40}.txt").parent.mkdir(exist_ok=True)
+            (repo / "pad" / f"{i:06}-{'x' * 40}.txt").write_text(str(i))
+        git(repo, "add", "pad")
+        git(repo, "commit", "-qm", "padding")
+    pr_head = git(repo, "rev-parse", "HEAD")
     git(repo, "switch", "-q", "main")
     git(repo, "merge", "-q", "--no-ff", "-m", "Merge pull request", "pr")
     return repo, pr_head
@@ -75,12 +87,13 @@ def artifact(run_id: int, head_sha: str, fork: bool = False) -> dict[str, object
     }
 
 
-def passing_run(head_sha: str) -> dict[str, str]:
+def passing_run(head_sha: str, base: str = "main") -> dict[str, object]:
     return {
         "path": WORKFLOW,
         "event": "pull_request",
         "conclusion": "success",
         "head_sha": head_sha,
+        "pull_requests": [{"base": {"ref": base}, "head": {"sha": head_sha}}],
     }
 
 
@@ -177,3 +190,28 @@ def test__an_api_call_that_fails_runs_the_tests(tmp_path: Path, answers: Path) -
     repo, pr_head = merged(tmp_path)
     answer(answers, [artifact(7, pr_head)], {})  # the run cannot be read
     assert decide(repo, answers) == "run-tests=true"
+
+
+def test__a_run_against_another_branch_runs_the_tests(
+    tmp_path: Path, answers: Path
+) -> None:
+    # That branch's workflow ran, and could upload any marker
+    repo, pr_head = merged(tmp_path)
+    answer(answers, [artifact(7, pr_head)], {7: passing_run(pr_head, base="other")})
+    assert decide(repo, answers) == "run-tests=true"
+
+
+def test__a_large_merge_that_changes_github_runs_the_tests(
+    tmp_path: Path, answers: Path
+) -> None:
+    # More changed paths than a pipe holds: a check that stops reading at the
+    # first match must not count as no match
+    repo, pr_head = merged(tmp_path, ".github/actions/x.yml", padding=2000)
+    answer(answers, [artifact(7, pr_head)], {7: passing_run(pr_head)})
+    assert decide(repo, answers) == "run-tests=true"
+
+
+def test__the_script_is_executable_in_git() -> None:
+    # The workflow runs it directly
+    mode = git(ROOT, "ls-files", "-s", "scripts/passed-tree.sh").split()[0]
+    assert mode == "100755"
