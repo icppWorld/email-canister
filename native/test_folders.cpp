@@ -52,8 +52,11 @@ std::string fox_id() {
 }
 
 bool clean_due() {
-  return control_integer(
-             "SELECT clean_due FROM mailboxes WHERE local = 'fox'") > 0;
+  const int64_t due =
+      control_integer("SELECT clean_due FROM mailboxes WHERE local = 'fox'");
+  // A read that failed must not pass for a cleared mark
+  check("clean_due", due >= 0, "fox's mark cannot be read");
+  return due > 0;
 }
 
 // One integer from fox's file, or -1
