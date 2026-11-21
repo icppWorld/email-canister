@@ -458,7 +458,8 @@ test('remote images load only after Show images, and only that time', async ({
       `<div style="background:url(${bg})">x</div>` +
       // Loaded once the frame has reached past the remote image
       `<img src="data:image/png;base64,${PIXEL}" alt="Local pic">` +
-      // A link in a shadow root, and one that a second parse would grow
+      // A link in a shadow root, and one that a second parse grows where an
+      // engine writes < and > in attributes out as they are
       `<div><template shadowrootmode="open"><link rel="preconnect" href="https://ahead.example.test/shadow"></template></div>` +
       `<math><mtext><table><mglyph><style><!--</style><img title="--&gt;&lt;link rel=preconnect href=https://ahead.example.test/grown&gt;">`,
   })
