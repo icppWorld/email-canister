@@ -63,6 +63,17 @@ button.primary:hover:not(:disabled) {
 button.danger {
   color: var(--danger);
 }
+/* A button that is only its icon, with its label as the tooltip */
+button.icon-button {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: var(--control-height);
+  height: var(--control-height);
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+}
 input,
 select,
 textarea {
@@ -207,7 +218,6 @@ nav button:hover:not(:disabled) {
   background: var(--selected);
 }
 nav button.compose {
-  text-align: center;
   margin-bottom: 8px;
 }
 nav button[aria-current='true'] {
@@ -227,10 +237,6 @@ nav button[aria-current='true'] {
   flex: 1;
 }
 nav button.refresh {
-  display: grid;
-  place-items: center;
-  min-width: var(--control-height);
-  padding: 0;
   border-color: var(--border-strong);
   background: var(--surface-raised);
 }
@@ -355,6 +361,9 @@ nav button.mailbox {
   left: 0;
 }
 .menu-items button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   border: 0;
   text-align: left;
   white-space: nowrap;
@@ -379,11 +388,26 @@ nav button.mailbox {
 .split {
   height: 100%;
   display: grid;
-  grid-template-columns: minmax(260px, 380px) 1fr;
+  /* The list's width is the divider's */
+  grid-template-columns: var(--list-width, 380px) auto minmax(0, 1fr);
 }
 .list {
   overflow-y: auto;
-  border-right: 1px solid var(--border);
+}
+/* The divider: a line, drawn thicker on hover, while dragged and with the
+   focus */
+.splitter {
+  width: 7px;
+  cursor: col-resize;
+  touch-action: none;
+  background: linear-gradient(var(--border), var(--border)) center / 1px 100%
+    no-repeat;
+}
+.splitter:hover,
+.splitter:active,
+.splitter:focus-visible {
+  background-image: linear-gradient(var(--border-strong), var(--border-strong));
+  background-size: 3px 100%;
 }
 .list ul {
   list-style: none;
@@ -394,16 +418,18 @@ nav button.mailbox {
   position: sticky;
   top: 0;
   z-index: 1;
+  padding-top: 8px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
 }
 .search {
   display: flex;
   gap: 6px;
-  padding: 8px;
+  padding: 0 8px 8px;
 }
 .bulk {
   display: flex;
+  /* Only a very narrow list wraps it */
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
@@ -549,14 +575,9 @@ button.star.on .icon {
   opacity: 0;
   pointer-events: none;
 }
-.toast button {
-  padding: 4px 8px;
-  color: inherit;
-  font-weight: 600;
-}
+/* A tint of the note's own text colour, as its background can be any */
 .toast button:hover:not(:disabled) {
-  background: transparent;
-  text-decoration: underline;
+  background: color-mix(in srgb, currentColor 20%, transparent);
 }
 /* In the note's own text colour: the focus ring's can be its background */
 .toast :focus-visible {
@@ -694,9 +715,6 @@ button.star.on .icon {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.compose-bar button {
-  padding: 6px;
-}
 .compose-body {
   flex: 1;
   min-height: 0;
@@ -705,6 +723,26 @@ button.star.on .icon {
   flex-direction: column;
   gap: 6px;
   padding: 14px;
+}
+/* The files attached, each with its Remove */
+.attached,
+.attached ul {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 12px;
+}
+.attached ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.attached li {
+  display: flex;
+  align-items: center;
+}
+.attached button {
+  padding: 2px 4px;
 }
 .compose-body[hidden] {
   display: none;
@@ -837,22 +875,16 @@ th {
     grid-template-rows: minmax(0, 1fr);
   }
   .split.reading > .list,
-  .split:not(.reading) > .reader {
+  .split:not(.reading) > .reader,
+  .splitter {
     display: none;
   }
-  .list {
-    border-right: 0;
-  }
   button.back {
-    display: inline-flex;
-    align-items: center;
+    display: inline-grid;
   }
   /* A little tighter, so a message's actions fit on one line */
   .reader > .toolbar {
     gap: 6px;
-  }
-  .reader > .toolbar button:not(.bare) {
-    padding-inline: 10px;
   }
   /* Compose fills the screen, or minimised, a bar along its foot */
   .dialog.compose,
@@ -871,7 +903,8 @@ th {
   body:has(.dialog.compose.minimised) .app {
     padding-bottom: 48px;
   }
-  .full-toggle,
+  /* As specific as button.icon-button, which would show it */
+  button.full-toggle,
   .backdrop {
     display: none;
   }
@@ -925,10 +958,6 @@ th {
   align-items: center;
   gap: 6px;
 }
-button.small {
-  padding: 2px 8px;
-  font-size: 12px;
-}
 .help {
   margin-top: 12px;
   color: var(--ink-muted);
@@ -940,11 +969,9 @@ button.small {
 .help ul {
   padding-left: 20px;
 }
-.admin button {
-  white-space: nowrap;
-}
 
-/* Touch: the row's box and star have targets of at least 44px, drawn as before */
+/* Touch: targets of at least 44px, with the row's box and star drawn as
+   before, and a wider divider */
 @media (pointer: coarse) {
   .pick-area {
     min-width: 44px;
@@ -968,16 +995,16 @@ button.small {
     min-width: 44px;
     min-height: 44px;
   }
-  /* The compose window's buttons too; the bar keeps its height for them */
+  button.icon-button {
+    width: 44px;
+    height: 44px;
+  }
+  .splitter {
+    width: 16px;
+  }
+  /* The compose window's bar keeps its height for its larger buttons */
   .compose-bar {
     padding-top: 0;
     padding-bottom: 0;
-  }
-  .compose-bar button {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 44px;
-    min-height: 44px;
   }
 }

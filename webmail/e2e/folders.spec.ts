@@ -104,6 +104,29 @@ test('Delete moves mail to Trash, where Undo, Restore and Delete forever work', 
   await context.close()
 })
 
+test('a ticked message that a search takes off the list comes back unticked', async ({
+  browser,
+}) => {
+  for (const bird of ['godwit', 'curlew']) {
+    deliver({ subject: `Tickgone ${bird}`, body: `<p>A ${bird}.</p>` })
+  }
+  await waitDrained()
+  const { context, page } = await signedIn(browser, USER_A)
+  await search(page, 'Tickgone')
+  await expect(messageRow(page, 'Tickgone')).toHaveCount(2)
+  await page.getByLabel('Select Tickgone godwit', { exact: true }).check()
+  await search(page, 'curlew')
+  await expect(messageRow(page, 'Tickgone godwit')).toHaveCount(0)
+  await expect(messageRow(page, 'Tickgone curlew')).toHaveCount(1)
+  await search(page, 'Tickgone')
+  await expect(messageRow(page, 'Tickgone')).toHaveCount(2)
+  await expect(
+    page.getByLabel('Select Tickgone godwit', { exact: true })
+  ).not.toBeChecked()
+  await expect(page.getByText(/^\d+ selected$/)).toHaveCount(0)
+  await context.close()
+})
+
 test('ticked messages are read, unread, starred and deleted together, and Trash empties', async ({
   browser,
 }) => {
@@ -176,6 +199,30 @@ test('ticked messages are read, unread, starred and deleted together, and Trash 
   page.once('dialog', (dialog) => dialog.accept())
   await page.getByRole('button', { name: 'Empty Trash' }).click()
   await expect(page.getByText('Nothing in Trash.')).toBeVisible()
+  await context.close()
+})
+
+test("the bulk toolbar's buttons sit on one line in a list of the usual width", async ({
+  browser,
+}) => {
+  for (const n of [1, 2]) {
+    deliver({ subject: `Lined phalarope ${n}`, body: '<p>A phalarope.</p>' })
+  }
+  await waitDrained()
+  const { context, page } = await signedIn(browser, USER_A)
+  await search(page, 'phalarope')
+  await expect(messageRow(page, 'Lined phalarope')).toHaveCount(2)
+  const list = page.getByRole('region', { name: 'Messages' })
+  expect((await list.boundingBox())!.width).toBeCloseTo(380, 0)
+  const bulk = page.getByRole('toolbar', { name: 'Selected messages' })
+  await bulk.getByLabel('Select all').check()
+  await expect(bulk).toContainText('2 selected')
+  const buttons = bulk.getByRole('button')
+  await expect(buttons).toHaveCount(4)
+  const tops = await buttons.evaluateAll((all) =>
+    all.map((button) => button.getBoundingClientRect().top)
+  )
+  expect(new Set(tops).size, `tops: ${tops.join(', ')}`).toBe(1)
   await context.close()
 })
 

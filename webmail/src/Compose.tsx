@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import {
   errorText,
@@ -8,7 +8,7 @@ import {
   type Backend,
   type MailboxInfo,
 } from './api'
-import { Icon } from './Icon'
+import { IconButton } from './Buttons'
 import { textToHtml } from './mime'
 
 // Held in memory only, so a draft survives signing in again but not a reload
@@ -35,6 +35,9 @@ function addresses(text: string): string[] {
 function encodedSize(attachment: File): number {
   return Math.ceil(attachment.size / 3) * 4 + attachment.name.length
 }
+
+// Files are told apart by name and size: the browser gives no path
+const fileKey = (file: File) => `${file.name} ${file.size}`
 
 export function Compose({
   backend,
@@ -65,6 +68,8 @@ export function Compose({
   // person's mailboxes, which the canister refuses: a lost reply cannot send
   // twice
   const [clientId] = useState(() => draft.clientId ?? crypto.randomUUID())
+  // The file picker, which Attach opens
+  const picker = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     onChange({ from, to, cc, bcc, subject, body, files, clientId })
@@ -119,30 +124,24 @@ export function Compose({
       >
         <div className="compose-bar">
           <h2>{subject.trim() || 'New message'}</h2>
-          <button
+          <IconButton
             className="bare"
-            aria-label={minimised ? 'Restore' : 'Minimise'}
-            title={minimised ? 'Restore' : 'Minimise'}
+            label={minimised ? 'Restore' : 'Minimise'}
+            icon={minimised ? 'chevronUp' : 'minus'}
             onClick={() => setSize(minimised ? 'normal' : 'minimised')}
-          >
-            <Icon name={minimised ? 'chevronUp' : 'minus'} />
-          </button>
-          <button
+          />
+          <IconButton
             className="bare full-toggle"
-            aria-label={full ? 'Exit full screen' : 'Full screen'}
-            title={full ? 'Exit full screen' : 'Full screen'}
+            label={full ? 'Exit full screen' : 'Full screen'}
+            icon={full ? 'minimize' : 'maximize'}
             onClick={() => setSize(full ? 'normal' : 'full')}
-          >
-            <Icon name={full ? 'minimize' : 'maximize'} />
-          </button>
-          <button
+          />
+          <IconButton
             className="bare"
-            aria-label="Close"
-            title="Close"
+            label="Close"
+            icon="close"
             onClick={onClose}
-          >
-            <Icon name="close" />
-          </button>
+          />
         </div>
         {/* Hidden, not removed, when minimised: the fields keep what they hold */}
         <div className="compose-body" hidden={minimised}>
@@ -201,20 +200,52 @@ export function Compose({
             value={body}
             onChange={(e) => setBody(e.target.value)}
           />
-          <label className="files">
-            Attachments
-            <input
-              aria-label="Attachments"
-              type="file"
-              multiple
-              onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
-            />
-          </label>
-          {/* A file input cannot be refilled, so a restored draft names its files here */}
+          <input
+            ref={picker}
+            aria-label="Attachments"
+            type="file"
+            multiple
+            hidden
+            onChange={(e) => {
+              const picked = Array.from(e.target.files ?? [])
+              // Cleared, so the same file can be picked again once removed
+              e.target.value = ''
+              // A file with the name and size of one attached already, or
+              // of one earlier in this pick, is taken as a newer copy of it,
+              // as after an edit, and replaces it in its place
+              setFiles((before) => {
+                const next = [...before]
+                for (const file of picked) {
+                  const at = next.findIndex((f) => fileKey(f) === fileKey(file))
+                  if (at >= 0) next[at] = file
+                  else next.push(file)
+                }
+                return next
+              })
+            }}
+          />
+          {/* Each pick adds to these, also in a restored draft, whose file
+              input cannot be refilled; a cancelled pick adds none */}
           {files.length > 0 && (
-            <p className="hint" data-testid="attached">
-              Attached: {files.map((f) => f.name).join(', ')}
-            </p>
+            <div className="attached hint" data-testid="attached">
+              Attached:{' '}
+              <ul aria-label="Attached files">
+                {files.map((file) => (
+                  <li key={fileKey(file)}>
+                    {file.name} ({Math.ceil(file.size / 1024)} KB)
+                    <IconButton
+                      variant="bare"
+                      label="Remove"
+                      name={file.name}
+                      icon="close"
+                      onClick={() =>
+                        setFiles((before) => before.filter((f) => f !== file))
+                      }
+                    />
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
           {tooLarge && (
             <p className="error" role="alert">
@@ -228,13 +259,18 @@ export function Compose({
             </p>
           )}
           <div className="row">
-            <button
-              className="primary"
+            <IconButton
+              variant="primary"
+              label={sending ? 'Sending…' : 'Send'}
+              icon="send"
               onClick={send}
               disabled={sending || tooLarge}
-            >
-              {sending ? 'Sending…' : 'Send'}
-            </button>
+            />
+            <IconButton
+              label="Attach"
+              icon="paperclip"
+              onClick={() => picker.current?.click()}
+            />
           </div>
         </div>
       </div>

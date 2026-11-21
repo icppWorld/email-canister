@@ -11,13 +11,53 @@ import {
   type OutboxMessage,
   type OutboxSummary,
 } from './api'
-import { BackButton } from './Buttons'
-import { memberName } from './format'
+import { attempt, BATCH, inBatches, MAX_BATCH } from './batch'
+import { BackButton, IconButton } from './Buttons'
+import { Bulk, RowPick, useTicks } from './Bulk'
+import { memberName, messages, noteOf, was } from './format'
 import { Icon } from './Icon'
 import { MessageBody } from './MessageBody'
 import { saveFile } from './mime'
+import { Split } from './Splitter'
+import type { Toast } from './Toast'
 
 const REFRESH_MS = 5_000
+// What deletions did, as the canister replied: the mail it deleted, and the
+// mail it skipped, being sent or deleted already, which the page cannot tell
+// apart
+type Deleted = { deleted: number; skipped: number }
+
+const deletedText = ({ deleted, skipped }: Deleted) =>
+  noteOf(
+    [
+      [deleted, 'deleted'],
+      [
+        skipped,
+        `could not be deleted: ${skipped === 1 ? 'it is' : 'they are'} ` +
+          `being sent, or ${was(skipped)} deleted already`,
+      ],
+    ],
+    '1 sent message',
+    'sent messages'
+  )
+
+// For good, in parts the canister takes, adding up what it did
+async function deleteSent(
+  backend: Mailbox,
+  ids: bigint[],
+  done: Deleted
+): Promise<void> {
+  const { error } = await inBatches(
+    ids,
+    async (part) => {
+      const deleted = await backend.mail_outbox_delete_many(part)
+      done.deleted += deleted.length
+      done.skipped += part.length - deleted.length
+    },
+    MAX_BATCH
+  )
+  if (error) throw error
+}
 
 function stateLabel(state: bigint): string {
   switch (state) {
@@ -41,12 +81,14 @@ function Details({
   summary,
   sentBy,
   onChanged,
+  onUsage,
   onBack,
 }: {
   backend: Mailbox
   summary: OutboxSummary
   sentBy: string | null // which member sent it, in a mailbox others share
   onChanged: () => void
+  onUsage: () => void // the mailbox's usage changed
   onBack: () => void // to the list, at phone width
 }) {
   const [message, setMessage] = useState<OutboxMessage | null>(null)
@@ -74,9 +116,14 @@ function Details({
   }
 
   const remove = async () => {
-    if (!window.confirm('Delete this message permanently?')) return
+    const waiting =
+      summary.state === OUTBOX_QUEUED
+        ? ' Mail waiting to be sent is deleted and not sent.'
+        : ''
+    if (!window.confirm(`Delete this message permanently?${waiting}`)) return
     try {
       await backend.mail_outbox_delete(summary.id)
+      onUsage()
       onChanged()
     } catch (e) {
       setError(errorText(e))
@@ -91,17 +138,20 @@ function Details({
       <div className="toolbar">
         <BackButton onClick={onBack} />
         {canResend && (
-          <button className="primary" onClick={resend}>
-            Send again
-          </button>
+          <IconButton
+            variant="primary"
+            label="Send again"
+            icon="send"
+            onClick={resend}
+          />
         )}
-        <button
-          className="danger"
+        <IconButton
+          variant="danger"
+          label="Delete"
+          icon="trash"
           onClick={remove}
           disabled={summary.state === OUTBOX_SENDING}
-        >
-          Delete
-        </button>
+        />
       </div>
       {error && (
         <p className="error" role="alert">
@@ -174,17 +224,28 @@ export function Sent({
   principal,
   shared,
   refresh,
+  notify,
+  onUsage,
 }: {
   backend: Mailbox
   principal: string // the reader's own
   shared: boolean // the mailbox has other members
   // Changes after a send: the list reloads, also while older mail is shown
   refresh: number
+  notify: (toast: Toast) => void
+  onUsage: () => void // the mailbox's usage changed
 }) {
   const [items, setItems] = useState<OutboxSummary[]>([])
   const [cursor, setCursor] = useState<[] | [bigint]>([])
   const [selectedId, setSelectedId] = useState<bigint | null>(null)
+  // The messages ticked for an action on all of them. Mail being sent cannot
+  // be deleted, so it is not ticked.
+  const ticks = useTicks(
+    items.filter((m) => m.state !== OUTBOX_SENDING).map((m) => m.id)
+  )
+  // The list's own error, which a reload clears, and an action's refusal
   const [error, setError] = useState('')
+  const [actionError, setActionError] = useState('')
   // Replies can arrive out of order, and only the newest may be shown
   const latestLoad = useRef(0)
   const olderShown = useRef(false)
@@ -240,45 +301,140 @@ export function Sent({
     }
   }
 
+  // The messages given, or all of them, for good once confirmed. Mail
+  // waiting to be sent is then never sent, and mail being sent is kept, as
+  // the canister replies. The note says what it did, also before a refusal,
+  // which shows at once while the list loads again. Each message asked for
+  // is unticked, so one kept does not come back ticked.
+  const remove = async (ids: bigint[] | 'all') => {
+    const waiting =
+      ids !== 'all' &&
+      items.some((m) => m.state === OUTBOX_QUEUED && ids.includes(m.id))
+    const question =
+      ids === 'all'
+        ? 'Delete every message in Sent for good? Mail waiting to be sent ' +
+          'is deleted and not sent; mail being sent is kept.'
+        : `Delete ${messages(ids.length, 'this sent message', 'sent messages')} for good?` +
+          (waiting ? ' Mail waiting to be sent is deleted and not sent.' : '')
+    if (!window.confirm(question)) return
+    const done: Deleted = { deleted: 0, skipped: 0 }
+    let all = ids === 'all' ? [] : ids
+    try {
+      if (ids === 'all') {
+        // Every page first, then the deletes in the canister's largest parts
+        let at: [] | [bigint] = []
+        do {
+          const page = await backend.mail_outbox_list({
+            cursor: at,
+            limit: BigInt(BATCH),
+          })
+          all = [...all, ...page.items.map((m) => m.id)]
+          at = page.cursor
+        } while (at.length > 0)
+      }
+      await deleteSent(backend, all, done)
+    } finally {
+      ticks.untick(new Set(all))
+      if (done.deleted + done.skipped > 0) {
+        notify({ text: deletedText(done) })
+      }
+      if (done.deleted > 0) onUsage()
+      load()
+    }
+  }
+
+  const act = (run: () => Promise<unknown>) => attempt(run, setActionError)
+
   const selected = items.find((m) => m.id === selectedId) ?? null
 
   return (
-    <div className={selected ? 'split reading' : 'split'}>
+    <Split reading={selected !== null}>
       <section className="list" aria-label="Sent mail">
+        {items.length > 0 && (
+          <div className="list-head">
+            <Bulk
+              ticks={ticks}
+              actions={[
+                {
+                  label: 'Delete',
+                  icon: 'trash',
+                  danger: true,
+                  run: () => act(() => remove(ticks.ticked)),
+                },
+              ]}
+              empty={{
+                label: 'Empty Sent',
+                icon: 'trash',
+                danger: true,
+                run: () => act(() => remove('all')),
+              }}
+            />
+          </div>
+        )}
         {error && (
           <p className="error" role="alert">
             {error}
+          </p>
+        )}
+        {actionError && (
+          <p className="error" role="alert">
+            {actionError}
           </p>
         )}
         {items.length === 0 && !error && (
           <p className="hint">Nothing sent yet.</p>
         )}
         <ul>
-          {items.map((m) => (
-            <li key={m.id.toString()}>
-              <button
-                className="message"
-                aria-current={selectedId === m.id}
-                onClick={() => setSelectedId(m.id)}
-              >
-                <span className="who">
-                  {m.to.concat(m.cc, m.bcc).join(', ')}
-                </span>
-                <span className="subject">
-                  {m.subject || '(no subject)'}
-                  {m.attachments > 0n ? (
-                    <Icon name="paperclip" label="Has attachments" />
-                  ) : null}
-                </span>
-                <span className="preview">{stateLabel(m.state)}</span>
-              </button>
-            </li>
-          ))}
+          {items.map((m) => {
+            const title = m.subject || '(no subject)'
+            const sending = m.state === OUTBOX_SENDING
+            return (
+              <li key={m.id.toString()} className="message-row">
+                <RowPick
+                  ticks={ticks}
+                  id={m.id}
+                  name={title}
+                  disabled={sending}
+                />
+                <button
+                  className="message"
+                  aria-current={selectedId === m.id}
+                  onClick={() => setSelectedId(m.id)}
+                >
+                  <span className="who">
+                    {m.to.concat(m.cc, m.bcc).join(', ')}
+                  </span>
+                  <span className="subject">
+                    {title}
+                    {m.attachments > 0n ? (
+                      <Icon name="paperclip" label="Has attachments" />
+                    ) : null}
+                  </span>
+                  <span className="preview">{stateLabel(m.state)}</span>
+                </button>
+                {/* On hover, for a pointer, as in the Inbox */}
+                {!sending && (
+                  <span className="row-actions">
+                    <IconButton
+                      variant="bare"
+                      label="Delete"
+                      name={title}
+                      icon="trash"
+                      onClick={() => act(() => remove([m.id]))}
+                    />
+                  </span>
+                )}
+              </li>
+            )
+          })}
         </ul>
         {cursor.length > 0 && (
-          <button className="more" onClick={older}>
-            Older mail
-          </button>
+          <IconButton
+            className="more"
+            label="Older mail"
+            icon="chevronDown"
+            onClick={older}
+          />
         )}
       </section>
       {selected ? (
@@ -296,14 +452,18 @@ export function Sent({
               : null
           }
           onChanged={() => {
+            // A change made from the reader went through: a refusal shown
+            // over the list no longer applies
+            setActionError('')
             setSelectedId(null)
             load()
           }}
+          onUsage={onUsage}
           onBack={() => setSelectedId(null)}
         />
       ) : (
         <div className="reader empty">Select a message to see its status.</div>
       )}
-    </div>
+    </Split>
   )
 }

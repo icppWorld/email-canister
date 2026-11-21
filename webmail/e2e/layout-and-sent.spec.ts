@@ -1,11 +1,19 @@
 // The webmail tests of the menus, the layout, the compose window and Sent.
 // Each spec file runs on a backend of its own (freshBackend in support.ts).
 
-import { expect, type Locator, type Route, test } from '@playwright/test'
+import {
+  type BrowserContext,
+  expect,
+  type Locator,
+  type Page,
+  type Route,
+  test,
+} from '@playwright/test'
 import { asUser } from './as_user'
 import { env } from './local'
 import {
   ADMIN,
+  answer,
   argOf,
   asAlice,
   backend,
@@ -34,6 +42,7 @@ import {
   send,
   signedIn,
   spamFromReader,
+  stub,
   uidOf,
   USER_A,
   USER_C,
@@ -253,8 +262,9 @@ test('at phone width a ⋮ in the left half opens its list from the left', async
   await folder(page, 'Spam')
   await messageRow(page, 'Wrapped skua').click()
   await expect(page.getByTestId('subject')).toHaveText('Wrapped skua')
-  // Spam's actions take more than one row: the ⋮ starts the second, at the
-  // left
+  // Spam's icons fit on one row, so the ⋮ is put first, at the left, where a
+  // toolbar that wraps puts it at the start of its second row
+  await page.addStyleTag({ content: '.reader > .toolbar .menu { order: -1 }' })
   const button = page.getByLabel('More actions', { exact: true })
   const at = await button.boundingBox()
   if (!at) throw new Error('no menu button')
@@ -764,5 +774,599 @@ test('a Sent list slower to answer than its refresh still shows a send', async (
   await send(page)
   await expect(sent).toContainText('Slow grebe', { timeout: 20_000 })
   await page.unrouteAll({ behavior: 'ignoreErrors' })
+  await context.close()
+})
+
+// Every button shown, apart from a ⋮ menu's items, the list's rows, the files
+// of a message and the folders and mailboxes beside the mail, which their text
+// names: those with text, with a title other than their name, or with no icon
+const textButtons = (page: Page) =>
+  page.locator('button:visible').evaluateAll((buttons) =>
+    buttons
+      .filter(
+        (button) =>
+          !button.closest('.menu-items, li.message-row, .attachments') &&
+          !button.matches('nav button[aria-current]')
+      )
+      .filter(
+        (button) =>
+          (button.textContent ?? '').trim() !== '' ||
+          !button.getAttribute('aria-label') ||
+          button.getAttribute('title') !== button.getAttribute('aria-label') ||
+          !button.querySelector('svg')
+      )
+      .map((button) => button.outerHTML.slice(0, 160))
+  )
+
+const IRIS = '51'.repeat(32)
+
+test('every button is an icon, with its name as its tooltip', async ({
+  browser,
+}) => {
+  joinMailbox('iris', IRIS)
+  deliver({ subject: 'Iconic avocet', body: '<p>An avocet.</p>', to: 'iris' })
+  deliver({ subject: 'Iconic stint', body: '<p>A stint.</p>', to: 'iris' })
+  await waitDrained()
+  const box = await asUser(IRIS, env.url, env.backend)
+  const stint = await uidOf(box, 'iris', 'Iconic stint')
+  await box.mail_move('iris', [stint], FOLDER_SPAM)
+  await box.mail_block('iris', 'pest@sender.example')
+  await box.mail_send('iris', {
+    client_id: crypto.randomUUID(),
+    to: ['friend@example.org'],
+    cc: [],
+    bcc: [],
+    subject: 'Iconic tern',
+    html_body: '<p>A tern.</p>',
+    attachments: [],
+  })
+  const { context, page } = await signedIn(browser, IRIS)
+  const allIcons = async (screen: string) =>
+    expect(await textButtons(page), screen).toEqual([])
+
+  // The header and the list, searched and with a message ticked
+  await search(page, 'avocet')
+  await expect(messageRow(page, 'Iconic avocet')).toHaveCount(1)
+  await page.getByLabel('Select Iconic avocet', { exact: true }).check()
+  await allIcons('the Inbox')
+  // The reader, then the note of what it did
+  await messageRow(page, 'Iconic avocet').click()
+  await expect(
+    reader(page).getByRole('button', { name: 'Reply' })
+  ).toBeEnabled()
+  await allIcons("the Inbox's reader")
+  await reader(page)
+    .getByRole('button', { name: 'Delete', exact: true })
+    .click()
+  await expect(page.getByTestId('toast')).toHaveText(/moved to Trash/)
+  await allIcons('the note')
+
+  // Spam, with Blocked senders and Empty Spam, and its reader
+  await folder(page, 'Spam')
+  await messageRow(page, 'Iconic stint').click()
+  await expect(page.getByTestId('subject')).toHaveText('Iconic stint')
+  await allIcons('Spam')
+  await page
+    .getByRole('button', { name: 'Blocked senders', exact: true })
+    .click()
+  await expect(
+    page.getByRole('region', { name: 'Blocked senders' })
+  ).toContainText('pest@sender.example')
+  await allIcons('Blocked senders')
+
+  // Sent and its reader
+  await folder(page, 'Sent')
+  await messageRow(page, 'Iconic tern').click()
+  await expect(page.getByTestId('outbox-state')).not.toHaveText('')
+  await allIcons('Sent')
+
+  // The compose window
+  await page.getByRole('button', { name: 'Compose' }).click()
+  const window = page.getByRole('dialog', { name: 'New message' })
+  await expect(window).toBeVisible()
+  await allIcons('compose')
+  await window.getByRole('button', { name: 'Close' }).click()
+
+  // The sign-in page
+  await page.getByRole('button', { name: 'Sign out' }).click()
+  await expect(
+    page.getByRole('button', { name: 'Sign in with Internet Identity' })
+  ).toBeVisible()
+  await allIcons('sign-in')
+  await context.close()
+
+  // The Admin panel
+  const admin = await signedIn(browser, ADMIN)
+  await expect(admin.page.getByTestId('entry-iris')).toBeVisible()
+  expect(await textButtons(admin.page), 'Admin').toEqual([])
+  await admin.context.close()
+})
+
+// The divider between the list and the reader, and the list's width
+const divider = (page: Page) =>
+  page.getByRole('separator', { name: 'Resize the message list' })
+const widthOf = async (locator: Locator) => (await locator.boundingBox())!.width
+
+test('dragging the divider widens the list, in every folder, and the width stays after a reload', async ({
+  browser,
+}) => {
+  const { context, page } = await signedIn(browser, USER_A)
+  const list = page.getByRole('region', { name: 'Messages' })
+  await expect(list).toBeVisible()
+  expect(await widthOf(list)).toBeCloseTo(380, 0)
+  const handle = (await divider(page).boundingBox())!
+  const x = handle.x + handle.width / 2
+  const y = handle.y + handle.height / 2
+  const dragged = async (button: 'left' | 'right') => {
+    await page.mouse.move(x, y)
+    await page.mouse.down({ button })
+    await page.mouse.move(x + 100, y, { steps: 5 })
+    await page.mouse.up({ button })
+    // A frame on, for a width drawn on the page
+    await page.evaluate(() => new Promise(requestAnimationFrame))
+  }
+  // Another button moves nothing
+  await dragged('right')
+  expect(await widthOf(list)).toBeCloseTo(380, 0)
+  // Grabbed off its middle, it moves as far as the pointer, without a jump
+  await dragged('left')
+  await expect.poll(() => widthOf(list)).toBeCloseTo(480, 0)
+  const wider = 480
+  await expect(divider(page)).toHaveAttribute('aria-valuenow', String(wider))
+
+  await page.reload()
+  await expect(list).toBeVisible()
+  await expect.poll(() => widthOf(list)).toBeCloseTo(wider, 0)
+  // Sent shares it
+  await folder(page, 'Sent')
+  const sent = page.getByRole('region', { name: 'Sent mail' })
+  await expect.poll(() => widthOf(sent)).toBeCloseTo(wider, 0)
+  // A double-click puts it back
+  await divider(page).dblclick()
+  await expect.poll(() => widthOf(sent)).toBeCloseTo(380, 0)
+  await context.close()
+})
+
+test('the arrow keys move the divider, Home and End take it to its limits, and it stays within them', async ({
+  browser,
+}) => {
+  const { context, page } = await signedIn(browser, USER_A)
+  const list = page.getByRole('region', { name: 'Messages' })
+  await expect(list).toBeVisible()
+  const handle = divider(page)
+  const at = async (width: number) => {
+    await expect(handle).toHaveAttribute('aria-valuenow', String(width))
+    await expect.poll(() => widthOf(list)).toBeCloseTo(width, 0)
+  }
+  await handle.focus()
+  await page.keyboard.press('ArrowRight')
+  await at(396)
+  await page.keyboard.press('ArrowLeft')
+  await page.keyboard.press('ArrowLeft')
+  await at(364)
+  await page.keyboard.press('Home')
+  await at(260)
+  await page.keyboard.press('ArrowLeft')
+  await at(260)
+  // The reader keeps 320 pixels beside the divider
+  const split = (await page.locator('.split').boundingBox())!
+  const bar = (await handle.boundingBox())!
+  const max = Math.round(split.width - 320 - bar.width)
+  await expect(handle).toHaveAttribute('aria-valuemax', String(max))
+  await page.keyboard.press('End')
+  await at(max)
+  await page.keyboard.press('ArrowRight')
+  await at(max)
+  const end = (await handle.boundingBox())!
+  expect(split.x + split.width - (end.x + end.width)).toBeGreaterThanOrEqual(
+    320
+  )
+  // The list never scrolls sideways
+  expect(
+    await list.evaluate((el) => el.scrollWidth - el.clientWidth)
+  ).toBeLessThanOrEqual(0)
+  await context.close()
+})
+
+test('at phone width the divider is hidden, and the list keeps the whole width', async ({
+  browser,
+}) => {
+  const viewport = { width: 390, height: 844 }
+  const { context, page } = await signedIn(browser, USER_A, { viewport })
+  // Also with a width chosen on a wider screen
+  await page.evaluate(() => window.localStorage.setItem('list-width', '600'))
+  await page.reload()
+  const list = page.getByRole('region', { name: 'Messages' })
+  await expect(list).toBeVisible()
+  await expect(divider(page)).toBeHidden()
+  expect(await widthOf(list)).toBe(await widthOf(page.locator('.split')))
+  await context.close()
+})
+
+// Sent mail of a mailbox of its own, once the bridge accepted it all: a
+// delete keeps mail being sent. Long enough that deleting it shows in the
+// usage, which counts kilobytes.
+async function sentMail(local: string, seed: string, subjects: string[]) {
+  joinMailbox(local, seed)
+  const box = await asUser(seed, env.url, env.backend)
+  for (const subject of subjects) {
+    await box.mail_send(local, {
+      client_id: crypto.randomUUID(),
+      to: ['friend@example.org'],
+      cc: [],
+      bcc: [],
+      subject,
+      html_body: `<p>${'A long line. '.repeat(400)}</p>`,
+      attachments: [],
+    })
+  }
+  const ACCEPTED = 2n // as src/api.ts has it
+  await expect
+    .poll(
+      async () => {
+        const { items } = await box.mail_outbox_list(local, {
+          cursor: [],
+          limit: 100n,
+        })
+        return items.filter((m) => m.state === ACCEPTED).length
+      },
+      { timeout: 60_000 }
+    )
+    .toBe(subjects.length)
+  return box
+}
+
+const SORREL = '52'.repeat(32)
+
+test('ticked Sent mail is deleted for good, and the usage drops', async ({
+  browser,
+}) => {
+  const box = await sentMail('sorrel', SORREL, [
+    'Sorrel 1',
+    'Sorrel 2',
+    'Sorrel 3',
+  ])
+  const used = async () =>
+    (await box.mail_me()).mailboxes.find((m) => m.local === 'sorrel')!
+      .used_bytes
+  const before = await used()
+  const { context, page } = await signedIn(browser, SORREL)
+  await folder(page, 'Sent')
+  const sent = page.getByRole('region', { name: 'Sent mail' })
+  await expect(sent.getByRole('listitem')).toHaveCount(3)
+  const dialogs = answer(page, true)
+  await page.getByLabel('Select Sorrel 1', { exact: true }).check()
+  await page.getByLabel('Select Sorrel 2', { exact: true }).check()
+  const bulk = page.getByRole('toolbar', { name: 'Selected messages' })
+  await expect(bulk).toContainText('2 selected')
+  await bulk.getByRole('button', { name: 'Delete', exact: true }).click()
+  await expect(page.getByTestId('toast').locator('span')).toHaveText(
+    '2 sent messages deleted'
+  )
+  expect(dialogs).toEqual(['Delete 2 sent messages for good?'])
+  await expect(sent.getByRole('listitem')).toHaveCount(1)
+  await expect(sent).toContainText('Sorrel 3')
+  const { items } = await box.mail_outbox_list('sorrel', {
+    cursor: [],
+    limit: 10n,
+  })
+  expect(items.map((m) => m.subject)).toEqual(['Sorrel 3'])
+  // The usage drops, and the page shows it at once
+  const after = await used()
+  expect(after).toBeLessThan(before)
+  await expect(page.getByTestId('usage')).toHaveText(
+    new RegExp(`^${Math.ceil(Number(after) / 1024)} KB of`),
+    { timeout: 10_000 }
+  )
+  await context.close()
+})
+
+const SEDGE = '53'.repeat(32)
+
+test("a Sent row's own Delete deletes it, and Select all ticks the rest", async ({
+  browser,
+}) => {
+  await sentMail('sedge', SEDGE, ['Sedge 1', 'Sedge 2', 'Sedge 3'])
+  const { context, page } = await signedIn(browser, SEDGE)
+  await folder(page, 'Sent')
+  const sent = page.getByRole('region', { name: 'Sent mail' })
+  await expect(sent.getByRole('listitem')).toHaveCount(3)
+  const dialogs = answer(page, true, true)
+  // Shown on hover
+  await messageRow(page, 'Sedge 2').hover()
+  await page.getByRole('button', { name: 'Delete: Sedge 2' }).click()
+  await expect(page.getByTestId('toast').locator('span')).toHaveText(
+    '1 sent message deleted'
+  )
+  await expect(sent.getByRole('listitem')).toHaveCount(2)
+
+  const bulk = page.getByRole('toolbar', { name: 'Selected messages' })
+  await bulk.getByLabel('Select all').check()
+  await expect(bulk).toContainText('2 selected')
+  for (const n of [1, 3]) {
+    await expect(
+      page.getByLabel(`Select Sedge ${n}`, { exact: true })
+    ).toBeChecked()
+  }
+  await bulk.getByRole('button', { name: 'Delete', exact: true }).click()
+  await expect(sent).toContainText('Nothing sent yet.')
+  expect(dialogs).toEqual([
+    'Delete this sent message for good?',
+    'Delete 2 sent messages for good?',
+  ])
+  await context.close()
+})
+
+const SPURGE = '54'.repeat(32)
+
+test('Empty Sent deletes all but mail being sent, which the note says it could not delete', async ({
+  browser,
+}) => {
+  const box = await sentMail('spurge', SPURGE, ['Spurge 1', 'Spurge 2'])
+  // The bridge holds the next one as being sent, until the test lets it finish
+  stub('stub_set_mode', '("sending")')
+  let context: BrowserContext | undefined
+  try {
+    await box.mail_send('spurge', {
+      client_id: crypto.randomUUID(),
+      to: ['friend@example.org'],
+      cc: [],
+      bcc: [],
+      subject: 'Held spurge',
+      html_body: '<p>Held.</p>',
+      attachments: [],
+    })
+    const signed = await signedIn(browser, SPURGE)
+    context = signed.context
+    const { page } = signed
+    await folder(page, 'Sent')
+    const sent = page.getByRole('region', { name: 'Sent mail' })
+    const held = page.locator('li.message-row', { hasText: 'Held spurge' })
+    await expect(held).toContainText('Sending', { timeout: 30_000 })
+    // It has no box to tick, and no Delete of its own
+    await expect(held.getByRole('checkbox')).toBeDisabled()
+    await held.hover()
+    await expect(held.getByRole('button', { name: /^Delete/ })).toHaveCount(0)
+
+    const dialogs = answer(page, true)
+    await page
+      .getByRole('toolbar', { name: 'Selected messages' })
+      .getByRole('button', { name: 'Empty Sent' })
+      .click()
+    await expect(page.getByTestId('toast').locator('span')).toHaveText(
+      '2 sent messages deleted. 1 could not be deleted: it is being sent, ' +
+        'or was deleted already'
+    )
+    expect(dialogs).toEqual([
+      'Delete every message in Sent for good? Mail waiting to be sent is ' +
+        'deleted and not sent; mail being sent is kept.',
+    ])
+    await expect(sent.getByRole('listitem')).toHaveCount(1)
+    await expect(held).toHaveCount(1)
+  } finally {
+    await context?.close()
+    stub('stub_set_mode', '("sent")')
+    stub('stub_finish', '("sent")')
+  }
+})
+
+const SAGE = '57'.repeat(32)
+
+test('mail ticked while waiting is unticked once it starts sending, and stays so once sent', async ({
+  browser,
+}) => {
+  const box = await sentMail('sage', SAGE, ['Sage 1'])
+  // The next one waits to be sent, and then is held as being sent, until
+  // the test lets it go
+  backend('dev_outbox_crash', '("before_call")')
+  stub('stub_set_mode', '("sending")')
+  let context: BrowserContext | undefined
+  try {
+    await box.mail_send('sage', {
+      client_id: crypto.randomUUID(),
+      to: ['friend@example.org'],
+      cc: [],
+      bcc: [],
+      subject: 'Waiting sage',
+      html_body: '<p>Waiting.</p>',
+      attachments: [],
+    })
+    const signed = await signedIn(browser, SAGE)
+    context = signed.context
+    const { page } = signed
+    await folder(page, 'Sent')
+    const row = page.locator('li.message-row', { hasText: 'Waiting sage' })
+    await expect(row).toContainText('Waiting to send')
+    await row.getByRole('checkbox').check()
+    backend('dev_outbox_crash', '("")')
+    await expect(row).toContainText('Sending', { timeout: 30_000 })
+    stub('stub_set_mode', '("sent")')
+    stub('stub_finish', '("sent")')
+    const pick = row.getByRole('checkbox')
+    await expect(pick).toBeEnabled({ timeout: 30_000 })
+    await expect(pick).not.toBeChecked()
+    await expect(page.getByText(/^\d+ selected$/)).toHaveCount(0)
+  } finally {
+    await context?.close()
+    backend('dev_outbox_crash', '("")')
+    stub('stub_set_mode', '("sent")')
+    stub('stub_finish', '("sent")')
+  }
+})
+
+const SUNDEW = '55'.repeat(32)
+
+test('a refused delete in Sent shows at once, while the list reloads, and leaves its mail unticked', async ({
+  browser,
+}) => {
+  await sentMail('sundew', SUNDEW, ['Sundew 1', 'Sundew 2'])
+  const { context, page } = await signedIn(browser, SUNDEW)
+  await folder(page, 'Sent')
+  const sent = page.getByRole('region', { name: 'Sent mail' })
+  await expect(sent.getByRole('listitem')).toHaveCount(2)
+  const boxes = [1, 2].map((n) =>
+    page.getByLabel(`Select Sundew ${n}`, { exact: true })
+  )
+  for (const box of boxes) await box.check()
+  // The reload after it waits, and every attempt of the delete fails: the
+  // agent tries a failed call again
+  const loading = await hold(page, 'mail_outbox_list')
+  await page.route('**/api/*/canister/*/*', (route) =>
+    callsTo(route.request(), 'mail_outbox_delete_many')
+      ? route.abort()
+      : route.fallback()
+  )
+  const dialogs = answer(page, true, true)
+  await page
+    .getByRole('toolbar', { name: 'Selected messages' })
+    .getByRole('button', { name: 'Delete', exact: true })
+    .click()
+  await expect(sent.getByRole('alert')).toBeVisible()
+  expect(dialogs).toEqual(['Delete 2 sent messages for good?'])
+  // Once the list is back, the mail is still there, unticked, and the
+  // refusal still shows
+  await loading.seen
+  const reloaded = page.waitForResponse((r) =>
+    callsTo(r.request(), 'mail_outbox_list')
+  )
+  loading.release()
+  await reloaded
+  await expect(sent.getByRole('listitem')).toHaveCount(2)
+  for (const box of boxes) await expect(box).not.toBeChecked()
+  await expect(sent.getByRole('alert')).toBeVisible()
+  // A delete from the reader that goes through clears the refusal
+  await messageRow(page, 'Sundew 1').click()
+  await page
+    .locator('article.reader')
+    .getByRole('button', { name: 'Delete', exact: true })
+    .click()
+  await expect(sent.getByRole('listitem')).toHaveCount(1)
+  await expect(sent.getByRole('alert')).toHaveCount(0)
+  expect(dialogs).toEqual([
+    'Delete 2 sent messages for good?',
+    'Delete this message permanently?',
+  ])
+  await context.close()
+})
+
+const SUMAC = '56'.repeat(32)
+
+test('deleting mail waiting to be sent says it is then not sent', async ({
+  browser,
+}) => {
+  const box = await sentMail('sumac', SUMAC, ['Sumac 1'])
+  // The next one waits to be sent, until the test lets it go
+  backend('dev_outbox_crash', '("before_call")')
+  let context: BrowserContext | undefined
+  try {
+    await box.mail_send('sumac', {
+      client_id: crypto.randomUUID(),
+      to: ['friend@example.org'],
+      cc: [],
+      bcc: [],
+      subject: 'Waiting sumac',
+      html_body: '<p>Waiting.</p>',
+      attachments: [],
+    })
+    const signed = await signedIn(browser, SUMAC)
+    context = signed.context
+    const { page } = signed
+    await folder(page, 'Sent')
+    const sent = page.getByRole('region', { name: 'Sent mail' })
+    await expect(messageRow(page, 'Waiting sumac')).toContainText(
+      'Waiting to send'
+    )
+    const dialogs = answer(page, false, false, true)
+    // The reader's own Delete warns too
+    await messageRow(page, 'Waiting sumac').click()
+    await page
+      .locator('article.reader')
+      .getByRole('button', { name: 'Delete', exact: true })
+      .click()
+    for (const subject of ['Sumac 1', 'Waiting sumac']) {
+      await messageRow(page, subject).hover()
+      await page.getByRole('button', { name: `Delete: ${subject}` }).click()
+    }
+    await expect(page.getByTestId('toast').locator('span')).toHaveText(
+      '1 sent message deleted'
+    )
+    expect(dialogs).toEqual([
+      'Delete this message permanently? Mail waiting to be sent is ' +
+        'deleted and not sent.',
+      'Delete this sent message for good?',
+      'Delete this sent message for good? Mail waiting to be sent is ' +
+        'deleted and not sent.',
+    ])
+    await expect(sent.getByRole('listitem')).toHaveCount(1)
+    await expect(sent).toContainText('Sumac 1')
+  } finally {
+    await context?.close()
+    backend('dev_outbox_crash', '("")')
+  }
+})
+
+test('each pick adds its files, replacing one attached already, and Remove takes one off', async ({
+  browser,
+}) => {
+  const { context, page } = await signedIn(browser, USER_A)
+  await page.getByRole('button', { name: 'Compose' }).click()
+  const window = page.getByRole('dialog', { name: 'New message' })
+  const picker = window.getByLabel('Attachments')
+  const file = (name: string, size: number) => ({
+    name,
+    mimeType: 'text/plain',
+    buffer: Buffer.alloc(size, 'x'),
+  })
+  const attached = window
+    .getByRole('list', { name: 'Attached files' })
+    .getByRole('listitem')
+  await picker.setInputFiles(file('a.txt', 2048))
+  await picker.setInputFiles([file('b.txt', 10), file('a.txt', 2048)])
+  await expect(attached).toHaveText(['a.txt (2 KB)', 'b.txt (1 KB)'])
+  // A cancelled pick
+  await picker.setInputFiles([])
+  await expect(attached).toHaveText(['a.txt (2 KB)', 'b.txt (1 KB)'])
+  await window.getByRole('button', { name: 'Remove: a.txt' }).click()
+  await expect(attached).toHaveText(['b.txt (1 KB)'])
+  // Removed, it can be picked again
+  await picker.setInputFiles(file('a.txt', 2048))
+  await expect(attached).toHaveText(['b.txt (1 KB)', 'a.txt (2 KB)'])
+  await context.close()
+})
+
+test('a file picked again after an edit is sent as it is now', async ({
+  browser,
+}) => {
+  const { context, page } = await signedIn(browser, USER_A)
+  await compose(page, 'Repicked kestrel')
+  const window = page.getByRole('dialog', { name: 'New message' })
+  const picker = window.getByLabel('Attachments')
+  const file = (fill: string) => ({
+    name: 'notes.txt',
+    mimeType: 'text/plain',
+    buffer: Buffer.alloc(100, fill),
+  })
+  await picker.setInputFiles(file('o'))
+  // The same name and size, with what the file holds now
+  await picker.setInputFiles(file('n'))
+  await expect(
+    window.getByRole('list', { name: 'Attached files' }).getByRole('listitem')
+  ).toHaveText(['notes.txt (1 KB)'])
+  await send(page)
+  const alice = await asAlice()
+  await expect
+    .poll(async () => {
+      const { items } = await alice.mail_outbox_list('alice', {
+        cursor: [],
+        limit: 20n,
+      })
+      const sent = items.find((m) => m.subject === 'Repicked kestrel')
+      if (!sent) return null
+      const message = await alice.mail_outbox_get('alice', sent.id)
+      return message.attachments.map((a) =>
+        Buffer.from(a.content as Uint8Array).toString()
+      )
+    })
+    .toEqual(['n'.repeat(100)])
   await context.close()
 })

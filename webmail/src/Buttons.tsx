@@ -1,13 +1,45 @@
 // Buttons that look and read the same wherever they appear
 
-import { Icon } from './Icon'
+import type { ButtonHTMLAttributes } from 'react'
+
+import { Icon, type IconName } from './Icon'
+
+// A button that is only its icon: the label is its tooltip, and with `name`,
+// which says what it acts on where there are several, its name. A bare one
+// keeps the icon's own size, as in a list row.
+export function IconButton({
+  label,
+  name,
+  icon,
+  variant,
+  className,
+  ...props
+}: {
+  label: string
+  name?: string
+  icon: IconName
+  variant?: 'primary' | 'danger' | 'bare'
+} & Omit<
+  ButtonHTMLAttributes<HTMLButtonElement>,
+  'aria-label' | 'title' | 'children' | 'name'
+>) {
+  const kind = variant === 'bare' ? ['bare'] : ['icon-button', variant]
+  return (
+    <button
+      {...props}
+      className={[...kind, className].filter(Boolean).join(' ')}
+      aria-label={name ? `${label}: ${name}` : label}
+      title={label}
+    >
+      <Icon name={icon} />
+    </button>
+  )
+}
 
 // Back to the list; shown at phone width only, where a toolbar is short of room
 export function BackButton({ onClick }: { onClick: () => void }) {
   return (
-    <button className="back" aria-label="Back" title="Back" onClick={onClick}>
-      <Icon name="back" />
-    </button>
+    <IconButton className="back" label="Back" icon="back" onClick={onClick} />
   )
 }
 
@@ -27,7 +59,7 @@ export function StarButton({
       className={flagged ? 'bare star on' : 'bare star'}
       aria-label={name ? `${label} ${name}` : label}
       aria-pressed={flagged}
-      title={flagged ? 'Starred' : 'Not starred'}
+      title={label}
       onClick={onClick}
     >
       <Icon name="star" />

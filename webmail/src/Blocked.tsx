@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { errorText, type Blocked, type Mailbox } from './api'
+import { IconButton } from './Buttons'
 import { formatNs, memberName } from './format'
 
 // One block: its address, and when it was made
@@ -80,7 +81,11 @@ export function BlockedSenders({
               by {memberName(b.blocked_by.toText(), b.name, principal)},{' '}
               {formatNs(b.at_ns)}
             </span>
-            <button onClick={() => unblock(b)}>Unblock</button>
+            <IconButton
+              label="Unblock"
+              icon="unblock"
+              onClick={() => unblock(b)}
+            />
           </li>
         ))}
       </ul>

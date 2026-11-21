@@ -120,7 +120,9 @@ test('onboards two users through the Admin panel', async ({ browser }) => {
       .getByRole('button', { name: 'Create', exact: true })
       .click()
     await expect(
-      admin.page.getByTestId(`entry-${local}`).getByTitle(principal)
+      admin.page
+        .getByTestId(`entry-${local}`)
+        .getByTitle(principal, { exact: true })
     ).toBeVisible()
   }
 
@@ -133,7 +135,9 @@ test('onboards two users through the Admin panel', async ({ browser }) => {
     'alice already exists. To give someone access to all of its mail, add them as a member. To give the address to someone new, disable and purge it first, which deletes its mail.'
   )
   await expect(
-    admin.page.getByTestId('entry-alice').getByTitle(principalB)
+    admin.page
+      .getByTestId('entry-alice')
+      .getByTitle(principalB, { exact: true })
   ).toHaveCount(0)
 
   await a.page.reload()
@@ -523,7 +527,9 @@ test('an ended sign-in returns to the sign-in page, keeping the draft for the sa
   await expect(page.getByRole('textbox', { name: 'Message' })).toHaveValue(
     'Half written'
   )
-  await expect(page.getByTestId('attached')).toHaveText('Attached: notes.txt')
+  await expect(page.getByTestId('attached')).toHaveText(
+    'Attached: notes.txt (1 KB)'
+  )
 
   await end()
   await signInAs(USER_A)

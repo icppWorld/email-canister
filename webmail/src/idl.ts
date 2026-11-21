@@ -193,6 +193,11 @@ export const idlFactory: IDL.InterfaceFactory = ({ IDL }) => {
     ),
     mail_outbox_resend: IDL.Func([IDL.Text, IDL.Nat64], [], []),
     mail_outbox_delete: IDL.Func([IDL.Text, IDL.Nat64], [], []),
+    mail_outbox_delete_many: IDL.Func(
+      [IDL.Text, IDL.Vec(IDL.Nat64)],
+      [IDL.Vec(IDL.Nat64)],
+      []
+    ),
     mail_export_freeze: IDL.Func(
       [IDL.Text, IDL.Opt(IDL.Nat64)],
       [ExportInfo],
