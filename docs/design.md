@@ -98,7 +98,7 @@ Local replica, with limits of 40B instructions per update and 5B per query.
 | `post_upgrade`                                         | 4.9M                                              |
 | `admin_check` of a whole file                          | 15.3M per MB, so about 2.6 GB in one call         |
 | `admin_check` of the search index                      | 47.5M per MB of file, so about 0.8 GB in one call |
-| Mailbox schema step 4, the Inbox's index               | TBD per MB of file, so about TBD GB in one call   |
+| Mailbox schema step 4, the Inbox's index               | 5.2M per MB of file, so about 7.7 GB in one call  |
 
 - An empty mailbox file takes 72 KiB.
 - The tests fail when one of the first four costs passes its bound (15M, 50M, 30M and 10M), or when a whole-file check of a 2 GiB file, or the build of step 4's index on one, would no longer fit in one call.
