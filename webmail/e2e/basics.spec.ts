@@ -56,6 +56,31 @@ test('serves a strict content security policy and the SMTP handoff', async ({
   expect(handoff.trim()).toBe(env.backend)
 })
 
+test('the page is checked for a new version on each load, and its hashed files are kept', async ({
+  page,
+}) => {
+  const scripts: string[] = []
+  page.on('response', (reply) => {
+    if (/\/assets\/[^/]+\.js$/.test(reply.url())) scripts.push(reply.url())
+  })
+  const response = await page.goto(env.url)
+  const headers = await response!.allHeaders()
+  expect(headers['cache-control']).toBe('no-cache')
+  // The other rules still apply to the page
+  expect(headers['content-security-policy']).toContain("default-src 'none'")
+  await expect.poll(() => scripts.length).toBeGreaterThan(0)
+  // Through the browser, because Node does not resolve *.localhost
+  const script = await page.evaluate(async (url) => {
+    const reply = await fetch(url, { cache: 'no-store' })
+    return {
+      cache: reply.headers.get('cache-control'),
+      policy: reply.headers.get('content-security-policy'),
+    }
+  }, scripts[0])
+  expect(script.cache).toBe('public, max-age=31536000, immutable')
+  expect(script.policy).toContain("default-src 'none'")
+})
+
 test("shows the deployment's brand, from e2e/brand", async ({ page }) => {
   await page.goto(env.url)
   expect(await page.title()).toBe('Test <Mail> & Co')

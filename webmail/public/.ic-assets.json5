@@ -30,4 +30,17 @@
       'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=()',
     },
   },
+  {
+    // The page names the build's scripts and styles, so a browser checks for
+    // a new one each time it loads: after a deploy, a reload shows the new
+    // webmail instead of a copy the browser kept
+    match: 'index.html',
+    headers: { 'Cache-Control': 'no-cache' },
+  },
+  {
+    // Their names carry a hash of their content, so a new build never
+    // reuses one: kept for good
+    match: 'assets/**/*',
+    headers: { 'Cache-Control': 'public, max-age=31536000, immutable' },
+  },
 ]
