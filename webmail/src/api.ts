@@ -141,7 +141,8 @@ export const MESSAGE_QUEUED = 0n
 export const MESSAGE_QUARANTINED = 2n
 export const FLAG_SEEN = 1n
 export const FLAG_FLAGGED = 2n
-// Trash and Spam keep mail for 30 days
+// Trash keeps mail for 30 days from when it left the Inbox, Spam for 30 days
+// from its arrival
 export const FOLDER_INBOX = 0n
 export const FOLDER_TRASH = 1n
 export const FOLDER_SPAM = 2n
@@ -309,11 +310,17 @@ function retryingWhileBusy(backend: Backend): Backend {
   })
 }
 
-// The message a canister trapped with, or else the whole error
+// The message a canister trapped with, or else the error without the stack
+// trace a failed fetch carries
 export function errorText(error: unknown): string {
   const text = error instanceof Error ? error.message : String(error)
   const trapped =
     /with message: '([\s\S]*?)'\.?\s+Consider/.exec(text) ??
     /trapped explicitly: ([^\n]*)/.exec(text)
-  return trapped ? trapped[1] : text
+  return trapped
+    ? trapped[1]
+    : text
+        .split('\n')
+        .filter((line) => !/^\s+at /.test(line))
+        .join('\n')
 }

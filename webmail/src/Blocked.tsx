@@ -3,6 +3,9 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { errorText, type Blocked, type Mailbox } from './api'
 import { formatNs, memberName } from './format'
 
+// One block: its address, and when it was made
+const blockOf = (b: Blocked) => `${b.address} ${b.at_ns}`
+
 // The senders whose new mail goes to Spam, for every member of the mailbox
 export function BlockedSenders({
   backend,
@@ -17,15 +20,17 @@ export function BlockedSenders({
   const [list, setList] = useState<Blocked[] | null>(null)
   const [error, setError] = useState('')
 
-  // Only the newest load shows: one read before an unblock would bring the
-  // address back
+  // Only the newest load shows, without the blocks unblocked on this page: a
+  // read from a replica that has not seen the unblock yet would list them. A
+  // block of the address made again has a time of its own, and shows.
   const latestLoad = useRef(0)
+  const unblocked = useRef(new Set<string>())
   const load = useCallback(async () => {
     const request = ++latestLoad.current
     try {
       const blocked = await backend.mail_blocked()
       if (request !== latestLoad.current) return
-      setList(blocked)
+      setList(blocked.filter((b) => !unblocked.current.has(blockOf(b))))
       setError('')
     } catch (e) {
       if (request === latestLoad.current) setError(errorText(e))
@@ -36,16 +41,22 @@ export function BlockedSenders({
     load()
   }, [load, refresh])
 
-  const unblock = async (address: string) => {
+  const unblock = async (block: Blocked) => {
+    const { address } = block
     try {
       await backend.mail_unblock(address)
     } catch (e) {
       setError(errorText(e))
       return
     }
-    setList((blocked) => blocked?.filter((b) => b.address !== address) ?? null)
+    // No reload: a replica that has not seen the unblock yet would bring the
+    // address back
+    unblocked.current.add(blockOf(block))
+    // That block alone: one made again meanwhile stays
+    setList(
+      (blocked) => blocked?.filter((b) => blockOf(b) !== blockOf(block)) ?? null
+    )
     setError('')
-    load()
   }
 
   return (
@@ -69,7 +80,7 @@ export function BlockedSenders({
               by {memberName(b.blocked_by.toText(), b.name, principal)},{' '}
               {formatNs(b.at_ns)}
             </span>
-            <button onClick={() => unblock(b.address)}>Unblock</button>
+            <button onClick={() => unblock(b)}>Unblock</button>
           </li>
         ))}
       </ul>

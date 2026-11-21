@@ -36,6 +36,11 @@ function realSession(): Session {
   const client = new AuthClient({
     identityProvider: local ? localIdentityProvider() : undefined,
     derivationOrigin: derivationOrigin ?? undefined,
+    // A popup, not a tab: a tab hides this page, the browser then slows its
+    // timers, and the sign-in's heartbeat to Internet Identity times out on a
+    // slow step such as a security key's PIN. Smaller than a window, so it
+    // never covers this page entirely
+    windowOpenerFeatures: 'toolbar=0,location=0,menubar=0,width=500,height=650',
     agentOptions: { host: window.location.origin, shouldFetchRootKey: local },
   })
   return {

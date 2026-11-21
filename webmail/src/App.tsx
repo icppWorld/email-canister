@@ -13,7 +13,12 @@ import { Inbox, isFolder } from './Inbox'
 import { Menu } from './Menu'
 import { Sent } from './Sent'
 import { deployment } from './settings'
-import { ToastBar, type Toast, type ToastAction } from './Toast'
+import {
+  ToastBar,
+  type ShownToast,
+  type Toast,
+  type ToastAction,
+} from './Toast'
 
 // A mailbox's folders and pages, each with an address of its own
 const PAGES = {
@@ -155,7 +160,8 @@ export function App() {
   const [refreshing, setRefreshing] = useState(false)
   const onLoaded = useCallback(() => setRefreshing(false), [])
   const [draft, setDraft] = useState<Draft | null>(null)
-  const [toast, setToast] = useState<Toast | null>(null)
+  const [toast, setToast] = useState<ShownToast | null>(null)
+  const toastIds = useRef(0)
   // Under the pointer or holding the focus, the note stays until let go
   const [toastHeld, setToastHeld] = useState(false)
   const [error, setError] = useState('')
@@ -241,15 +247,31 @@ export function App() {
     return () => window.clearTimeout(timer)
   }, [toast, toastHeld])
 
+  // Each note shown gets an id of its own
+  const showToast = (note: Toast) =>
+    setToast({ ...note, id: ++toastIds.current })
+
   // A toast's action, such as Undo
   const runToast = async (action: ToastAction) => {
     setToast(null)
     // Its end belongs to the session it began in
     const session = latestBackend.current
+    // A note of its own, or its refusal, gives way to one shown since
+    const shown = toastIds.current
     try {
-      await action.run()
+      const note = await action.run()
+      if (
+        note &&
+        session === latestBackend.current &&
+        shown === toastIds.current
+      ) {
+        showToast(note)
+      }
     } catch (e) {
-      if (session === latestBackend.current) setToast({ text: errorText(e) })
+      // With the action again, to try once more
+      if (session === latestBackend.current && shown === toastIds.current) {
+        showToast({ text: errorText(e), actions: [action] })
+      }
     } finally {
       if (action.reload && session === latestBackend.current) {
         setRefresh((count) => count + 1)
@@ -533,7 +555,7 @@ export function App() {
             folder={current}
             notify={(note) => {
               // A move that ends after a new sign-in is not this session's
-              if (latestBackend.current === backend) setToast(note)
+              if (latestBackend.current === backend) showToast(note)
             }}
             onReply={(reply) =>
               setDraft((open) => open ?? { ...reply, from: shown.local })
@@ -579,7 +601,7 @@ export function App() {
             // leads to the Sent folder it was sent from
             setDraft(null)
             setSends((count) => count + 1)
-            setToast({
+            showToast({
               text: 'Message sent',
               actions: [
                 {
