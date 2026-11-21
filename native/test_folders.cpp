@@ -124,6 +124,17 @@ void test_folders(MockIC &mock_ic) {
     expect(test, fox(test), "unseen = 4 : ");
   }
   {
+    const std::string test = "the Inbox's list reads its index alone";
+    // Without it, the list reads every newer message in Trash and Spam
+    db::Stmt plan(
+        store::mailbox_file(std::stoll(fox_id())),
+        (std::string("EXPLAIN QUERY PLAN ") + store::k_list_inbox).c_str());
+    std::string steps;
+    while (plan && plan.row())
+      steps += plan.column_text(3) + "\n";
+    expect(test, steps, "USING INDEX messages_inbox ");
+  }
+  {
     const std::string test = "the list gives each message's From address";
     // Seeded mail is not parsed: here as mail parsed before the column was
     // added has it, in its sender text only, and as the parse stores it
@@ -379,6 +390,28 @@ void test_folders(MockIC &mock_ic) {
     CALL(test, mail_unblock, "(\"fox\", \"stale@sender.example\")", USER_A);
   }
   {
+    const std::string test = "the parse leaves mail from a blocked From "
+                             "address that a member put in the Inbox";
+    CALL(test, mail_block, "(\"fox\", \"heron@sender.example\")", USER_A);
+    // Its envelope sender is blocked too, so delivery files it in Spam
+    CALL(test, ingest_move, "(" + queue_mail(test, "heron") + ")", SELF);
+    const std::string id =
+        std::to_string(fox_integer("SELECT max(id) FROM messages"));
+    const std::string uid = std::to_string(
+        fox_integer("SELECT uid FROM messages WHERE id = " + id));
+    expect(test, listed(test, 2), "uid = " + uid + " : ");
+    // Not spam, before the parse
+    expect(test, move(test, "vec { " + uid + " }", 0), "(1 : nat64)");
+    CALL(test, ingest_process, "(" + fox_id() + ", " + id + ")", SELF);
+    check(test,
+          fox_integer("SELECT folder FROM messages WHERE state = 1 AND id = " +
+                      id) == 0,
+          "the parse filed it in Spam again");
+    expect(test, CALL(test, admin_check, "(\"fox\", null)", CONTROLLER),
+           "result = \"ok\"");
+    CALL(test, mail_unblock, "(\"fox\", \"heron@sender.example\")", USER_A);
+  }
+  {
     const std::string test = "a cleanup takes turns with mail to be parsed";
     CALL(test, dev_file_exec,
          "(\"fox\", \"UPDATE messages SET folder_ns = 1 WHERE uid = 1\")",
@@ -502,8 +535,13 @@ void test_folders(MockIC &mock_ic) {
 
   {
     const std::string test = "a blocked address is kept in lower case";
-    CALL(test, mail_block, "(\"fox\", \"Spammer@Example.COM\")", USER_A);
-    CALL(test, mail_block, "(\"fox\", \"spammer@example.com\")", USER_A);
+    expect(test,
+           CALL(test, mail_block, "(\"fox\", \"Spammer@Example.COM\")", USER_A),
+           "(true)");
+    // Blocked already
+    expect(test,
+           CALL(test, mail_block, "(\"fox\", \"spammer@example.com\")", USER_A),
+           "(false)");
     const std::string list = CALL(test, mail_blocked, "(\"fox\")", USER_A);
     expect(test, list, "address = \"spammer@example.com\"");
     expect(test, list, "blocked_by = principal \"" + USER_A + "\"");
@@ -523,23 +561,57 @@ void test_folders(MockIC &mock_ic) {
         USER_B, "no such mailbox for this principal");
   {
     const std::string test = "an unblocked address is off the list";
-    CALL(test, mail_unblock, "(\"fox\", \"SPAMMER@example.com\")", USER_A);
-    CALL(test, mail_unblock, "(\"fox\", \"spammer@example.com\")", USER_A);
+    expect(
+        test,
+        CALL(test, mail_unblock, "(\"fox\", \"SPAMMER@example.com\")", USER_A),
+        "(true)");
+    // Unblocked already
+    expect(
+        test,
+        CALL(test, mail_unblock, "(\"fox\", \"spammer@example.com\")", USER_A),
+        "(false)");
     expect(test, CALL(test, mail_blocked, "(\"fox\")", USER_A), "(vec {})");
   }
   {
-    const std::string test = "the blocked list holds 1000 addresses";
+    const std::string test = "at 1000 addresses a new block replaces the "
+                             "oldest";
     CALL(test, dev_file_exec,
          "(\"fox\", \"WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 "
          "FROM c WHERE x < 1000) INSERT INTO blocked SELECT 'a' || x || "
-         "'@example.com', 'p', 0 FROM c\")",
+         "'@example.com', 'p', x FROM c\")",
          CONTROLLER);
-    TRAPS("a full list takes no more", mail_block,
-          "(\"fox\", \"more@example.com\")", USER_A,
-          "the mailbox blocks 1000 addresses already");
     // An address on it already is no change
-    CALL(test, mail_block, "(\"fox\", \"a7@example.com\")", USER_A);
-    CALL(test, mail_unblock, "(\"fox\", \"a7@example.com\")", USER_A);
-    CALL(test, mail_block, "(\"fox\", \"more@example.com\")", USER_A);
+    expect(test,
+           CALL(test, mail_block, "(\"fox\", \"a7@example.com\")", USER_A),
+           "(false)");
+    expect(test,
+           CALL(test, mail_block, "(\"fox\", \"more@example.com\")", USER_A),
+           "(true)");
+    const std::string list = CALL(test, mail_blocked, "(\"fox\")", USER_A);
+    check(test, count(list, "address = ") == 1000, "not 1000 addresses");
+    expect(test, list, "\"more@example.com\"");
+    expect(test, list, "\"a2@example.com\"");
+    expect_not(test, list, "\"a1@example.com\"");
+  }
+  {
+    const std::string test = "a blocked list that cannot be read is not "
+                             "answered";
+    CALL(test, dev_file_exec,
+         "(\"fox\", \"ALTER TABLE blocked RENAME TO kept\")", CONTROLLER);
+    TRAPS("a blocked list with no table", mail_blocked, "(\"fox\")", USER_A,
+          "the blocked list cannot be read");
+    // One that fails after its first rows, as a damaged page would
+    CALL(test, dev_file_exec,
+         "(\"fox\", \"CREATE VIEW blocked AS SELECT * FROM kept UNION ALL "
+         "SELECT 'x@example.com', 'p', abs(-9223372036854775807 - 1)\")",
+         CONTROLLER);
+    TRAPS("a blocked list that fails partway", mail_blocked, "(\"fox\")",
+          USER_A, "the blocked list cannot be read");
+    CALL(test, dev_file_exec,
+         "(\"fox\", \"DROP VIEW blocked; ALTER TABLE kept RENAME TO "
+         "blocked\")",
+         CONTROLLER);
+    expect(test, CALL(test, mail_blocked, "(\"fox\")", USER_A),
+           "\"more@example.com\"");
   }
 }

@@ -537,7 +537,8 @@ def test__flags_are_stored_and_bump_the_change_counter() -> None:
 def test__mail_from_a_blocked_sender_goes_to_spam() -> None:
     bob = MAILBOX[USER_B]
     # Blocked in any case: the envelope sender, and the From address
-    mail("mail_block", bob, '("Spammy@Sender.example")', USER_B)
+    assert "(true)" in mail("mail_block", bob, '("Spammy@Sender.example")', USER_B)
+    assert "(false)" in mail("mail_block", bob, '("spammy@sender.example")', USER_B)
     mail("mail_block", bob, '("boss@other.example")', USER_B)
     before = unread(USER_B, bob)
     for subject, sender, from_address in [
@@ -573,7 +574,8 @@ def test__mail_from_a_blocked_sender_goes_to_spam() -> None:
     assert unread(USER_B, bob) == before + 2
 
     # Unblocked, the sender's new mail stays in the Inbox
-    mail("mail_unblock", bob, '("spammy@sender.example")', USER_B)
+    assert "(true)" in mail("mail_unblock", bob, '("spammy@sender.example")', USER_B)
+    assert "(false)" in mail("mail_unblock", bob, '("spammy@sender.example")', USER_B)
     assert "spammy" not in mail("mail_blocked", bob, "()", USER_B)
     assert re.search(
         OK,

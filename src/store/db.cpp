@@ -217,7 +217,7 @@ std::vector<std::string> g_steps = {
     // holds only the mail out of it, and the messages table is small.
     R"sql(
 ALTER TABLE messages ADD COLUMN folder INTEGER NOT NULL DEFAULT 0; -- 0 Inbox, 1 Trash, 2 Spam
-ALTER TABLE messages ADD COLUMN folder_ns INTEGER NOT NULL DEFAULT 0; -- when it left the Inbox
+ALTER TABLE messages ADD COLUMN folder_ns INTEGER NOT NULL DEFAULT 0; -- when it left the Inbox, or a member put it back
 CREATE INDEX messages_filed ON messages(folder, uid) WHERE folder != 0;
 CREATE INDEX messages_expiring ON messages(folder_ns) WHERE folder != 0;
 
@@ -233,6 +233,12 @@ CREATE TABLE blocked(
     // has the address in its sender text, where the list reads it.
     R"sql(
 ALTER TABLE messages ADD COLUMN sender_address TEXT NOT NULL DEFAULT ''; -- set by the parse
+)sql",
+    // Version 4: an index of the Inbox, so that its list reads no mail in
+    // Trash or Spam. From this version on, a move into the Inbox sets
+    // folder_ns, which tells the parse a member put the message there.
+    R"sql(
+CREATE INDEX messages_inbox ON messages(uid) WHERE folder = 0;
 )sql",
 };
 

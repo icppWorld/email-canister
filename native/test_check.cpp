@@ -164,7 +164,7 @@ void test_check(MockIC &) {
           USER_B, "busy: the mailbox cannot be opened");
     const std::string result = inspect(test, "bob");
     expect(test, result,
-           "the schema version is 8 in the file, 4 in the "
+           "the schema version is 8 in the file, 5 in the "
            "registry");
     TRAPS("a newer file refuses its owner", mail_list, in("bob", k_list),
           USER_B, "this mailbox needs repair");
@@ -172,20 +172,20 @@ void test_check(MockIC &) {
   {
     const std::string test = "an upgrade holds a file out of step with its "
                              "registry";
-    file_exec(test, "cleo", "PRAGMA user_version = 6");
-    file_exec(test, "erin", "PRAGMA user_version = 3");
+    file_exec(test, "cleo", "PRAGMA user_version = 7");
+    file_exec(test, "erin", "PRAGMA user_version = 4");
     // A step that fails on every file that has the table already
     CALL(test, dev_schema_step, "(\"CREATE TABLE extra(x)\")", CONTROLLER);
     upgrade_round(test);
     expect(
         test, entry(test, "cleo"),
-        "needs_repair = opt \"the file has schema version 6, its registry 4");
+        "needs_repair = opt \"the file has schema version 7, its registry 5");
     TRAPS("a file ahead of its registry is not used", mail_list,
           in("cleo", k_list), USER_C, "this mailbox needs repair");
     // Not upgraded from its own version, where its step would fail
     expect(
         test, entry(test, "erin"),
-        "needs_repair = opt \"the file has schema version 3, its registry 4");
+        "needs_repair = opt \"the file has schema version 4, its registry 5");
   }
   {
     const std::string test = "a step that fails holds the mailbox on its third "
@@ -203,7 +203,7 @@ void test_check(MockIC &) {
     upgrade_now(test); // the third
     expect(test, entry(test, "alice"),
            "needs_repair = opt \"the schema upgrade failed: the step to "
-           "schema version 5 failed");
+           "schema version 6 failed");
     TRAPS("a failed upgrade refuses the owner", mail_list, in("alice", k_list),
           USER_A, "this mailbox needs repair");
     // A check of one table reports on that table only
@@ -217,7 +217,7 @@ void test_check(MockIC &) {
     upgrade_every_file(test);
     expect(test, entry(test, "alice"),
            "needs_repair = opt \"the schema upgrade failed: the step to "
-           "schema version 5 failed");
+           "schema version 6 failed");
   }
   ic0mock_clear_time_override();
 }

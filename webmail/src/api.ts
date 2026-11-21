@@ -177,8 +177,10 @@ export type Mailbox = {
   // For good, the messages still in `folder`: mail_move puts mail in Trash
   mail_delete(uids: bigint[], folder: bigint): Promise<bigint>
   mail_move(uids: bigint[], folder: bigint): Promise<bigint>
-  mail_block(address: string): Promise<void>
-  mail_unblock(address: string): Promise<void>
+  // Whether this call blocked the address: false when it was already
+  mail_block(address: string): Promise<boolean>
+  // Whether the address was blocked
+  mail_unblock(address: string): Promise<boolean>
   mail_blocked(): Promise<Blocked[]>
   mail_send(request: SendRequest): Promise<bigint>
   mail_outbox_list(request: {

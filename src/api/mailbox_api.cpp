@@ -236,29 +236,29 @@ void mail_move() {
 
 // New mail from the address, as envelope sender or From, goes to Spam, for
 // every member of the mailbox. Mail already received stays where it is.
+// Replies whether this call blocked it: false when it was blocked already.
+// At 1,000 addresses the oldest block makes room.
 void mail_block() {
   IC_API ic_api(CanisterUpdate{std::string(__func__)}, false);
   std::string address;
   const store::Mailbox box =
       require_writable_file(read_mailbox(ic_api, {CandidTypeText{&address}}));
-  const store::Block done =
+  const std::optional<bool> added =
       store::block(box, address_arg(address), ic_api.get_caller().get_text(),
                    static_cast<int64_t>(IC_API::time()));
-  if (done == store::Block::Full)
-    IC_API::trap("the mailbox blocks " + std::to_string(store::k_max_blocked) +
-                 " addresses already: unblock one first");
-  if (done == store::Block::Failed) IC_API::trap("the block failed");
-  ic_api.to_wire();
+  if (!added) IC_API::trap("the block failed");
+  ic_api.to_wire(CandidTypeBool{*added});
 }
 
+// Replies whether the address was blocked
 void mail_unblock() {
   IC_API ic_api(CanisterUpdate{std::string(__func__)}, false);
   std::string address;
   const store::Mailbox box =
       require_writable_file(read_mailbox(ic_api, {CandidTypeText{&address}}));
-  if (!store::unblock(box, address_arg(address)))
-    IC_API::trap("the unblock failed");
-  ic_api.to_wire();
+  const std::optional<bool> removed = store::unblock(box, address_arg(address));
+  if (!removed) IC_API::trap("the unblock failed");
+  ic_api.to_wire(CandidTypeBool{*removed});
 }
 
 void mail_blocked() {
@@ -273,10 +273,14 @@ void mail_blocked() {
     r.append("at_ns", nat64(b.at_ns));
     return r;
   };
+  // An empty list would pass for a cleared one
+  std::vector<store::Blocked> list;
+  if (!store::blocked(box, list))
+    IC_API::trap("the blocked list cannot be read");
   std::vector<CandidType> items;
   // Few members block, so each name is looked up once
   std::map<std::string, std::optional<std::string>> names;
-  for (const store::Blocked &b : store::blocked(box)) {
+  for (const store::Blocked &b : list) {
     auto name = names.find(b.blocked_by);
     if (name == names.end())
       name = names.emplace(b.blocked_by, store::name_of(b.blocked_by)).first;

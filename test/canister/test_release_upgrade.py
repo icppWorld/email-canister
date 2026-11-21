@@ -1,7 +1,7 @@
 """An upgrade from the last release keeps the mail, on a local replica: the
 release's wasm, from GitHub and checked by its sha256, takes mail, and is then
-upgraded to this build, which takes control.db to its schema. The mailbox files
-are at this build's schema already. The mail, its folders and flags, and the
+upgraded to this build, which takes control.db to its schema, and whose pump
+takes each mailbox file to schema 4. The mail, its folders and flags, and the
 blocks stay, and the pump cleans out expired mail with the upgraded registry.
 
 $ make build-test
@@ -61,6 +61,10 @@ def release_wasm(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return wasm
 
 
+def busy() -> bool:
+    return "busy:" in page(USER_A)
+
+
 def test__an_upgrade_from_the_last_release_keeps_the_mail(
     identity: str, release_wasm: Path
 ) -> None:
@@ -95,7 +99,14 @@ def test__an_upgrade_from_the_last_release_keeps_the_mail(
     mail("mail_block", "alice", '("tern@birds.example")', USER_A)
     assert unread(USER_A, "alice") == 1
 
+    # This build: the pump takes alice's file to its schema, meanwhile her
+    # calls answer busy
     assert upgrade(identity) == ""
+    wait_until(lambda: not busy(), "alice's upgrade")
+    # Schema 4's index of the Inbox
+    assert "index messages_inbox already exists" in call(
+        "dev_file_exec", '("alice", "CREATE INDEX messages_inbox ON messages(uid)")'
+    )
     inbox = page(USER_A)
     assert "Kept puffin" in inbox and "Kept gannet" in inbox
     assert "Kept shag" in page(USER_A, folder=1)

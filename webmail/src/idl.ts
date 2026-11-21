@@ -177,8 +177,8 @@ export const idlFactory: IDL.InterfaceFactory = ({ IDL }) => {
       [IDL.Nat64],
       []
     ),
-    mail_block: IDL.Func([IDL.Text, IDL.Text], [], []),
-    mail_unblock: IDL.Func([IDL.Text, IDL.Text], [], []),
+    mail_block: IDL.Func([IDL.Text, IDL.Text], [IDL.Bool], []),
+    mail_unblock: IDL.Func([IDL.Text, IDL.Text], [IDL.Bool], []),
     mail_blocked: IDL.Func([IDL.Text], [IDL.Vec(Blocked)], ['query']),
     mail_send: IDL.Func([IDL.Text, SendRequest], [IDL.Nat64], []),
     mail_outbox_list: IDL.Func(

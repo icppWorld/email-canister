@@ -90,6 +90,8 @@ struct Page {
 
 Page list_messages(const Mailbox &box, int64_t folder,
                    std::optional<int64_t> cursor, int64_t limit);
+// list_messages' query of the Inbox, so that a test can check its plan
+extern const char *const k_list_inbox;
 bool get_message(const Mailbox &box, int64_t uid, Summary &summary,
                  std::vector<uint8_t> &raw);
 // Sets the flags in `set` and clears those in `clear` on each message, so
@@ -152,17 +154,20 @@ Page search(const Mailbox &box, int64_t folder, const std::string &query,
 // Senders whose mail goes to Spam, by envelope sender or From address. The
 // addresses are in lower case.
 const int64_t k_max_blocked = 1000;
-enum class Block { Done, Full, Failed };
-Block block(const Mailbox &box, const std::string &address,
-            const std::string &principal, int64_t now_ns);
-// False when the write failed; an address not blocked is no failure
-bool unblock(const Mailbox &box, const std::string &address);
+// True when this call blocked the address, false when it was blocked
+// already, nullopt on failure. At k_max_blocked addresses the oldest block
+// makes room, so that marking mail as Spam never fails for lack of it.
+std::optional<bool> block(const Mailbox &box, const std::string &address,
+                          const std::string &principal, int64_t now_ns);
+// True when the address was blocked, nullopt on failure
+std::optional<bool> unblock(const Mailbox &box, const std::string &address);
 struct Blocked {
   std::string address;
   std::string blocked_by;
   int64_t at_ns{0};
 };
-std::vector<Blocked> blocked(const Mailbox &box);
+// The list, newest first, in `found`. False when it cannot be read.
+bool blocked(const Mailbox &box, std::vector<Blocked> &found);
 // Whether mail from `address` goes to Spam; nullopt when that cannot be read
 std::optional<bool> is_blocked(sqlite3 *file, const std::string &address);
 
