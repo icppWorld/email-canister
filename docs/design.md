@@ -101,7 +101,7 @@ Local replica, with limits of 40B instructions per update and 5B per query.
 | Mailbox schema step 4, the Inbox's index               | 5.2M per MB of file, so about 7.7 GB in one call  |
 
 - An empty mailbox file takes 72 KiB.
-- The tests fail when one of the first four costs passes its bound (15M, 50M, 30M and 10M), or when a whole-file check of a 2 GiB file, or the build of step 4's index on one, would no longer fit in one call.
+- The tests fail when one of the first four costs passes its bound (15M, 50M, 30M and 10M), when a whole-file check of a 2 GiB file would no longer fit in one call, or when the build of step 4's index would no longer fit in one call on a file of about 3 GB, the largest a mailbox of small mail reaches at the default quota.
 
 **MIME parsing** with libetpan, on 5,000 generated messages, 10% of them malformed:
 

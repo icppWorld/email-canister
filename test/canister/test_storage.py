@@ -326,5 +326,6 @@ def test__the_inbox_index_of_a_full_file_builds_in_one_call() -> None:
         f"instructions, {per_mb:,.0f} per MB, so about "
         f"{40e9 / per_mb / 1e3:.1f} GB in one call"
     )
-    # A file of 2 GiB must fit in the 40B limit, as for a whole-file check
-    assert per_mb * 2_147 < 40e9, f"{per_mb:,.0f} instructions per MB"
+    # A file of small mail is about 1.4 times the bytes its quota counts, so
+    # the default quota of 2 GiB makes a file of about 3 GB, which must fit
+    assert per_mb * 3_000 < 40e9, f"{per_mb:,.0f} instructions per MB"
