@@ -304,8 +304,9 @@ export type FramedBody = { body: string; paper: boolean; remote: boolean }
 // Elements the frame leaves out. Its policy does not cover a link that
 // connects ahead, such as preconnect, which would tell the sender the message
 // was read; a meta could loosen the frame's referrer policy; a template can
-// become a shadow root, which a check here does not see into.
-const LEFT_OUT = 'link, meta, template'
+// become a shadow root, and a frame holds a document of its own, which a check
+// here does not see into.
+const LEFT_OUT = 'link, meta, template, iframe, frame'
 
 // The message as the frame parses it: inside the body of the frame's document
 function parsedInFrame(body: string): Document {

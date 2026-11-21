@@ -461,6 +461,8 @@ test('remote images load only after Show images, and only that time', async ({
       // A link in a shadow root, and one that a second parse grows where an
       // engine writes < and > in attributes out as they are
       `<div><template shadowrootmode="open"><link rel="preconnect" href="https://ahead.example.test/shadow"></template></div>` +
+      // and one in a frame's own document
+      `<iframe srcdoc="<link rel=preconnect href=https://ahead.example.test/nested>"></iframe>` +
       `<math><mtext><table><mglyph><style><!--</style><img title="--&gt;&lt;link rel=preconnect href=https://ahead.example.test/grown&gt;">`,
   })
   deliver({ subject: 'Local murrelet', body: '<p>murrelet</p>' })
@@ -497,6 +499,7 @@ test('remote images load only after Show images, and only that time', async ({
   // The whole frame, its head and shadow roots included
   const frame = page.frameLocator('iframe.body')
   await expect(frame.locator('link')).toHaveCount(0)
+  await expect(frame.locator('iframe')).toHaveCount(0)
   await expect(frame.locator('meta[content="unsafe-url"]')).toHaveCount(0)
 
   await showImages.click()
