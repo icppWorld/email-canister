@@ -724,6 +724,26 @@ button.star.on .icon {
   gap: 6px;
   padding: 14px;
 }
+/* The files attached, each with its Remove */
+.attached,
+.attached ul {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 12px;
+}
+.attached ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.attached li {
+  display: flex;
+  align-items: center;
+}
+.attached button {
+  padding: 2px 4px;
+}
 .compose-body[hidden] {
   display: none;
 }

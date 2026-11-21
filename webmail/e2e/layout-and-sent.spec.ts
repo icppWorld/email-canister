@@ -2,6 +2,7 @@
 // Each spec file runs on a backend of its own (freshBackend in support.ts).
 
 import {
+  type BrowserContext,
   expect,
   type Locator,
   type Page,
@@ -896,16 +897,22 @@ test('dragging the divider widens the list, in every folder, and the width stays
   const handle = (await divider(page).boundingBox())!
   const x = handle.x + handle.width / 2
   const y = handle.y + handle.height / 2
-  await page.mouse.move(x, y)
-  await page.mouse.down()
-  await page.mouse.move(x + 100, y, { steps: 5 })
-  await page.mouse.up()
-  await expect.poll(() => widthOf(list)).toBeGreaterThan(470)
-  const wider = await widthOf(list)
-  await expect(divider(page)).toHaveAttribute(
-    'aria-valuenow',
-    String(Math.round(wider))
-  )
+  const dragged = async (button: 'left' | 'right') => {
+    await page.mouse.move(x, y)
+    await page.mouse.down({ button })
+    await page.mouse.move(x + 100, y, { steps: 5 })
+    await page.mouse.up({ button })
+    // A frame on, for a width drawn on the page
+    await page.evaluate(() => new Promise(requestAnimationFrame))
+  }
+  // Another button moves nothing
+  await dragged('right')
+  expect(await widthOf(list)).toBeCloseTo(380, 0)
+  // Grabbed off its middle, it moves as far as the pointer, without a jump
+  await dragged('left')
+  await expect.poll(() => widthOf(list)).toBeCloseTo(480, 0)
+  const wider = 480
+  await expect(divider(page)).toHaveAttribute('aria-valuenow', String(wider))
 
   await page.reload()
   await expect(list).toBeVisible()
@@ -941,13 +948,19 @@ test('the arrow keys move the divider, Home and End take it to its limits, and i
   await at(260)
   await page.keyboard.press('ArrowLeft')
   await at(260)
-  // The reader keeps 320 pixels
-  const max = Math.round(await widthOf(page.locator('.split'))) - 320
+  // The reader keeps 320 pixels beside the divider
+  const split = (await page.locator('.split').boundingBox())!
+  const bar = (await handle.boundingBox())!
+  const max = Math.round(split.width - 320 - bar.width)
   await expect(handle).toHaveAttribute('aria-valuemax', String(max))
   await page.keyboard.press('End')
   await at(max)
   await page.keyboard.press('ArrowRight')
   await at(max)
+  const end = (await handle.boundingBox())!
+  expect(split.x + split.width - (end.x + end.width)).toBeGreaterThanOrEqual(
+    320
+  )
   // The list never scrolls sideways
   expect(
     await list.evaluate((el) => el.scrollWidth - el.clientWidth)
@@ -1086,12 +1099,13 @@ test("a Sent row's own Delete deletes it, and Select all ticks the rest", async 
 
 const SPURGE = '54'.repeat(32)
 
-test('Empty Sent deletes all but mail being sent, which the note says it kept', async ({
+test('Empty Sent deletes all but mail being sent, which the note says it could not delete', async ({
   browser,
 }) => {
   const box = await sentMail('spurge', SPURGE, ['Spurge 1', 'Spurge 2'])
   // The bridge holds the next one as being sent, until the test lets it finish
   stub('stub_set_mode', '("sending")')
+  let context: BrowserContext | undefined
   try {
     await box.mail_send('spurge', {
       client_id: crypto.randomUUID(),
@@ -1102,7 +1116,9 @@ test('Empty Sent deletes all but mail being sent, which the note says it kept', 
       html_body: '<p>Held.</p>',
       attachments: [],
     })
-    const { context, page } = await signedIn(browser, SPURGE)
+    const signed = await signedIn(browser, SPURGE)
+    context = signed.context
+    const { page } = signed
     await folder(page, 'Sent')
     const sent = page.getByRole('region', { name: 'Sent mail' })
     const held = page.locator('li.message-row', { hasText: 'Held spurge' })
@@ -1118,16 +1134,134 @@ test('Empty Sent deletes all but mail being sent, which the note says it kept', 
       .getByRole('button', { name: 'Empty Sent' })
       .click()
     await expect(page.getByTestId('toast').locator('span')).toHaveText(
-      '2 sent messages deleted. 1 being sent was kept'
+      '2 sent messages deleted. 1 could not be deleted: it is being sent, ' +
+        'or was deleted already'
     )
     expect(dialogs).toEqual([
-      'Delete every message in Sent for good? Mail being sent is kept.',
+      'Delete every message in Sent for good? Mail waiting to be sent is ' +
+        'deleted and not sent; mail being sent is kept.',
     ])
     await expect(sent.getByRole('listitem')).toHaveCount(1)
     await expect(held).toHaveCount(1)
-    await context.close()
   } finally {
+    await context?.close()
     stub('stub_set_mode', '("sent")')
     stub('stub_finish', '("sent")')
   }
+})
+
+const SUNDEW = '55'.repeat(32)
+
+test('a refused delete in Sent shows at once, while the list reloads, and leaves its mail unticked', async ({
+  browser,
+}) => {
+  await sentMail('sundew', SUNDEW, ['Sundew 1', 'Sundew 2'])
+  const { context, page } = await signedIn(browser, SUNDEW)
+  await folder(page, 'Sent')
+  const sent = page.getByRole('region', { name: 'Sent mail' })
+  await expect(sent.getByRole('listitem')).toHaveCount(2)
+  const boxes = [1, 2].map((n) =>
+    page.getByLabel(`Select Sundew ${n}`, { exact: true })
+  )
+  for (const box of boxes) await box.check()
+  // The reload after it waits, and every attempt of the delete fails: the
+  // agent tries a failed call again
+  const loading = await hold(page, 'mail_outbox_list')
+  await page.route('**/api/*/canister/*/*', (route) =>
+    callsTo(route.request(), 'mail_outbox_delete_many')
+      ? route.abort()
+      : route.fallback()
+  )
+  const dialogs = answer(page, true)
+  await page
+    .getByRole('toolbar', { name: 'Selected messages' })
+    .getByRole('button', { name: 'Delete', exact: true })
+    .click()
+  await expect(sent.getByRole('alert')).toBeVisible()
+  expect(dialogs).toEqual(['Delete 2 sent messages for good?'])
+  // Once the list is back, the mail is still there, unticked, and the
+  // refusal still shows
+  await loading.seen
+  loading.release()
+  await expect(sent.getByRole('listitem')).toHaveCount(2)
+  for (const box of boxes) await expect(box).not.toBeChecked()
+  await expect(sent.getByRole('alert')).toBeVisible()
+  await context.close()
+})
+
+const SUMAC = '56'.repeat(32)
+
+test('deleting mail waiting to be sent says it is then not sent', async ({
+  browser,
+}) => {
+  const box = await sentMail('sumac', SUMAC, ['Sumac 1'])
+  // The next one waits to be sent, until the test lets it go
+  backend('dev_outbox_crash', '("before_call")')
+  let context: BrowserContext | undefined
+  try {
+    await box.mail_send('sumac', {
+      client_id: crypto.randomUUID(),
+      to: ['friend@example.org'],
+      cc: [],
+      bcc: [],
+      subject: 'Waiting sumac',
+      html_body: '<p>Waiting.</p>',
+      attachments: [],
+    })
+    const signed = await signedIn(browser, SUMAC)
+    context = signed.context
+    const { page } = signed
+    await folder(page, 'Sent')
+    const sent = page.getByRole('region', { name: 'Sent mail' })
+    await expect(messageRow(page, 'Waiting sumac')).toContainText(
+      'Waiting to send'
+    )
+    const dialogs = answer(page, false, true)
+    for (const subject of ['Sumac 1', 'Waiting sumac']) {
+      await messageRow(page, subject).hover()
+      await page.getByRole('button', { name: `Delete: ${subject}` }).click()
+    }
+    await expect(page.getByTestId('toast').locator('span')).toHaveText(
+      '1 sent message deleted'
+    )
+    expect(dialogs).toEqual([
+      'Delete this sent message for good?',
+      'Delete this sent message for good? Mail waiting to be sent is ' +
+        'deleted and not sent.',
+    ])
+    await expect(sent.getByRole('listitem')).toHaveCount(1)
+    await expect(sent).toContainText('Sumac 1')
+  } finally {
+    await context?.close()
+    backend('dev_outbox_crash', '("")')
+  }
+})
+
+test('each pick adds its files, skipping one attached already, and Remove takes one off', async ({
+  browser,
+}) => {
+  const { context, page } = await signedIn(browser, USER_A)
+  await page.getByRole('button', { name: 'Compose' }).click()
+  const window = page.getByRole('dialog', { name: 'New message' })
+  const picker = window.getByLabel('Attachments')
+  const file = (name: string, size: number) => ({
+    name,
+    mimeType: 'text/plain',
+    buffer: Buffer.alloc(size, 'x'),
+  })
+  const attached = window
+    .getByRole('list', { name: 'Attached files' })
+    .getByRole('listitem')
+  await picker.setInputFiles(file('a.txt', 2048))
+  await picker.setInputFiles([file('b.txt', 10), file('a.txt', 2048)])
+  await expect(attached).toHaveText(['a.txt (2 KB)', 'b.txt (1 KB)'])
+  // A cancelled pick
+  await picker.setInputFiles([])
+  await expect(attached).toHaveText(['a.txt (2 KB)', 'b.txt (1 KB)'])
+  await window.getByRole('button', { name: 'Remove: a.txt' }).click()
+  await expect(attached).toHaveText(['b.txt (1 KB)'])
+  // Removed, it can be picked again
+  await picker.setInputFiles(file('a.txt', 2048))
+  await expect(attached).toHaveText(['b.txt (1 KB)', 'a.txt (2 KB)'])
+  await context.close()
 })

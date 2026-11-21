@@ -29,14 +29,21 @@ export function Split({
 }) {
   const split = useRef<HTMLDivElement>(null)
   const [width, setWidth] = useState(() => Number(stored(KEY)) || START)
-  // The widest the list can be in the split as it is now: measured before
-  // the first paint, and again as the split changes size
+  const handle = useRef<HTMLDivElement>(null)
+  // The widest the list can be in the split as it is now, leaving the reader
+  // its room beside the divider: measured before the first paint, and again
+  // as the split changes size
   const [max, setMax] = useState(START)
   useLayoutEffect(() => {
     const element = split.current
     if (!element) return
     const measure = () =>
-      setMax(Math.max(MIN, element.clientWidth - READER_MIN))
+      setMax(
+        Math.max(
+          MIN,
+          element.clientWidth - READER_MIN - (handle.current?.offsetWidth ?? 0)
+        )
+      )
     measure()
     const observer = new ResizeObserver(measure)
     observer.observe(element)
@@ -52,13 +59,16 @@ export function Split({
     store(KEY, String(next))
   }
 
-  // A drag draws the width straight on the page, at most once a frame, and
-  // keeps it once let go. It measures from where the split starts, read as
+  // A drag with the main button draws the width straight on the page, at
+  // most once a frame, and keeps it once let go. It measures from where the
+  // split starts, and keeps the divider where it was grabbed, both read as
   // the drag begins.
-  const handle = useRef<HTMLDivElement>(null)
-  const drag = useRef<{ left: number; width?: number; frame?: number } | null>(
-    null
-  )
+  const drag = useRef<{
+    left: number
+    offset: number
+    width?: number
+    frame?: number
+  } | null>(null)
   const draw = () => {
     const at = drag.current
     if (!at || at.width === undefined) return
@@ -93,17 +103,17 @@ export function Split({
         aria-valuenow={now}
         tabIndex={0}
         onPointerDown={(e) => {
+          if (e.button !== 0 || !e.isPrimary) return
           // No text is selected while it moves
           e.preventDefault()
           e.currentTarget.setPointerCapture(e.pointerId)
-          drag.current = {
-            left: split.current?.getBoundingClientRect().left ?? 0,
-          }
+          const left = split.current?.getBoundingClientRect().left ?? 0
+          drag.current = { left, offset: e.clientX - left - now }
         }}
         onPointerMove={(e) => {
           const at = drag.current
           if (!at) return
-          at.width = within(e.clientX - at.left)
+          at.width = within(e.clientX - at.left - at.offset)
           at.frame ??= requestAnimationFrame(draw)
         }}
         onPointerUp={dropped}

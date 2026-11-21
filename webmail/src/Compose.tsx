@@ -203,13 +203,43 @@ export function Compose({
             type="file"
             multiple
             hidden
-            onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
+            onChange={(e) => {
+              const picked = Array.from(e.target.files ?? [])
+              // Cleared, so the same file can be picked again once removed
+              e.target.value = ''
+              setFiles((before) => [
+                ...before,
+                ...picked.filter(
+                  (file) =>
+                    !before.some(
+                      (f) => f.name === file.name && f.size === file.size
+                    )
+                ),
+              ])
+            }}
           />
-          {/* A file input cannot be refilled, so a restored draft names its files here */}
+          {/* Each pick adds to these, also in a restored draft, whose file
+              input cannot be refilled; a cancelled pick adds none */}
           {files.length > 0 && (
-            <p className="hint" data-testid="attached">
-              Attached: {files.map((f) => f.name).join(', ')}
-            </p>
+            <div className="attached hint" data-testid="attached">
+              Attached:{' '}
+              <ul aria-label="Attached files">
+                {files.map((file) => (
+                  <li key={`${file.name} ${file.size}`}>
+                    {file.name} ({Math.ceil(file.size / 1024)} KB)
+                    <IconButton
+                      variant="bare"
+                      label="Remove"
+                      name={file.name}
+                      icon="close"
+                      onClick={() =>
+                        setFiles((before) => before.filter((f) => f !== file))
+                      }
+                    />
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
           {tooLarge && (
             <p className="error" role="alert">

@@ -11,10 +11,10 @@ import {
   type OutboxMessage,
   type OutboxSummary,
 } from './api'
-import { attempt, BATCH, inBatches } from './batch'
+import { attempt, BATCH, inBatches, MAX_BATCH } from './batch'
 import { BackButton, IconButton } from './Buttons'
 import { Bulk, RowPick, useTicks } from './Bulk'
-import { memberName, messages, noLongerHere, noteOf, was } from './format'
+import { memberName, messages, noteOf, was } from './format'
 import { Icon } from './Icon'
 import { MessageBody } from './MessageBody'
 import { saveFile } from './mime'
@@ -22,57 +22,42 @@ import { Split } from './Splitter'
 import type { Toast } from './Toast'
 
 const REFRESH_MS = 5_000
-// The most sent messages the canister deletes in one call
-const DELETE_MAX = 200
+// What deletions did, as the canister replied: the mail it deleted, and the
+// mail it skipped, being sent or deleted already, which the page cannot tell
+// apart
+type Deleted = { deleted: number; skipped: number }
 
-// What deletions did, as the canister replied: the mail it deleted, and of
-// the mail it skipped, how much was listed as being sent and how much else,
-// which was no longer there, as when another member deleted it
-type Deleted = { deleted: number; kept: number; gone: number }
-
-const deletedText = ({ deleted, kept, gone }: Deleted) =>
+const deletedText = ({ deleted, skipped }: Deleted) =>
   noteOf(
     [
       [deleted, 'deleted'],
-      [kept, `being sent ${was(kept)} kept`],
-      [gone, noLongerHere(gone)],
+      [
+        skipped,
+        `could not be deleted: ${skipped === 1 ? 'it is' : 'they are'} ` +
+          `being sent, or ${was(skipped)} deleted already`,
+      ],
     ],
     '1 sent message',
     'sent messages'
   )
 
-// For good, in parts the canister takes, adding up what it did. `sending`
-// holds the ids the page listed as being sent.
+// For good, in parts the canister takes, adding up what it did
 async function deleteSent(
   backend: Mailbox,
   ids: bigint[],
-  sending: ReadonlySet<bigint>,
   done: Deleted
 ): Promise<void> {
   const { error } = await inBatches(
     ids,
     async (part) => {
-      const deleted = new Set(await backend.mail_outbox_delete_many(part))
-      done.deleted += deleted.size
-      for (const id of part) {
-        if (deleted.has(id)) continue
-        if (sending.has(id)) done.kept++
-        else done.gone++
-      }
+      const deleted = await backend.mail_outbox_delete_many(part)
+      done.deleted += deleted.length
+      done.skipped += part.length - deleted.length
     },
-    DELETE_MAX
+    MAX_BATCH
   )
   if (error) throw error
 }
-
-// The ids of the mail listed as being sent, or waiting to: mail that waited
-// may have started sending since, which the canister then keeps
-const sendingIn = (listed: OutboxSummary[]) =>
-  new Set(
-    listed
-      .filter((m) => m.state === OUTBOX_SENDING || m.state === OUTBOX_QUEUED)
-      .map((m) => m.id)
-  )
 
 function stateLabel(state: bigint): string {
   switch (state) {
@@ -254,7 +239,9 @@ export function Sent({
   const ticks = useTicks(
     items.filter((m) => m.state !== OUTBOX_SENDING).map((m) => m.id)
   )
+  // The list's own error, which a reload clears, and an action's refusal
   const [error, setError] = useState('')
+  const [actionError, setActionError] = useState('')
   // Replies can arrive out of order, and only the newest may be shown
   const latestLoad = useRef(0)
   const olderShown = useRef(false)
@@ -310,49 +297,49 @@ export function Sent({
     }
   }
 
-  // The messages given, or all of them, for good once confirmed. Mail being
-  // sent is kept, as the canister replies. The note says what it did, also
-  // before a refusal, and the list loads again; the ticks of mail it deleted
-  // go with it, as an id is never used again.
+  // The messages given, or all of them, for good once confirmed. Mail
+  // waiting to be sent is then never sent, and mail being sent is kept, as
+  // the canister replies. The note says what it did, also before a refusal,
+  // which shows at once while the list loads again. Each message asked for
+  // is unticked, so one kept does not come back ticked.
   const remove = async (ids: bigint[] | 'all') => {
-    const asked =
+    const waiting =
+      ids !== 'all' &&
+      items.some((m) => m.state === OUTBOX_QUEUED && ids.includes(m.id))
+    const question =
       ids === 'all'
-        ? 'Delete every message in Sent for good? Mail being sent is kept.'
-        : `Delete ${messages(ids.length, 'this sent message', 'sent messages')} for good?`
-    if (!window.confirm(asked)) return
-    const done: Deleted = { deleted: 0, kept: 0, gone: 0 }
+        ? 'Delete every message in Sent for good? Mail waiting to be sent ' +
+          'is deleted and not sent; mail being sent is kept.'
+        : `Delete ${messages(ids.length, 'this sent message', 'sent messages')} for good?` +
+          (waiting ? ' Mail waiting to be sent is deleted and not sent.' : '')
+    if (!window.confirm(question)) return
+    const done: Deleted = { deleted: 0, skipped: 0 }
+    let all = ids === 'all' ? [] : ids
     try {
-      let listed = items
       if (ids === 'all') {
         // Every page first, then the deletes in the canister's largest parts
-        listed = []
         let at: [] | [bigint] = []
         do {
           const page = await backend.mail_outbox_list({
             cursor: at,
             limit: BigInt(BATCH),
           })
-          listed.push(...page.items)
+          all = [...all, ...page.items.map((m) => m.id)]
           at = page.cursor
         } while (at.length > 0)
       }
-      await deleteSent(
-        backend,
-        ids === 'all' ? listed.map((m) => m.id) : ids,
-        sendingIn(listed),
-        done
-      )
+      await deleteSent(backend, all, done)
     } finally {
-      if (done.deleted + done.kept + done.gone > 0) {
+      ticks.untick(new Set(all))
+      if (done.deleted + done.skipped > 0) {
         notify({ text: deletedText(done) })
       }
       if (done.deleted > 0) onUsage()
-      await load()
+      load()
     }
   }
 
-  // A refusal shows above the list
-  const act = (run: () => Promise<unknown>) => attempt(run, setError)
+  const act = (run: () => Promise<unknown>) => attempt(run, setActionError)
 
   const selected = items.find((m) => m.id === selectedId) ?? null
 
@@ -383,6 +370,11 @@ export function Sent({
         {error && (
           <p className="error" role="alert">
             {error}
+          </p>
+        )}
+        {actionError && (
+          <p className="error" role="alert">
+            {actionError}
           </p>
         )}
         {items.length === 0 && !error && (

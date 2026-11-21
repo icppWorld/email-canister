@@ -527,7 +527,9 @@ test('an ended sign-in returns to the sign-in page, keeping the draft for the sa
   await expect(page.getByRole('textbox', { name: 'Message' })).toHaveValue(
     'Half written'
   )
-  await expect(page.getByTestId('attached')).toHaveText('Attached: notes.txt')
+  await expect(page.getByTestId('attached')).toHaveText(
+    'Attached: notes.txt (1 KB)'
+  )
 
   await end()
   await signInAs(USER_A)

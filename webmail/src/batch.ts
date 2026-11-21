@@ -2,8 +2,11 @@
 
 import { errorText } from './api'
 
-// The most messages the canister lists, flags, moves or deletes in one call
+// The most messages the canister lists in one call
 export const BATCH = 100
+// The most ids the canister moves, flags or deletes in one call, as its
+// k_max_batch
+export const MAX_BATCH = 200
 
 // Runs an action, showing a refusal with onError. A new action clears the
 // refusal shown before, and keeps one its own work shows.
@@ -19,8 +22,8 @@ export async function attempt(
   }
 }
 
-// A call for many messages, in parts of `size`, as the canister takes them.
-// Returns the ids it got through, and the refusal that stopped it.
+// A call for many messages, in parts of `size`, at most MAX_BATCH. Returns
+// the ids it got through, and the refusal that stopped it.
 export async function inBatches(
   ids: bigint[],
   call: (part: bigint[]) => Promise<unknown>,
