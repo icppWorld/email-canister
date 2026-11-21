@@ -201,8 +201,13 @@ export async function stale(
     const url = new URL(route.request().url())
     url.hostname = '127.0.0.1'
     await back()
-    const response = await route.fetch({ url: url.toString() })
-    await again()
+    let response
+    try {
+      response = await route.fetch({ url: url.toString() })
+    } finally {
+      // Also when the read failed, so the mailbox is left as it was
+      await again()
+    }
     await route.fulfill({ response })
   })
 }

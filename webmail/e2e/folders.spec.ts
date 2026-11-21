@@ -1283,12 +1283,23 @@ test('an unblock stays, with no read after it, and later reads that lag behind i
   await menuItem(page, 'More', 'Blocked senders')
   const blocked = page.getByRole('region', { name: 'Blocked senders' })
   await expect(blocked).toContainText('lagging@sender.example')
-  // Every read from here on lags behind the unblock
+  // Every read from here on lags behind the unblock: it lists the same block,
+  // made at the same time
+  const [lagging] = (await alice.mail_blocked('alice')).filter(
+    (b) => b.address === 'lagging@sender.example'
+  )
+  const sql = (statement: string) =>
+    Promise.resolve(backend('dev_file_exec', `("alice", "${statement}")`))
   await stale(
     page,
     'mail_blocked',
-    () => alice.mail_block('alice', 'lagging@sender.example'),
-    () => alice.mail_unblock('alice', 'lagging@sender.example')
+    () =>
+      sql(
+        'INSERT INTO blocked(address, blocked_by, at_ns) VALUES(' +
+          `'lagging@sender.example', '${lagging.blocked_by.toText()}', ` +
+          `${lagging.at_ns})`
+      ),
+    () => sql("DELETE FROM blocked WHERE address = 'lagging@sender.example'")
   )
   const reads = watch(page, 'mail_blocked')
   // Held by the focus until the Unblock, then 8 seconds more
@@ -1560,6 +1571,15 @@ test('a retried Undo whose first move back lost its reply says nothing of mail n
     { timeout: 60_000 }
   )
   await note.hover()
+  // The lost reply's move went through: the retry finds it back already
+  const alice = await asAlice()
+  const { items } = await alice.mail_search('alice', {
+    query: 'wigeon',
+    folder: FOLDER_INBOX,
+    cursor: [],
+    limit: 1n,
+  })
+  expect(items).toHaveLength(1)
   await page.unrouteAll({ behavior: 'wait' })
   await undo(page)
   // The reload follows the retry's note
@@ -1576,7 +1596,7 @@ test('an address unblocked on Blocked senders shows once it is blocked again', a
   const alice = await asAlice()
   await alice.mail_block('alice', 'pintail@sender.example')
   const { context, page } = await signedIn(browser, USER_A)
-  // A note whose Undo, refused, then let through, reloads the page twice
+  // A note whose Undo reloads the page later
   await search(page, 'pintail')
   await messageRow(page, 'Reblocked pintail').hover()
   await page.getByRole('button', { name: 'Delete: Reblocked pintail' }).click()
@@ -1591,26 +1611,68 @@ test('an address unblocked on Blocked senders shows once it is blocked again', a
     .getByRole('button', { name: 'Unblock' })
     .click()
   await expect(blocked).not.toContainText('pintail@sender.example')
-  // A read that no longer lists it, shown by a block made before it
-  await alice.mail_block('alice', 'marker@sender.example')
-  let refusing = true
-  await page.route('**/api/*/canister/*/*', (route) =>
-    refusing && callsTo(route.request(), 'mail_move')
-      ? route.abort('failed')
-      : route.fallback()
-  )
-  await note.hover()
-  await undo(page)
-  await expect(blocked).toContainText('marker@sender.example', {
-    timeout: 60_000,
-  })
-  // Blocked again, by another member: the next read shows it
+  // Blocked again, by another member: a new block, which the next read shows
   await alice.mail_block('alice', 'pintail@sender.example')
-  refusing = false
   await note.hover()
   await undo(page)
   await expect(blocked).toContainText('pintail@sender.example')
   await alice.mail_unblock('alice', 'pintail@sender.example')
-  await alice.mail_unblock('alice', 'marker@sender.example')
+  await context.close()
+})
+
+test("a slow Undo's own note gives way to a newer note, which keeps its Undo", async ({
+  browser,
+}) => {
+  for (const bird of ['Aged eider', 'Young eider']) {
+    deliver({ subject: bird, body: '<p>An eider.</p>' })
+  }
+  await waitDrained()
+  const alice = await asAlice()
+  const aged = await uidOf(alice, 'alice', 'Aged eider')
+  const young = await uidOf(alice, 'alice', 'Young eider')
+  await alice.mail_move('alice', [aged, young], FOLDER_SPAM)
+  // An Undo of its Not spam deletes it, which the Undo's own note would say
+  backdate('alice', aged, 'received_ns', 31)
+  const { context, page } = await signedIn(browser, USER_A)
+  await folder(page, 'Spam')
+  await search(page, 'eider')
+  await expect(messageRow(page, 'eider')).toHaveCount(2)
+  await messageRow(page, 'Aged eider').hover()
+  await page.getByRole('button', { name: 'Not spam: Aged eider' }).click()
+  const note = page.getByTestId('toast')
+  await expect(note.locator('span')).toHaveText('Message moved to the Inbox')
+  // The Undo's move is answered at once, and its reply held
+  let release = () => {}
+  const released = new Promise<void>((resolve) => (release = resolve))
+  let reached = () => {}
+  const seen = new Promise<void>((resolve) => (reached = resolve))
+  let first = true
+  await page.route('**/api/*/canister/*/*', async (route) => {
+    if (!callsTo(route.request(), 'mail_move') || !first) {
+      return route.fallback()
+    }
+    first = false
+    const url = new URL(route.request().url())
+    url.hostname = '127.0.0.1'
+    const response = await route.fetch({ url: url.toString() })
+    reached()
+    await released
+    await route.fulfill({ response })
+  })
+  await undo(page)
+  await seen
+  await messageRow(page, 'Young eider').hover()
+  await page.getByRole('button', { name: 'Not spam: Young eider' }).click()
+  await expect(note.locator('span')).toHaveText('Message moved to the Inbox')
+  await note.hover()
+  // The Undo's reload comes after its note was decided on
+  const reloaded = page.waitForRequest(
+    (request) =>
+      callsTo(request, 'mail_search') || callsTo(request, 'mail_list')
+  )
+  release()
+  await reloaded
+  await expect(note.locator('span')).toHaveText('Message moved to the Inbox')
+  await expect(note.getByRole('button', { name: 'Undo' })).toBeVisible()
   await context.close()
 })

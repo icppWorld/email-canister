@@ -256,9 +256,17 @@ export function App() {
     setToast(null)
     // Its end belongs to the session it began in
     const session = latestBackend.current
+    // A note of its own gives way to one shown since
+    const shown = toastIds.current
     try {
       const note = await action.run()
-      if (note && session === latestBackend.current) showToast(note)
+      if (
+        note &&
+        session === latestBackend.current &&
+        shown === toastIds.current
+      ) {
+        showToast(note)
+      }
     } catch (e) {
       // With the action again, to try once more
       if (session === latestBackend.current) {
