@@ -45,6 +45,8 @@ bool g_paused = false;
 std::map<int64_t, int64_t> g_upgrade_failures;
 // Upgrades take turns with parses and moves
 bool g_upgrade_turn = true;
+// Cleanups take turns with the rest
+bool g_clean_turn = false;
 #ifdef EMAIL_CANISTER_TEST_HOOKS
 bool g_trap_moves = false;
 #endif
@@ -135,11 +137,14 @@ IC_Async ingest_pump_async() {
   // already upgraded keep receiving while the others wait. Parsing goes
   // before moving, so that a message is searchable soon after its move. A
   // mailbox whose parse cannot be claimed does not hold up the moves.
+  // Cleanups take turns with the rest too, so that a mailbox refused mail for
+  // its quota is cleaned while others receive.
   int64_t mailbox = 0;
   int64_t id = 0;
+  int64_t due = 0; // the cleanup's marks
   const auto now = static_cast<int64_t>(IC_API::time());
   const auto defer = static_cast<int64_t>(k_defer_ns);
-  enum class Work { Upgrade, Parse, Move } work = Work::Move;
+  enum class Work { Upgrade, Parse, Move, Clean } work = Work::Move;
   store::Claim claim = store::Claim::Empty;
   bool failed = false;
   bool not_run = false; // a call that the IC never ran
@@ -161,9 +166,20 @@ IC_Async ingest_pump_async() {
                 Work::Parse) ||
            take(store::claim_move(k_max_attempts, now, defer, id), Work::Move);
   };
-  if (g_upgrade_turn ? upgrade() || receive() : receive() || upgrade())
-    g_upgrade_turn = work != Work::Upgrade;
-  else if (failed) claim = store::Claim::Failed;
+  const auto clean = [&] {
+    return take(store::claim_clean(now, defer, mailbox, due), Work::Clean);
+  };
+  const auto rest = [&] {
+    return g_upgrade_turn ? upgrade() || receive() : receive() || upgrade();
+  };
+  if (g_clean_turn ? clean() || rest() : rest() || clean()) {
+    // A cleanup leaves the upgrades' turn as it was: were it to hand it back,
+    // upgrades and cleanups would take every turn between them
+    if (work != Work::Clean) g_upgrade_turn = work != Work::Upgrade;
+    g_clean_turn = work != Work::Clean;
+  } else if (failed) {
+    claim = store::Claim::Failed;
+  }
   if (claim == store::Claim::Claimed) {
     g_pumping = true; // the co_await commits this and the recorded attempt
     g_pumping_since = IC_API::time();
@@ -204,6 +220,17 @@ IC_Async ingest_pump_async() {
             co_await IC_Call::unbounded_wait(self, "ingest_merge")
                 .with_arg(CandidTypeNat64{static_cast<uint64_t>(mailbox)});
         (void)merged; // the next merge makes up for a failed one
+      }
+    } else if (work == Work::Clean) {
+      IC_CallResult<IC_CallReply> result =
+          co_await IC_Call::unbounded_wait(self, "ingest_clean")
+              .with_arg(CandidTypeNat64{static_cast<uint64_t>(mailbox)});
+      // One that failed after it ran waits for the next mark, so a message
+      // that cannot be deleted never makes the pump loop; a mark made during
+      // the call stays. One that never ran is tried again later.
+      if (!result) {
+        not_run = !ran(result.error());
+        if (!not_run) store::stop_cleaning(mailbox, due);
       }
     } else {
       IC_CallResult<IC_CallReply> result =
@@ -301,6 +328,19 @@ void ingest_upgrade_file() {
   ic_api.to_wire();
 }
 
+void ingest_clean() {
+  IC_API ic_api(CanisterUpdate{std::string(__func__)}, false);
+  require_self(ic_api);
+  uint64_t mailbox = 0;
+  ic_api.from_wire(CandidTypeNat64{&mailbox});
+  if (!store::clean_expired(static_cast<int64_t>(mailbox),
+                            static_cast<int64_t>(IC_API::time()))) {
+    IC_API::trap("the expired mail could not be deleted");
+  }
+  dev_record_cost(__func__);
+  ic_api.to_wire();
+}
+
 void ingest_merge() {
   IC_API ic_api(CanisterUpdate{std::string(__func__)}, false);
   require_self(ic_api);
@@ -323,7 +363,7 @@ void start(const std::string &canister_self) {
   int64_t deferred = 0;
   // -1, a failed count, arms too
   if (store::backlog(now) != 0 || store::deferred_until(now, deferred) ||
-      store::upgrade_pending())
+      store::upgrade_pending() || store::clean_pending())
     arm();
 }
 

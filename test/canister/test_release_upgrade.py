@@ -1,6 +1,8 @@
 """An upgrade from the last release keeps the mail, on a local replica: the
 release's wasm, from GitHub and checked by its sha256, takes mail, and is then
-upgraded to this build, whose pump upgrades each mailbox file.
+upgraded to this build, which takes control.db to its schema. The mailbox files
+are at this build's schema already. The mail, its folders and flags, and the
+blocks stay, and the pump cleans out expired mail with the upgraded registry.
 
 $ make build-test
 $ icp network start -d
@@ -41,8 +43,8 @@ from .test_mailbox import (
 )
 from .test_storage import upgrade
 
-RELEASE = "v0.4.0"
-RELEASE_WASM_SHA256 = "05ff9ac7c22e1eacff68f5d3b40fff8316f3e10969889dda51df16e9b69401ca"
+RELEASE = "v0.5.0"
+RELEASE_WASM_SHA256 = "093dee53a3c369bd4b345f74f2d5d141bc4882b05a1d73183a27d076e7b39882"
 REPO = "icppWorld/email-canister"
 
 
@@ -57,10 +59,6 @@ def release_wasm(tmp_path_factory: pytest.TempPathFactory) -> Path:
     wasm = folder / "email-canister.wasm"
     assert hashlib.sha256(wasm.read_bytes()).hexdigest() == RELEASE_WASM_SHA256
     return wasm
-
-
-def busy() -> bool:
-    return "busy:" in page(USER_A)
 
 
 def test__an_upgrade_from_the_last_release_keeps_the_mail(
@@ -79,25 +77,14 @@ def test__an_upgrade_from_the_last_release_keeps_the_mail(
     )
     call("admin_set_domain", f'("{DOMAIN}")')
     assert "error" not in add_mailbox("alice", principal_of(USER_A)).lower()
-    for n, bird in enumerate(("puffin", "gannet", "shag")):
+    for n, bird in enumerate(("puffin", "gannet", "shag", "skua")):
         assert re.search(OK, deliver(f"Kept {bird}", f"<kept{n}@sender.example>"))
-    # The From header in the other forms its sender text takes
-    for subject, from_header in [
-        ("Kept kittiwake", "kittiwake@birds.example"),
-        ("Kept fulmar", '\\"Fulmars <Ltd>\\" <fulmar@birds.example>'),
-    ]:
-        assert re.search(
-            OK,
-            deliver(
-                subject,
-                f"<{subject.split()[1]}@birds.example>",
-                from_header=from_header,
-            ),
-        )
     wait_until_drained()
     # Filed, read and blocked under the release
     shag = uids(found(USER_A, "shag"))[0]
     mail("mail_move", "alice", f"(vec {{ {shag} : nat64 }}, 1 : nat64)", USER_A)
+    skua = uids(found(USER_A, "skua"))[0]
+    mail("mail_move", "alice", f"(vec {{ {skua} : nat64 }}, 2 : nat64)", USER_A)
     first = min(uids(page(USER_A)))
     mail(
         "mail_set_flags",
@@ -105,45 +92,35 @@ def test__an_upgrade_from_the_last_release_keeps_the_mail(
         f"(vec {{ {first} : nat64 }}, 1 : nat64, 0 : nat64)",
         USER_A,
     )
-    mail("mail_block", "alice", '("skua@birds.example")', USER_A)
-    assert unread(USER_A, "alice") == 3
+    mail("mail_block", "alice", '("tern@birds.example")', USER_A)
+    assert unread(USER_A, "alice") == 1
 
-    # This build: the pump takes alice's file to its schema, meanwhile her
-    # calls answer busy
     assert upgrade(identity) == ""
-    wait_until(lambda: not busy(), "alice's upgrade")
     inbox = page(USER_A)
-    for bird in ("puffin", "gannet", "kittiwake", "fulmar"):
-        assert f"Kept {bird}" in inbox
+    assert "Kept puffin" in inbox and "Kept gannet" in inbox
     assert "Kept shag" in page(USER_A, folder=1)
-    assert unread(USER_A, "alice") == 3
+    assert "Kept skua" in page(USER_A, folder=2)
+    assert unread(USER_A, "alice") == 1
+    assert "tern@birds.example" in mail("mail_blocked", "alice", "()", USER_A)
     assert 'result = "ok"' in call("admin_check", '("alice", null)')
 
-    # Each message's From address, from the sender text the release kept
-    for bird, address in [
-        ("gannet", "sender@sender.example"),
-        ("kittiwake", "kittiwake@birds.example"),
-        ("fulmar", "fulmar@birds.example"),
-    ]:
-        assert f'sender_address = "{address}"' in found(USER_A, bird), bird
-
-    # The block still holds, and mail this build parses gets its From
-    # address from the parser
+    # control.db's version 2: new mail finds the mail past its 30 days in
+    # Trash, and has the pump delete it. The block still holds.
+    call(
+        "dev_file_exec",
+        f'("alice", "UPDATE messages SET folder_ns = 1 WHERE uid = {shag}")',
+    )
     assert re.search(
         OK,
         deliver(
-            "Blocked skua",
-            "<skua@birds.example>",
-            from_address="skua@birds.example",
+            "Blocked tern",
+            "<tern@birds.example>",
+            from_address="tern@birds.example",
         ),
     )
     wait_until_drained()
-    assert 'sender_address = "skua@birds.example"' in found(USER_A, "skua", folder=2)
-    assert unread(USER_A, "alice") == 3
-    # The upgraded file takes changes: Not spam, and a block
-    skua = uids(found(USER_A, "skua", folder=2))[0]
-    mail("mail_move", "alice", f"(vec {{ {skua} : nat64 }}, 0 : nat64)", USER_A)
-    mail("mail_block", "alice", '("gannet@birds.example")', USER_A)
-    assert "Blocked skua" in page(USER_A)
-    assert unread(USER_A, "alice") == 4
+    wait_until(lambda: "Kept shag" not in page(USER_A, folder=1), "the cleanup")
+    spam = page(USER_A, folder=2)
+    assert "Blocked tern" in spam and "Kept skua" in spam
+    assert unread(USER_A, "alice") == 1
     assert 'result = "ok"' in call("admin_check", '("alice", null)')

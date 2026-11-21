@@ -25,6 +25,7 @@ from .support import (
     add_mailbox,
     add_member,
     call,
+    clean_due,
     create_mailbox,
     deliver,
     entry_line,
@@ -36,6 +37,7 @@ from .support import (
     record_with,
     stats,
     text,
+    wait_until,
     wait_until_drained,
 )
 
@@ -210,6 +212,7 @@ def test__admin_is_for_controllers_only(method: str, caller: str) -> None:
         ("ingest_move", "(1 : nat64)"),
         ("ingest_process", "(1 : nat64, 1 : nat64)"),
         ("ingest_merge", "(1 : nat64)"),
+        ("ingest_clean", "(1 : nat64)"),
         ("ingest_upgrade_file", "(1 : nat64)"),
     ],
 )
@@ -684,6 +687,79 @@ def test__quota_defers_mail_and_redelivery_is_free() -> None:
         assert number(entry_line("bob"), "used_bytes") == used
     finally:
         call("admin_set_quota", '("bob", 2147483648 : nat64)')
+
+
+def message_count(local: str) -> int:
+    return number(entry_line(local), "message_count")
+
+
+def spam_past_its_30_days(local: str, marked: List[int]) -> None:
+    """Marks the messages as Spam, then backdates them: expired, and not yet
+    deleted. The wait lets a cleanup still due from earlier end first, so that
+    it cannot delete them."""
+    listed = "; ".join(f"{uid} : nat64" for uid in marked)
+    mail("mail_move", local, f"(vec {{ {listed} }}, 2 : nat64)", USER_A)
+    wait_until(lambda: not clean_due(local), f"{local}'s earlier cleanup")
+    where = ", ".join(str(uid) for uid in marked)
+    call(
+        "dev_file_exec",
+        f'("{local}", "UPDATE messages SET folder_ns = 1, received_ns = 1 '
+        f'WHERE uid IN ({where})")',
+    )
+
+
+def test__a_full_mailbox_frees_its_expired_mail_for_the_retry(
+    users: Dict[str, str],
+) -> None:
+    add_mailbox("crowded", users[USER_A])
+    for n in range(3):
+        assert re.search(
+            OK, deliver(f"Crowded egg{n}", f"<egg{n}@sender.example>", to="crowded")
+        )
+    wait_until_drained()
+    spam_past_its_30_days("crowded", uids(page(USER_A, local="crowded"))[1:])
+    used = number(entry_line("crowded"), "used_bytes")
+    call("admin_set_quota", f'("crowded", {used} : nat64)')
+
+    # Refused for the quota, the delivery has the pump delete the expired
+    # mail, so the sender's retry finds room
+    retry = ("Crowded egg3", "<egg3@sender.example>")
+    assert "code = 452" in deliver(*retry, to="crowded")
+    wait_until(lambda: message_count("crowded") == 1, "the expired mail's deletion")
+    assert re.search(OK, deliver(*retry, to="crowded"))
+    wait_until_drained()
+    assert "Crowded egg3" in page(USER_A, local="crowded")
+    assert 'result = "ok"' in call("admin_check", '("crowded", null)')
+
+
+def test__mail_that_cannot_be_deleted_stops_neither_delivery_nor_the_pump(
+    users: Dict[str, str],
+) -> None:
+    add_mailbox("damaged", users[USER_A])
+    assert re.search(OK, deliver("Damaged rook", "<rook@sender.example>", to="damaged"))
+    wait_until_drained()
+    rook = uids(page(USER_A, local="damaged"))[0]
+    spam_past_its_30_days("damaged", [rook])
+    trigger = (
+        f"CREATE TRIGGER damaged BEFORE DELETE ON messages WHEN old.uid = {rook} "
+        "BEGIN SELECT RAISE(ABORT, 'damaged'); END"
+    )
+    call("dev_file_exec", f'("damaged", "{trigger}")')
+
+    assert re.search(OK, deliver("Damaged jay", "<jay@sender.example>", to="damaged"))
+    wait_until_drained()
+    assert "Damaged jay" in page(USER_A, local="damaged")
+    # The cleanup the move asked for failed, and stopped until the next mark
+    wait_until(lambda: not clean_due("damaged"), "the end of the failed cleanup")
+    assert "Damaged rook" in page(USER_A, local="damaged", folder=2)
+
+    # Repaired, the mailbox is cleaned at its next mark
+    call("dev_file_exec", '("damaged", "DROP TRIGGER damaged")')
+    jay = uids(page(USER_A, local="damaged"))[0]
+    mail("mail_move", "damaged", f"(vec {{ {jay} : nat64 }}, 1 : nat64)", USER_A)
+    wait_until(lambda: message_count("damaged") == 1, "the repaired cleanup")
+    assert "Damaged rook" not in page(USER_A, local="damaged", folder=2)
+    assert 'result = "ok"' in call("admin_check", '("damaged", null)')
 
 
 def test__reassigning_an_address_requires_a_purge(users: Dict[str, str]) -> None:

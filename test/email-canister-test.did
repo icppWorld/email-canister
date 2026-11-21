@@ -161,6 +161,7 @@ service : () -> {
     "ingest_move" : (nat64) -> ();
     "ingest_process" : (nat64, nat64) -> ();
     "ingest_merge" : (nat64) -> ();
+    "ingest_clean" : (nat64) -> ();
     "ingest_upgrade_file" : (nat64) -> ();
 
     // Controllers only
@@ -195,7 +196,8 @@ service : () -> {
     "mail_set_flags" : (text, vec nat64, nat64, nat64) -> ();
     // for good: uids and the folder they are in; one that left it stays
     "mail_delete" : (text, vec nat64, nat64) -> (nat64);
-    // uids and the folder to move them to; Trash and Spam keep mail 30 days
+    // uids and the folder to move them to. Trash keeps mail 30 days, Spam
+    // until 30 days after it arrived: older mail moved there is deleted.
     "mail_move" : (text, vec nat64, nat64) -> (nat64);
     "mail_block" : (text, text) -> ();
     "mail_unblock" : (text, text) -> ();
@@ -230,4 +232,5 @@ service : () -> {
     "dev_file_exec" : (text, text) -> (); // local, SQL
     "dev_damage_file" : (text, text) -> (); // local, table
     "dev_fail_statements" : (text) -> (nat64); // SQL text, empty to end; replies the failures so far
+    "dev_clean_due" : (text) -> (bool) query; // local
 }

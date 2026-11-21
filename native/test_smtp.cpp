@@ -45,12 +45,6 @@ std::string request(const std::string &to,
          (message_id.empty() ? "null" : "opt " + message_id) + " })";
 }
 
-// One integer from control.db, or -1
-int64_t control_integer(const std::string &sql) {
-  db::Stmt select(db::control(), sql.c_str());
-  return select && select.row() ? select.column_integer(0) : -1;
-}
-
 std::string repeat(const std::string &item, int count) {
   std::string out;
   for (int i = 0; i < count; ++i)

@@ -241,6 +241,11 @@ def entry_line(local: str) -> str:
     return record_with(call("admin_list_entries"), local)
 
 
+def clean_due(local: str) -> bool:
+    """Whether the mailbox waits for the pump to clean out its expired mail"""
+    return "true" in call("dev_clean_due", f'("{local}")')
+
+
 def purge(local: str) -> None:
     call("admin_set_disabled", f'("{local}", true)')
     while number(call("admin_purge", f'("{local}")'), "remaining") > 0:

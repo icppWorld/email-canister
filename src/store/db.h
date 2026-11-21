@@ -46,7 +46,8 @@ public:
   // commit()
   explicit operator bool() const { return m_db != nullptr; }
 
-  bool commit(); // false when it failed: the transaction then rolls back
+  bool commit();   // false when it failed: the transaction then rolls back
+  void rollback(); // now, as going out of scope would
 
 private:
   sqlite3 *m_db{nullptr};
