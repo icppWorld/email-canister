@@ -162,7 +162,14 @@ def test__a_run_that_names_another_head_runs_the_tests(
     assert decide(repo, answers) == "run-tests=true"
 
 
-@pytest.mark.parametrize("changed", [".github/actions/x.yml", "scripts/passed-tree.sh"])
+@pytest.mark.parametrize(
+    "changed",
+    [
+        ".github/actions/x.yml",
+        ".github/actions/d\u00e9ploiement.yml",
+        "scripts/passed-tree.sh",
+    ],
+)
 def test__a_merge_that_changes_the_decision_runs_the_tests(
     tmp_path: Path, answers: Path, changed: str
 ) -> None:

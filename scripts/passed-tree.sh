@@ -19,8 +19,8 @@ decide() {
     return 1
   }
   # A merge that changes how this is decided runs the tests, and so does a
-  # diff that cannot be read
-  files=$(git diff --no-renames --name-only 'HEAD^1' HEAD) || return 1
+  # diff that cannot be read. Paths unquoted: git quotes unusual ones
+  files=$(git diff --no-renames --name-only -z 'HEAD^1' HEAD | tr '\0' '\n') || return 1
   if grep -qE '^(\.github/|scripts/passed-tree\.sh$)' <<<"$files"; then
     echo "The merge changes .github/ or this script" >&2
     return 1
