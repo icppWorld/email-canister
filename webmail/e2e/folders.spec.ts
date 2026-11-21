@@ -1771,9 +1771,11 @@ test('an Undo whose move back is refused part way says what moved back, and leav
 }) => {
   joinMailbox('stilt', VERA)
   backend('dev_seed', '("stilt", 1 : nat64, 120 : nat64)')
+  // Seeded mail has no arrival time, and Spam would delete it as old
   backend(
     'dev_file_exec',
-    `("stilt", "UPDATE messages SET sender_address = 'seed@sender.example'")`
+    `("stilt", "UPDATE messages SET sender_address = 'seed@sender.example', ` +
+      `received_ns = ${BigInt(Date.now()) * 1_000_000n}")`
   )
   const vera = await asUser(VERA, env.url, env.backend)
   const { context, page } = await signedIn(browser, VERA)
