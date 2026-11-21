@@ -310,11 +310,17 @@ function retryingWhileBusy(backend: Backend): Backend {
   })
 }
 
-// The message a canister trapped with, or else the whole error
+// The message a canister trapped with, or else the error without the stack
+// trace a failed fetch carries
 export function errorText(error: unknown): string {
   const text = error instanceof Error ? error.message : String(error)
   const trapped =
     /with message: '([\s\S]*?)'\.?\s+Consider/.exec(text) ??
     /trapped explicitly: ([^\n]*)/.exec(text)
-  return trapped ? trapped[1] : text
+  return trapped
+    ? trapped[1]
+    : text
+        .split('\n')
+        .filter((line) => !/^\s+at /.test(line))
+        .join('\n')
 }
