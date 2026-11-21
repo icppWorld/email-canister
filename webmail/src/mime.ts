@@ -307,8 +307,9 @@ export type FramedBody = { body: string; paper: boolean; remote: boolean }
 // connects ahead, such as preconnect, which would tell the sender the message
 // was read; a meta could loosen the frame's referrer policy; a template can
 // become a shadow root, and a frame holds a document of its own, which a check
-// here does not see into. A <frame> needs no entry: a body cannot hold one.
-const LEFT_OUT = 'link, meta, template, iframe'
+// here does not see into; a base would make a relative address a remote one.
+// A <frame> needs no entry: a body cannot hold one.
+const LEFT_OUT = 'link, meta, template, iframe, base'
 // An element's own referrer policy, which would win over the frame's
 const LEFT_OUT_ATTRIBUTE = 'referrerpolicy'
 
