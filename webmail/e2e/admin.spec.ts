@@ -165,10 +165,10 @@ test('an existing mailbox gains a member only through its row, once confirmed', 
     expect(shown[1]).toBe(
       `Give ${member} access to all mail in bob@${DOMAIN}? They can read, delete and send from it.`
     )
-    await expect(row.getByTitle(member)).toHaveCount(0)
+    await expect(row.getByTitle(member, { exact: true })).toHaveCount(0)
 
     await row.getByRole('button', { name: 'Add member' }).click()
-    await expect(row.getByTitle(member)).toBeVisible()
+    await expect(row.getByTitle(member, { exact: true })).toBeVisible()
 
     // The canister still refuses one already there
     await row.getByRole('button', { name: 'Add member' }).click()
@@ -243,31 +243,37 @@ test('the Admin panel makes a shared mailbox, names its members and removes one'
   expect(backend('admin_list_entries')).toContain('quota_bytes = 1_000_000_000')
   const shown = answer(page, petrel, true, shag, true, true)
   await row.getByRole('button', { name: 'Add member' }).click()
-  await expect(row.getByTitle(petrel)).toBeVisible()
+  await expect(row.getByTitle(petrel, { exact: true })).toBeVisible()
   await row.getByRole('button', { name: 'Add member' }).click()
-  await expect(row.getByTitle(shag)).toBeVisible()
+  await expect(row.getByTitle(shag, { exact: true })).toBeVisible()
 
   // People lists everyone who is a member somewhere, and names them
   const person = page.getByTestId(`person-${petrel}`)
   await expect(person).toContainText('deck')
-  await person.getByLabel('Name').fill('Petrel P')
+  await person.getByLabel('Name', { exact: true }).fill('Petrel P')
   await person.getByRole('button', { name: 'Save name' }).click()
   await expect(row).toContainText('Petrel P')
-  await expect(person.getByLabel('Name')).toHaveValue('Petrel P')
+  await expect(person.getByLabel('Name', { exact: true })).toHaveValue(
+    'Petrel P'
+  )
 
   // A saved name stays shown while the list reloads, so a second Save
   // cannot write the old one back
   const reload = await hold(page, 'admin_list_entries')
-  await person.getByLabel('Name').fill('Petrel Q')
+  await person.getByLabel('Name', { exact: true }).fill('Petrel Q')
   await person.getByRole('button', { name: 'Save name' }).click()
   await reload.seen
   await expect(person.getByRole('button', { name: 'Save name' })).toBeEnabled()
-  await expect(person.getByLabel('Name')).toHaveValue('Petrel Q')
+  await expect(person.getByLabel('Name', { exact: true })).toHaveValue(
+    'Petrel Q'
+  )
   // and the reload shows the name stored, even one set meanwhile elsewhere
   backend('admin_set_name', `(principal "${petrel}", "Petrel R")`)
   backend('admin_set_name', `(principal "${shag}", "Petrel R")`)
   reload.release()
-  await expect(person.getByLabel('Name')).toHaveValue('Petrel R')
+  await expect(person.getByLabel('Name', { exact: true })).toHaveValue(
+    'Petrel R'
+  )
 
   const member = await signedIn(browser, SHAG)
   await expect(member.page.getByTestId('address')).toHaveText(`deck@${DOMAIN}`)
@@ -282,7 +288,7 @@ test('the Admin panel makes a shared mailbox, names its members and removes one'
   expect(shown[4]).toBe(
     `Remove ${removing} from deck@${DOMAIN}? They lose access to all of its mail at once.`
   )
-  await expect(row.getByTitle(shag)).toHaveCount(0)
+  await expect(row.getByTitle(shag, { exact: true })).toHaveCount(0)
   await expect(page.getByTestId(`person-${shag}`)).toHaveCount(0)
   await member.page.reload()
   await expect(
@@ -290,7 +296,7 @@ test('the Admin panel makes a shared mailbox, names its members and removes one'
   ).toBeVisible()
 
   // An empty name removes it
-  await person.getByLabel('Name').fill('')
+  await person.getByLabel('Name', { exact: true }).fill('')
   await person.getByRole('button', { name: 'Save name' }).click()
   await expect(row).not.toContainText('Petrel R')
   await Promise.all([context.close(), member.context.close()])
@@ -320,7 +326,7 @@ test('a member is added only to the mailbox the Admin panel listed', async ({
   await expect(page.getByRole('alert')).toHaveText(
     'skerry was created again since it was listed. Reload, and check that it is the mailbox you mean.'
   )
-  await expect(row.getByTitle(member)).toHaveCount(0)
+  await expect(row.getByTitle(member, { exact: true })).toHaveCount(0)
   // Reloaded, as the refusal says, the list names the new mailbox
   await page.reload()
   await expect(row).toBeVisible()
@@ -330,7 +336,7 @@ test('a member is added only to the mailbox the Admin panel listed', async ({
     'the anonymous principal cannot be a member'
   )
   await row.getByRole('button', { name: 'Add member' }).click()
-  await expect(row.getByTitle(member)).toBeVisible()
+  await expect(row.getByTitle(member, { exact: true })).toBeVisible()
   await context.close()
 })
 
@@ -355,8 +361,8 @@ test('the Admin panel starts no action while another runs', async ({
     // The reload when it ends would undo what is typed in Domain and Bridge
     page.getByLabel('User ID'),
     page.getByLabel('Address'),
-    page.getByLabel('Domain'),
-    page.getByLabel('Bridge'),
+    page.getByLabel('Domain', { exact: true }),
+    page.getByLabel('Bridge', { exact: true }),
   ]
   try {
     for (const button of waiting) await expect(button).toBeDisabled()
@@ -371,7 +377,7 @@ test('the Admin panel gives the focus back when an action ends', async ({
   browser,
 }) => {
   const { context, page } = await signedIn(browser, ADMIN)
-  const domain = page.getByLabel('Domain')
+  const domain = page.getByLabel('Domain', { exact: true })
   await expect(domain).toHaveValue(DOMAIN)
   await domain.press('Enter')
   // Only the empty note bar is left: the action has ended
@@ -406,7 +412,7 @@ test('the Admin panel keeps a setting being typed while its list reloads', async
   browser,
 }) => {
   const { context, page } = await signedIn(browser, ADMIN)
-  const domain = page.getByLabel('Domain')
+  const domain = page.getByLabel('Domain', { exact: true })
   await expect(domain).toHaveValue(DOMAIN)
   const { seen, release } = await hold(page, 'admin_list_entries')
   await page
@@ -431,7 +437,7 @@ test('the Admin panel shows a saved domain as the canister stores it', async ({
   browser,
 }) => {
   const { context, page } = await signedIn(browser, ADMIN)
-  const domain = page.getByLabel('Domain')
+  const domain = page.getByLabel('Domain', { exact: true })
   await expect(domain).toHaveValue(DOMAIN)
   try {
     await domain.fill(DOMAIN.toUpperCase())
@@ -476,7 +482,9 @@ test('a refused first member creates no mailbox, and the retry creates it', asyn
   await page.getByLabel('Address').fill('zcrew')
   await page.getByRole('button', { name: 'Create', exact: true }).click()
   await expect(
-    page.getByTestId('entry-zcrew').getByTitle(principalOf(USER_C))
+    page
+      .getByTestId('entry-zcrew')
+      .getByTitle(principalOf(USER_C), { exact: true })
   ).toBeVisible()
   await expect(page.getByRole('alert')).toHaveCount(0)
   await context.close()

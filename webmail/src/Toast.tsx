@@ -3,8 +3,12 @@
 
 import { Fragment, useEffect, useRef } from 'react'
 
+import { IconButton } from './Buttons'
+import type { IconName } from './Icon'
+
 export type ToastAction = {
   label: string
+  icon: IconName
   // May return a note on what it did
   run: () => Promise<Toast | void> | void
   // The action changes mail, so the list and counts load again
@@ -65,17 +69,20 @@ export function ToastBar({
         <Fragment key={toast.id}>
           <span>{toast.text}</span>
           {toast.actions?.map((action) => (
-            <button
+            <IconButton
               key={action.label}
               className="bare"
+              label={action.label}
+              icon={action.icon}
               onClick={() => onAction(action)}
-            >
-              {action.label}
-            </button>
+            />
           ))}
-          <button className="bare" aria-label="Dismiss" onClick={onClose}>
-            ×
-          </button>
+          <IconButton
+            className="bare"
+            label="Dismiss"
+            icon="close"
+            onClick={onClose}
+          />
         </Fragment>
       )}
     </div>

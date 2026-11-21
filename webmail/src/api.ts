@@ -197,6 +197,9 @@ export type Mailbox = {
   mail_outbox_get(id: bigint): Promise<OutboxMessage>
   mail_outbox_resend(id: bigint): Promise<void>
   mail_outbox_delete(id: bigint): Promise<void>
+  // For good, at most 200 at once: the ids it deleted. It skips mail being
+  // sent, and mail no longer there.
+  mail_outbox_delete_many(ids: bigint[]): Promise<BigUint64Array>
   // A download freezes the mailbox file: renew it while reading, thaw it after
   // renew: the started_ns of the download it renews
   mail_export_freeze(renew: [] | [bigint]): Promise<ExportInfo>

@@ -179,6 +179,30 @@ test('ticked messages are read, unread, starred and deleted together, and Trash 
   await context.close()
 })
 
+test("the bulk toolbar's buttons sit on one line in a list of the usual width", async ({
+  browser,
+}) => {
+  for (const n of [1, 2]) {
+    deliver({ subject: `Lined phalarope ${n}`, body: '<p>A phalarope.</p>' })
+  }
+  await waitDrained()
+  const { context, page } = await signedIn(browser, USER_A)
+  await search(page, 'phalarope')
+  await expect(messageRow(page, 'Lined phalarope')).toHaveCount(2)
+  const list = page.getByRole('region', { name: 'Messages' })
+  expect((await list.boundingBox())!.width).toBeCloseTo(380, 0)
+  const bulk = page.getByRole('toolbar', { name: 'Selected messages' })
+  await bulk.getByLabel('Select all').check()
+  await expect(bulk).toContainText('2 selected')
+  const buttons = bulk.getByRole('button')
+  await expect(buttons).toHaveCount(4)
+  const tops = await buttons.evaluateAll((all) =>
+    all.map((button) => button.getBoundingClientRect().top)
+  )
+  expect(new Set(tops).size, `tops: ${tops.join(', ')}`).toBe(1)
+  await context.close()
+})
+
 test('a blocked sender goes to Spam, until Not spam and Unblock bring the mail back', async ({
   browser,
 }) => {

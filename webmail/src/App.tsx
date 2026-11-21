@@ -5,6 +5,7 @@ import { createBackend, errorText, mailbox, type Backend, type Me } from './api'
 import { createSession, type Session } from './auth'
 import { AdminPanel } from './AdminPanel'
 import { BlockedSenders } from './Blocked'
+import { IconButton } from './Buttons'
 import { formatBytes } from './format'
 import { Icon } from './Icon'
 import { Compose, type Draft } from './Compose'
@@ -106,9 +107,12 @@ function SignIn({
             {keptDraft && ' Your unsent message reopens once you do.'}
           </p>
         )}
-        <button className="primary" onClick={onSignIn}>
-          Sign in with Internet Identity
-        </button>
+        <IconButton
+          variant="primary"
+          label="Sign in with Internet Identity"
+          icon="signIn"
+          onClick={onSignIn}
+        />
         {error && (
           <p className="error" role="alert">
             {error}
@@ -138,10 +142,13 @@ function NotActivated({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
           {principal}
         </code>
         <div className="row">
-          <button className="primary" onClick={copy}>
-            {copied ? 'Copied' : 'Copy ID'}
-          </button>
-          <button onClick={onSignOut}>Sign out</button>
+          <IconButton
+            variant="primary"
+            label={copied ? 'Copied' : 'Copy ID'}
+            icon={copied ? 'check' : 'copy'}
+            onClick={copy}
+          />
+          <IconButton label="Sign out" icon="signOut" onClick={onSignOut} />
         </div>
       </div>
     </main>
@@ -391,6 +398,12 @@ export function App() {
 
   const shared = shown !== undefined && shown.members > 1n
 
+  // A note from a folder's work, which is not this session's when it ends
+  // after a new sign-in
+  const notify = (note: Toast) => {
+    if (latestBackend.current === backend) showToast(note)
+  }
+
   const refreshInbox = () => {
     setRefreshing(true)
     setView('inbox')
@@ -452,9 +465,11 @@ export function App() {
                   aria-current={current === 'blocked'}
                   onClick={() => setView('blocked')}
                 >
+                  <Icon name="block" />
                   Blocked senders
                 </button>
                 <button onClick={download.start} disabled={download.busy}>
+                  <Icon name="download" />
                   Download a copy
                 </button>
               </>
@@ -464,22 +479,24 @@ export function App() {
                 aria-current={current === 'admin'}
                 onClick={() => setView('admin')}
               >
+                <Icon name="admin" />
                 Admin
               </button>
             )}
           </Menu>
         )}
-        <button onClick={signOut}>Sign out</button>
+        <IconButton label="Sign out" icon="signOut" onClick={signOut} />
       </header>
       <nav aria-label="Folders">
         {box && shown && (
           <>
-            <button
-              className="primary compose"
+            <IconButton
+              className="compose"
+              variant="primary"
+              label="Compose"
+              icon="compose"
               onClick={() => setDraft((open) => open ?? { from: shown.local })}
-            >
-              Compose
-            </button>
+            />
             {/* At phone width a select takes the place of the list */}
             <select
               className="mailbox-select"
@@ -553,10 +570,7 @@ export function App() {
             principal={principal}
             shared={shared}
             folder={current}
-            notify={(note) => {
-              // A move that ends after a new sign-in is not this session's
-              if (latestBackend.current === backend) showToast(note)
-            }}
+            notify={notify}
             onReply={(reply) =>
               setDraft((open) => open ?? { ...reply, from: shown.local })
             }
@@ -574,6 +588,8 @@ export function App() {
             principal={principal}
             shared={shared}
             refresh={sends}
+            notify={notify}
+            onUsage={reloadMailboxes}
           />
         )}
         {current === 'blocked' && box && (
@@ -606,6 +622,7 @@ export function App() {
               actions: [
                 {
                   label: 'View in Sent',
+                  icon: 'send',
                   run: () => {
                     setSelected(from)
                     setView('sent')

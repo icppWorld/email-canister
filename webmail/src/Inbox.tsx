@@ -26,8 +26,10 @@ import { formatNs, formatTime, memberName } from './format'
 import { Icon, type IconName } from './Icon'
 import { MessageBody } from './MessageBody'
 import { deliveredVia, parseMail, saveFile, type ParsedMail } from './mime'
-import { BackButton, StarButton } from './Buttons'
+import { BackButton, IconButton, StarButton } from './Buttons'
+import { Bulk } from './Bulk'
 import { Menu } from './Menu'
+import { Splitter, useListWidth } from './Splitter'
 import type { Toast, ToastAction } from './Toast'
 
 const PAGE_SIZE = 50n
@@ -62,6 +64,7 @@ type Action = {
 // or the reader's own mark as read, which must not land after it.
 type MoreAction = {
   label: string
+  icon: IconName
   needs?: 'sender' | 'mark'
   run: (sender: string) => Promise<unknown>
 }
@@ -166,10 +169,14 @@ function undo(
   uids: bigint[],
   from: Folder,
   { block = [], unblock = [] }: { block?: string[]; unblock?: string[] } = {},
-  label = 'Undo'
+  { label, icon }: { label: string; icon: IconName } = {
+    label: 'Undo',
+    icon: 'undo',
+  }
 ): ToastAction {
   return {
     label,
+    icon,
     reload: true,
     run: async () => {
       const { done, result, error } = await moveAll(backend, uids, from)
@@ -399,24 +406,31 @@ function Reader({
     <article className="reader">
       <div className="toolbar">
         <BackButton onClick={onBack} />
-        <button onClick={reply} disabled={!mail}>
-          Reply
-        </button>
+        <IconButton
+          label="Reply"
+          icon="reply"
+          onClick={reply}
+          disabled={!mail}
+        />
         {actions.map((action) => (
-          <button
+          <IconButton
             key={action.label}
-            className={action.danger ? 'danger' : undefined}
+            variant={action.danger ? 'danger' : undefined}
+            label={action.label}
+            icon={action.icon}
             onClick={() => act(() => action.run([summary.uid], read))}
-          >
-            {action.label}
-          </button>
+          />
         ))}
         <StarButton
           flagged={(summary.flags & FLAG_FLAGGED) !== 0n}
           onClick={() => act(onStar)}
         />
         {onSpam && (
-          <button onClick={() => act(() => onSpam(read))}>Spam</button>
+          <IconButton
+            label="Spam"
+            icon="spam"
+            onClick={() => act(() => onSpam(read))}
+          />
         )}
         {more.length > 0 && (
           <Menu label="More actions">
@@ -429,6 +443,7 @@ function Reader({
                 }
                 onClick={() => act(() => action.run(sender))}
               >
+                <Icon name={action.icon} />
                 {action.label}
               </button>
             ))}
@@ -469,9 +484,11 @@ function Reader({
             to cause harm: be careful with its links and attachments.
           </p>
           {!formatted && raw && (
-            <button onClick={() => setFormatted(true)}>
-              Show it formatted anyway
-            </button>
+            <IconButton
+              label="Show it formatted anyway"
+              icon="show"
+              onClick={() => setFormatted(true)}
+            />
           )}
         </div>
       )}
@@ -569,7 +586,7 @@ export function Inbox({
   // Flags set and mail moved here, which a reply read before them would undo
   const changes = useRef(0)
   const olderShown = useRef(false)
-  const allBox = useRef<HTMLInputElement>(null)
+  const listWidth = useListWidth()
   const touched = useRef(new Map<bigint, bigint>())
 
   const load = useCallback(
@@ -748,8 +765,10 @@ export function Inbox({
       if (result.moved.length > 0) {
         actions = [undo(backend, result.moved, folder, changes)]
       } else if (changed.length > 0) {
-        const label = spam ? 'Unblock' : 'Block again'
-        actions = [undo(backend, [], folder, changes, label)]
+        const named = spam
+          ? ({ label: 'Unblock', icon: 'unblock' } as const)
+          : ({ label: 'Block again', icon: 'block' } as const)
+        actions = [undo(backend, [], folder, changes, named)]
       }
       notify({ text, actions })
     }
@@ -837,6 +856,7 @@ export function Inbox({
       return [
         {
           label: 'Mark unread',
+          icon: 'mail',
           needs: 'mark',
           // Back to the list, unless another message opened meanwhile
           run: async () => {
@@ -847,7 +867,9 @@ export function Inbox({
       ]
     }
     if (folder === 'spam') {
-      return [{ label: 'Block sender', needs: 'sender', run: block }]
+      return [
+        { label: 'Block sender', icon: 'block', needs: 'sender', run: block },
+      ]
     }
     return []
   }
@@ -905,11 +927,6 @@ export function Inbox({
       return next
     })
   const ticked = items.filter((m) => checked.has(m.uid)).map((m) => m.uid)
-  const allTicked = items.length > 0 && ticked.length === items.length
-  const someTicked = ticked.length > 0 && !allTicked
-  useEffect(() => {
-    if (allBox.current) allBox.current.indeterminate = someTicked
-  }, [someTicked])
 
   // Only the search shown now goes on, from where its own pages ended
   const cursor: [] | [bigint] = more.search === activeQuery ? more.cursor : []
@@ -925,7 +942,10 @@ export function Inbox({
   }
 
   return (
-    <div className={selected ? 'split reading' : 'split'}>
+    <div
+      className={selected ? 'split reading' : 'split'}
+      style={listWidth.style}
+    >
       <section className="list" aria-label="Messages">
         <div className="list-head">
           <form
@@ -948,59 +968,46 @@ export function Inbox({
               onChange={(e) => setQuery(e.target.value)}
             />
             {activeQuery && (
-              <button
+              <IconButton
                 type="button"
+                label="Clear"
+                icon="close"
                 onClick={() => {
                   setQuery('')
                   searchFor('')
                 }}
-              >
-                Clear
-              </button>
+              />
             )}
           </form>
           {folder === 'spam' && (
             <div className="bulk">
-              <button className="small" onClick={onBlocked}>
-                Blocked senders
-              </button>
+              <IconButton
+                label="Blocked senders"
+                icon="block"
+                onClick={onBlocked}
+              />
             </div>
           )}
           {items.length > 0 && (
-            <div className="bulk" role="toolbar" aria-label="Selected messages">
-              <input
-                ref={allBox}
-                type="checkbox"
-                aria-label="Select all"
-                checked={allTicked}
-                onChange={(e) =>
-                  setChecked(
-                    new Set(e.target.checked ? items.map((m) => m.uid) : [])
-                  )
-                }
-              />
-              {ticked.length > 0 ? (
-                <>
-                  <span className="hint">{ticked.length} selected</span>
-                  {bulkActions.map((action) => (
-                    <button
-                      key={action.label}
-                      className="small"
-                      onClick={() => act(() => action.run(ticked))}
-                    >
-                      {action.label}
-                    </button>
-                  ))}
-                </>
-              ) : (
-                folder !== 'inbox' &&
-                !activeQuery && (
-                  <button className="small" onClick={() => act(empty)}>
-                    Empty {FOLDERS[folder].name}
-                  </button>
-                )
-              )}
-            </div>
+            <Bulk
+              ticked={ticked.length}
+              total={items.length}
+              onAll={(all) =>
+                setChecked(new Set(all ? items.map((m) => m.uid) : []))
+              }
+              actions={bulkActions.map((action) => ({
+                ...action,
+                run: () => act(() => action.run(ticked)),
+              }))}
+              empty={
+                folder !== 'inbox' && !activeQuery
+                  ? {
+                      label: `Empty ${FOLDERS[folder].name}`,
+                      run: () => act(empty),
+                    }
+                  : undefined
+              }
+            />
           )}
         </div>
         {error && (
@@ -1075,14 +1082,15 @@ export function Inbox({
           })}
         </ul>
         {cursor.length > 0 && (
-          <button
+          <IconButton
             className="more"
+            label={activeQuery ? 'Keep searching' : 'Older mail'}
+            icon="chevronDown"
             onClick={() => load(cursor, true, activeQuery)}
-          >
-            {activeQuery ? 'Keep searching' : 'Older mail'}
-          </button>
+          />
         )}
       </section>
+      <Splitter width={listWidth.width} onChange={listWidth.change} />
       {selected ? (
         <Reader
           principal={principal}

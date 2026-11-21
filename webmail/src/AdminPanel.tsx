@@ -20,6 +20,7 @@ import {
   type Settings,
   type StorageTotals,
 } from './api'
+import { IconButton } from './Buttons'
 import { formatBytes as size, memberName } from './format'
 
 const GIB = 1024 ** 3
@@ -423,9 +424,12 @@ export function AdminPanel({ backend }: { backend: Backend }) {
             value={newQuota}
             onChange={(e) => setNewQuota(e.target.value)}
           />
-          <button className="primary" type="submit">
-            Create
-          </button>
+          <IconButton
+            variant="primary"
+            type="submit"
+            label="Create"
+            icon="plus"
+          />
         </form>
 
         <h3>Mailboxes</h3>
@@ -460,13 +464,11 @@ export function AdminPanel({ backend }: { backend: Backend }) {
                                 member.name
                               )}
                             </span>
-                            <button
-                              className="small"
-                              aria-label={`Remove ${identified(member)} from ${entry.local}`}
+                            <IconButton
+                              label={`Remove ${identified(member)} from ${entry.local}`}
+                              icon="removeMember"
                               onClick={() => removeMember(entry, member)}
-                            >
-                              Remove
-                            </button>
+                            />
                           </li>
                         ))}
                       </ul>
@@ -483,7 +485,9 @@ export function AdminPanel({ backend }: { backend: Backend }) {
                   <td>
                     <div className="actions">
                       {!vacant && (
-                        <button
+                        <IconButton
+                          label={entry.disabled ? 'Enable' : 'Disable'}
+                          icon={entry.disabled ? 'unblock' : 'block'}
                           onClick={() =>
                             run('Saving…', () =>
                               backend.admin_set_disabled(
@@ -492,30 +496,43 @@ export function AdminPanel({ backend }: { backend: Backend }) {
                               )
                             )
                           }
-                        >
-                          {entry.disabled ? 'Enable' : 'Disable'}
-                        </button>
+                        />
                       )}
                       {!vacant && (
-                        <button onClick={() => addMember(entry)}>
-                          Add member
-                        </button>
+                        <IconButton
+                          label="Add member"
+                          icon="addMember"
+                          onClick={() => addMember(entry)}
+                        />
                       )}
                       {!vacant && (
-                        <button onClick={() => setQuota(entry)}>Quota</button>
+                        <IconButton
+                          label="Quota"
+                          icon="quota"
+                          onClick={() => setQuota(entry)}
+                        />
                       )}
                       {!vacant && (
-                        <button onClick={() => retryMoves(entry)}>
-                          Retry stuck mail
-                        </button>
+                        <IconButton
+                          label="Retry stuck mail"
+                          icon="refresh"
+                          onClick={() => retryMoves(entry)}
+                        />
                       )}
                       {!vacant && (
-                        <button onClick={() => check(entry)}>Check</button>
+                        <IconButton
+                          label="Check"
+                          icon="checkMailbox"
+                          onClick={() => check(entry)}
+                        />
                       )}
                       {entry.disabled && !vacant && (
-                        <button className="danger" onClick={() => purge(entry)}>
-                          Purge
-                        </button>
+                        <IconButton
+                          variant="danger"
+                          label="Purge"
+                          icon="trash"
+                          onClick={() => purge(entry)}
+                        />
                       )}
                     </div>
                   </td>
@@ -562,7 +579,11 @@ export function AdminPanel({ backend }: { backend: Backend }) {
                           }))
                         }
                       />
-                      <button type="submit">Save name</button>
+                      <IconButton
+                        type="submit"
+                        label="Save name"
+                        icon="check"
+                      />
                     </form>
                   </td>
                   <td data-label="User ID" className="mono">
@@ -595,7 +616,7 @@ export function AdminPanel({ backend }: { backend: Backend }) {
                 value={domain}
                 onChange={(e) => setDomain(e.target.value)}
               />
-              <button type="submit">Save domain</button>
+              <IconButton type="submit" label="Save domain" icon="check" />
             </form>
             <form
               className="row"
@@ -615,7 +636,7 @@ export function AdminPanel({ backend }: { backend: Backend }) {
                 value={bridge}
                 onChange={(e) => setBridge(e.target.value)}
               />
-              <button type="submit">Save bridge</button>
+              <IconButton type="submit" label="Save bridge" icon="check" />
             </form>
           </>
         )}

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import {
   errorText,
@@ -8,6 +8,7 @@ import {
   type Backend,
   type MailboxInfo,
 } from './api'
+import { IconButton } from './Buttons'
 import { Icon } from './Icon'
 import { textToHtml } from './mime'
 
@@ -65,6 +66,8 @@ export function Compose({
   // person's mailboxes, which the canister refuses: a lost reply cannot send
   // twice
   const [clientId] = useState(() => draft.clientId ?? crypto.randomUUID())
+  // The file picker, which Attach opens
+  const picker = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     onChange({ from, to, cc, bcc, subject, body, files, clientId })
@@ -201,15 +204,14 @@ export function Compose({
             value={body}
             onChange={(e) => setBody(e.target.value)}
           />
-          <label className="files">
-            Attachments
-            <input
-              aria-label="Attachments"
-              type="file"
-              multiple
-              onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
-            />
-          </label>
+          <input
+            ref={picker}
+            aria-label="Attachments"
+            type="file"
+            multiple
+            hidden
+            onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
+          />
           {/* A file input cannot be refilled, so a restored draft names its files here */}
           {files.length > 0 && (
             <p className="hint" data-testid="attached">
@@ -228,13 +230,18 @@ export function Compose({
             </p>
           )}
           <div className="row">
-            <button
-              className="primary"
+            <IconButton
+              variant="primary"
+              label={sending ? 'Sending…' : 'Send'}
+              icon="send"
               onClick={send}
               disabled={sending || tooLarge}
-            >
-              {sending ? 'Sending…' : 'Send'}
-            </button>
+            />
+            <IconButton
+              label="Attach"
+              icon="paperclip"
+              onClick={() => picker.current?.click()}
+            />
           </div>
         </div>
       </div>
