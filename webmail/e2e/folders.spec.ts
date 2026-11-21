@@ -104,6 +104,29 @@ test('Delete moves mail to Trash, where Undo, Restore and Delete forever work', 
   await context.close()
 })
 
+test('a ticked message that a search takes off the list comes back unticked', async ({
+  browser,
+}) => {
+  for (const bird of ['godwit', 'curlew']) {
+    deliver({ subject: `Tickgone ${bird}`, body: `<p>A ${bird}.</p>` })
+  }
+  await waitDrained()
+  const { context, page } = await signedIn(browser, USER_A)
+  await search(page, 'Tickgone')
+  await expect(messageRow(page, 'Tickgone')).toHaveCount(2)
+  await page.getByLabel('Select Tickgone godwit', { exact: true }).check()
+  await search(page, 'curlew')
+  await expect(messageRow(page, 'Tickgone godwit')).toHaveCount(0)
+  await expect(messageRow(page, 'Tickgone curlew')).toHaveCount(1)
+  await search(page, 'Tickgone')
+  await expect(messageRow(page, 'Tickgone')).toHaveCount(2)
+  await expect(
+    page.getByLabel('Select Tickgone godwit', { exact: true })
+  ).not.toBeChecked()
+  await expect(page.getByText(/^\d+ selected$/)).toHaveCount(0)
+  await context.close()
+})
+
 test('ticked messages are read, unread, starred and deleted together, and Trash empties', async ({
   browser,
 }) => {

@@ -18,7 +18,16 @@ export type BulkAction = {
 // The messages ticked among `ids`, the ones listed that can be ticked
 export function useTicks(ids: bigint[]) {
   const [checked, setChecked] = useState<ReadonlySet<bigint>>(new Set())
-  // Mail that left the list leaves its tick, so it comes back unticked
+  // Only listed mail stays ticked: mail that leaves the list, as after a
+  // search or a reload, or that can no longer be ticked, comes back unticked
+  const listed = ids.join(' ')
+  const [shown, setShown] = useState(listed)
+  if (listed !== shown) {
+    setShown(listed)
+    const now = new Set(ids)
+    setChecked((before) => new Set([...before].filter((id) => now.has(id))))
+  }
+  // Mail being taken off the list leaves its tick at once
   const untick = useCallback(
     (gone: ReadonlySet<bigint>) =>
       setChecked(
