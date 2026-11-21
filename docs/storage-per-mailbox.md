@@ -341,7 +341,7 @@ Option (c) gives the strongest isolation, but every mailbox pays a canister's cr
    - The mailbox file keeps its own counters. Moves, deletes, and the outbox's reservations and releases of quota update the file's counters, and the registry row where it changes, in the same call, committing the file first and trapping if `control.db`'s commit fails.
 6. **Schema changes.**
    - Each file keeps its `user_version`.
-   - A timer migrates the files right after an upgrade. An `ADD COLUMN` costs 3.4M on an empty file (M9). It does not rewrite the rows, so on a large file only the open adds to it, up to about 3.6M in an update (M2), and an update can migrate a file before it writes it. A change that adds an index or rebuilds a table costs in proportion to the file. It needs its own paging within a file, and pages of files sized from its own measurement, and only the timer runs it.
+   - A timer migrates the files right after an upgrade. An `ADD COLUMN` costs 3.4M on an empty file (M9). It does not rewrite the rows, so on a large file only the open adds to it, up to about 3.6M in an update (M2), and an update can migrate a file before it writes it. A change that adds an index or rebuilds a table costs in proportion to the file. It needs its own paging within a file, and pages of files sized from its own measurement, and only the timer runs it. An index whose whole build on a 2 GiB file fits in one call, as measured for the Inbox's index of version 4, needs no paging.
    - Until a file is migrated, a query on it, and an update that cannot migrate it, answers an error the webmail retries.
    - A file that fails to migrate marks only its mailbox as needing repair. The others continue.
 7. **Export.**

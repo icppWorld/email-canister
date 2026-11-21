@@ -660,7 +660,8 @@ void dev_fail_statements() {
       CandidTypeNat64{static_cast<uint64_t>(db::fail_statements(sql))});
 }
 
-// Runs SQL on a mailbox's file, around the registry, as a fault would
+// Runs SQL on a mailbox's file, around the registry, as a fault would, or
+// as a schema step does, to measure it
 void dev_file_exec() {
   IC_API ic_api(CanisterUpdate{std::string(__func__)}, false);
   require_controller(ic_api);
@@ -673,6 +674,7 @@ void dev_file_exec() {
   const std::string error =
       db::exec_in_mailbox(require_test_entry(local).id, sql);
   if (!error.empty()) IC_API::trap(error);
+  dev_record_cost(__func__);
   ic_api.to_wire();
 }
 
