@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstddef>
 #include <cstdint>
 #include <initializer_list>
 #include <string>

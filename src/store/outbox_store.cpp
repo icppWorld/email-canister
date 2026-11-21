@@ -537,11 +537,13 @@ bool outbox_delete_many(const Mailbox &box, const std::vector<uint64_t> &ids,
   MailboxWrite write(box);
   if (!write) return false;
   int64_t bytes = 0;
+  // Handed back only once committed, so a failure lists nothing
+  std::vector<uint64_t> done;
   // A repeated id is gone by its second turn, so its bytes count once
   for (const uint64_t id : ids) {
     switch (remove_message(box, static_cast<int64_t>(id), bytes)) {
     case Removed::Done:
-      deleted.push_back(id);
+      done.push_back(id);
       break;
     case Removed::Missing:
     case Removed::Sending:
@@ -550,9 +552,13 @@ bool outbox_delete_many(const Mailbox &box, const std::vector<uint64_t> &ids,
       return false;
     }
   }
-  if (deleted.empty()) return true; // nothing to write
-  return release_quota(box.id, bytes) && refresh_due(box.id, box.file) &&
-         write.commit();
+  if (done.empty()) return true; // nothing to write
+  if (!release_quota(box.id, bytes) || !refresh_due(box.id, box.file) ||
+      !write.commit()) {
+    return false;
+  }
+  deleted = std::move(done);
+  return true;
 }
 
 } // namespace store

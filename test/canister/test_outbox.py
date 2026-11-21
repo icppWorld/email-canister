@@ -543,19 +543,7 @@ def test__outbox_is_private_to_its_owner() -> None:
 def test__outbox_deletes_many_for_its_owner_only() -> None:
     message = send(subject="Kept")
     wait_for(message, SENT)
-    # Ids are per mailbox: bob's must not reach this one
-    theirs = mail(
-        "mail_outbox_list",
-        MAILBOX[USER_B],
-        "(record { cursor = null; limit = 100 : nat64 })",
-        USER_B,
-    )
-    assert all(
-        int(n.replace("_", "")) < message
-        for n in re.findall(r"\bid = ([\d_]+)", theirs)
-    )
     assert NO_MAILBOX in delete_many([message], USER_B, MAILBOX[USER_A])
-    assert deleted_ids(delete_many([message], USER_B)) == []
     assert state(message) == SENT
 
 

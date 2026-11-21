@@ -252,6 +252,10 @@ void test_outbox(MockIC &) {
     expect(test,
            CALL(test, mail_outbox_get, "(\"bob\", " + sending + ")", USER_B),
            "state = 1 : ");
+    // Mail that never left frees its client_id: a retry queues it again
+    const std::string again = queue(test, "many-1");
+    check(test, again != first, "a retry got the deleted message's id back");
+    CALL(test, mail_outbox_delete, "(\"bob\", " + again + ")", USER_B);
     expect_equal(
         test, CALL(test, mail_outbox_delete_many, "(\"bob\", vec {})", USER_B),
         "(vec {})");
