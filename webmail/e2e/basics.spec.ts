@@ -71,7 +71,8 @@ test('serves a strict content security policy, caching that shows a new deploy, 
     .toBeGreaterThan(0)
   expect(loaded.some((url) => /\/assets\/[^/]+\.css$/.test(url))).toBe(true)
   expect(loaded.some((url) => /\/brand\.css$/.test(url))).toBe(true)
-  for (const url of loaded) {
+  // A copy: each check's own fetch is a response too
+  for (const url of new Set(loaded)) {
     const reply = await page.evaluate(async (url) => {
       const reply = await fetch(url, { cache: 'no-store' })
       return {
