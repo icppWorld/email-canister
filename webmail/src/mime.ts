@@ -274,7 +274,9 @@ function pageStyleSheet(paper: boolean, page: PageStyle): string {
 const REMOTE_URL = /^[\x00-\x20]*(https?:)?\/\//i
 // eslint-disable-next-line no-control-regex
 const REMOTE_SRCSET = /(^|,)[\x00-\x20]*(https?:)?\/\//i
-const REMOTE_CSS = /(url|image-set)\(\s*['"]?\s*(https?:)?\/\//i
+// The second run of spaces only after a quote: two runs side by side would
+// take time with the square of a long run's length, on a message's own text
+const REMOTE_CSS = /(url|image-set)\(\s*(['"]\s*)?(https?:)?\/\//i
 const SOURCES: [selector: string, attribute: string][] = [
   ['img', 'src'],
   ['input[type=image i]', 'src'],
@@ -305,8 +307,9 @@ export type FramedBody = { body: string; paper: boolean; remote: boolean }
 // connects ahead, such as preconnect, which would tell the sender the message
 // was read; a meta could loosen the frame's referrer policy; a template can
 // become a shadow root, and a frame holds a document of its own, which a check
-// here does not see into. A <frame> needs no entry: a body cannot hold one.
-const LEFT_OUT = 'link, meta, template, iframe'
+// here does not see into; a base would make a relative address a remote one.
+// A <frame> needs no entry: a body cannot hold one.
+const LEFT_OUT = 'link, meta, template, iframe, base'
 // An element's own referrer policy, which would win over the frame's
 const LEFT_OUT_ATTRIBUTE = 'referrerpolicy'
 

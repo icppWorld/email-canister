@@ -487,6 +487,7 @@ test('remote images load only after Show images, and only that time', async ({
       // Neither may leak: a link that connects ahead, and a looser referrer
       `<link rel="preconnect" href="https://ahead.example.test">` +
       `<meta name="referrer" content="unsafe-url">` +
+      `<base href="https://ahead.example.test/">` +
       // with a referrer policy of its own, and a template
       `<p>razorbill</p><img src="${pic}" alt="Remote pic" referrerpolicy="unsafe-url">` +
       `<template><p>kept aside</p></template>` +
@@ -536,6 +537,7 @@ test('remote images load only after Show images, and only that time', async ({
   await expect(frame.locator('link')).toHaveCount(0)
   await expect(frame.locator('iframe')).toHaveCount(0)
   await expect(frame.locator('template')).toHaveCount(0)
+  await expect(frame.locator('base')).toHaveCount(0)
   await expect(frame.locator('[referrerpolicy]')).toHaveCount(0)
   await expect(frame.locator('meta[content="unsafe-url"]')).toHaveCount(0)
 
@@ -563,6 +565,26 @@ test('remote images load only after Show images, and only that time', async ({
   await expect(local).toHaveJSProperty('naturalWidth', 1)
   expect(requested).toHaveLength(before)
   await expect(picture).toHaveJSProperty('naturalWidth', 0)
+  await context.close()
+})
+
+test('a style with a long run of spaces does not hold the reader up', async ({
+  browser,
+}) => {
+  // The pattern this guards took minutes on runs this long
+  deliver({
+    subject: 'Spaced bunting',
+    body:
+      `<p>bunting</p><style>p{background:url(${' '.repeat(600_000)}x)}</style>` +
+      `<p style="--x:url(${' '.repeat(600_000)}x)">attribute</p>`,
+  })
+  await waitDrained()
+  const { context, page } = await signedIn(browser, USER_A)
+  await openMail(page, 'bunting')
+  await expect(bodyOf(page).getByText('bunting')).toBeVisible()
+  await expect(
+    reader(page).getByRole('button', { name: 'Show images' })
+  ).toHaveCount(0)
   await context.close()
 })
 
