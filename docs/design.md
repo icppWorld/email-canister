@@ -65,7 +65,7 @@ backend canister --inter-canister call--> relay bridge (a Caffeine app) --HTTPS-
 - The webmail shows the delivering domain, as "via example.com", when it differs from the `From` domain, and "via an unnamed domain" when the envelope sender is empty, as it is for delivery reports and some automatic replies. The gateway passes no SPF, DKIM or DMARC result to the canister, and mail services commonly send from their own bounce domain, so a differing domain is no evidence of forgery. Verifying DKIM in the canister would make a real warning possible.
 - Every mailbox has a `uidvalidity`, and every message a stable, increasing UID, flags and a change counter, for syncing and for a later IMAP bridge.
 - Nothing secret uses libc randomness, which is seeded deterministically; use `raw_rand`.
-- Quotas per mailbox, a backlog cap that returns 451, and a long freezing threshold, because a canister that runs out of cycles is eventually deleted with its mail.
+- Quotas per mailbox, at most 4 GiB so that a schema step that builds an index fits in one call on a full mailbox's file, a backlog cap that returns 451, and a long freezing threshold, because a canister that runs out of cycles is eventually deleted with its mail.
 
 ## Measurements
 
@@ -101,7 +101,7 @@ Local replica, with limits of 40B instructions per update and 5B per query.
 | Mailbox schema step 4, the Inbox's index               | 5.2M per MB of file, so about 7.7 GB in one call  |
 
 - An empty mailbox file takes 72 KiB.
-- The tests fail when one of the first four costs passes its bound (15M, 50M, 30M and 10M), when a whole-file check of a 2 GiB file would no longer fit in one call, or when the build of step 4's index would no longer fit in one call on a file of about 3 GB, the largest a mailbox of small mail reaches at the default quota.
+- The tests fail when one of the first four costs passes its bound (15M, 50M, 30M and 10M), when a whole-file check of a 2 GiB file would no longer fit in one call, or when the build of step 4's index would no longer fit in one call on a file of about 6 GB, the largest a mailbox of small mail reaches at the largest quota, 4 GiB.
 
 **MIME parsing** with libetpan, on 5,000 generated messages, 10% of them malformed:
 

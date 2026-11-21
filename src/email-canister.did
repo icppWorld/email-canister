@@ -29,7 +29,7 @@ type StorageTotals = record {
 // first_member: added in the same call, so a refused one leaves no mailbox
 type NewMailbox = record {
   local : text;
-  quota_bytes : opt nat64;
+  quota_bytes : opt nat64; // bytes, at most 4 GiB; 2 GiB when null
   first_member : opt principal;
 };
 // name: what an admin calls the principal, shown to the members of a mailbox
@@ -160,7 +160,7 @@ service : () -> {
     "admin_remove_member" : (text, principal) -> ();
     "admin_set_name" : (principal, text) -> (); // "" removes the name
     "admin_set_disabled" : (text, bool) -> ();
-    "admin_set_quota" : (text, nat64) -> ();
+    "admin_set_quota" : (text, nat64) -> (); // bytes, at most 4 GiB
     "admin_purge" : (text) -> (record { remaining : nat64 }); // bytes
     "admin_retry_moves" : (text) -> (nat64);
     // quick_check of one table, or of the whole file, and the counters
