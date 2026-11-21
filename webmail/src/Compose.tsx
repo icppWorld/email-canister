@@ -211,18 +211,16 @@ export function Compose({
               // Cleared, so the same file can be picked again once removed
               e.target.value = ''
               // A file with the name and size of one attached already, or
-              // of one earlier in this pick, is taken as the same file
+              // of one earlier in this pick, is taken as a newer copy of it,
+              // as after an edit, and replaces it in its place
               setFiles((before) => {
-                const seen = new Set(before.map(fileKey))
-                return [
-                  ...before,
-                  ...picked.filter((file) => {
-                    const key = fileKey(file)
-                    if (seen.has(key)) return false
-                    seen.add(key)
-                    return true
-                  }),
-                ]
+                const next = [...before]
+                for (const file of picked) {
+                  const at = next.findIndex((f) => fileKey(f) === fileKey(file))
+                  if (at >= 0) next[at] = file
+                  else next.push(file)
+                }
+                return next
               })
             }}
           />

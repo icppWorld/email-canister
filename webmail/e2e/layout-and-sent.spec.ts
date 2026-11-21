@@ -1305,7 +1305,7 @@ test('deleting mail waiting to be sent says it is then not sent', async ({
   }
 })
 
-test('each pick adds its files, skipping one attached already, and Remove takes one off', async ({
+test('each pick adds its files, replacing one attached already, and Remove takes one off', async ({
   browser,
 }) => {
   const { context, page } = await signedIn(browser, USER_A)
@@ -1331,5 +1331,42 @@ test('each pick adds its files, skipping one attached already, and Remove takes 
   // Removed, it can be picked again
   await picker.setInputFiles(file('a.txt', 2048))
   await expect(attached).toHaveText(['b.txt (1 KB)', 'a.txt (2 KB)'])
+  await context.close()
+})
+
+test('a file picked again after an edit is sent as it is now', async ({
+  browser,
+}) => {
+  const { context, page } = await signedIn(browser, USER_A)
+  await compose(page, 'Repicked kestrel')
+  const window = page.getByRole('dialog', { name: 'New message' })
+  const picker = window.getByLabel('Attachments')
+  const file = (fill: string) => ({
+    name: 'notes.txt',
+    mimeType: 'text/plain',
+    buffer: Buffer.alloc(100, fill),
+  })
+  await picker.setInputFiles(file('o'))
+  // The same name and size, with what the file holds now
+  await picker.setInputFiles(file('n'))
+  await expect(
+    window.getByRole('list', { name: 'Attached files' }).getByRole('listitem')
+  ).toHaveText(['notes.txt (1 KB)'])
+  await send(page)
+  const alice = await asAlice()
+  await expect
+    .poll(async () => {
+      const { items } = await alice.mail_outbox_list('alice', {
+        cursor: [],
+        limit: 20n,
+      })
+      const sent = items.find((m) => m.subject === 'Repicked kestrel')
+      if (!sent) return null
+      const message = await alice.mail_outbox_get('alice', sent.id)
+      return message.attachments.map((a) =>
+        Buffer.from(a.content as Uint8Array).toString()
+      )
+    })
+    .toEqual(['n'.repeat(100)])
   await context.close()
 })
