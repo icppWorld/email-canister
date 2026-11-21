@@ -274,7 +274,9 @@ function pageStyleSheet(paper: boolean, page: PageStyle): string {
 const REMOTE_URL = /^[\x00-\x20]*(https?:)?\/\//i
 // eslint-disable-next-line no-control-regex
 const REMOTE_SRCSET = /(^|,)[\x00-\x20]*(https?:)?\/\//i
-const REMOTE_CSS = /(url|image-set)\(\s*['"]?\s*(https?:)?\/\//i
+// The second run of spaces only after a quote: two runs side by side would
+// take time with the square of a long run's length, on a message's own text
+const REMOTE_CSS = /(url|image-set)\(\s*(['"]\s*)?(https?:)?\/\//i
 const SOURCES: [selector: string, attribute: string][] = [
   ['img', 'src'],
   ['input[type=image i]', 'src'],

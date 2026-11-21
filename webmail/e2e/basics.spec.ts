@@ -566,6 +566,25 @@ test('remote images load only after Show images, and only that time', async ({
   await context.close()
 })
 
+test('a style with a long run of spaces does not hold the reader up', async ({
+  browser,
+}) => {
+  deliver({
+    subject: 'Spaced bunting',
+    body:
+      `<p>bunting</p><style>p{background:url(${' '.repeat(200_000)}x)}</style>` +
+      `<p style="--x:url(${' '.repeat(200_000)}x)">attribute</p>`,
+  })
+  await waitDrained()
+  const { context, page } = await signedIn(browser, USER_A)
+  await openMail(page, 'bunting')
+  await expect(bodyOf(page).getByText('bunting')).toBeVisible()
+  await expect(
+    reader(page).getByRole('button', { name: 'Show images' })
+  ).toHaveCount(0)
+  await context.close()
+})
+
 test('the Refresh button shows new mail straight away', async ({ browser }) => {
   const { context, page } = await signedIn(browser, USER_B)
   await expect(
