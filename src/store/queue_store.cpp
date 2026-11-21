@@ -2,6 +2,7 @@
 
 #include "allowlist.h"
 #include "db.h"
+#include "ic_api.h"
 #include "mail_store.h"
 
 namespace {
@@ -291,9 +292,10 @@ bool move(int64_t queue_id, int64_t dedupe_since_ns) {
       ok = store_in_file(write.file(), row);
     }
   }
-  // New mail has the pump clear out old mail from Trash and Spam, in a write
-  // of its own: a message that cannot be deleted then stops no delivery
-  ok = ok && clean_soon(row.mailbox);
+  // New mail has the pump clear out expired mail from Trash and Spam, in a
+  // write of its own: a message that cannot be deleted then stops no delivery
+  ok = ok && clean_if_expired(Mailbox{row.mailbox, write.file()},
+                              static_cast<int64_t>(IC_API::time()));
   db::Stmt prune(db::control(),
                  "DELETE FROM dedupe WHERE id IN (SELECT id FROM dedupe "
                  "WHERE at_ns < ? ORDER BY at_ns LIMIT ?)");

@@ -21,6 +21,7 @@ from .support import (
     OK,
     add_mailbox,
     call,
+    clean_due,
     deliver,
     entry_line,
     fake_principal,
@@ -31,6 +32,7 @@ from .support import (
     request,
     search,
     stats,
+    wait_until,
     wait_until_drained,
 )
 
@@ -278,3 +280,19 @@ def test__an_upgrade_keeps_the_mail_and_picks_up_the_backlog(identity: str) -> N
         == number(totals, "messages") + 3
     )
     assert len(search("kiwi")) == 1 and len(search("fanout")) == 40
+
+
+def test__an_upgrade_picks_up_a_cleanup_due(identity: str) -> None:
+    wait_until_drained()  # the mark below is then the pump's only work
+    quota = number(entry_line("bob"), "quota_bytes")
+    used = number(entry_line("bob"), "used_bytes")
+    call("dev_pause", "(true)")  # on the heap: the upgrade ends it
+    call("admin_set_quota", f'("bob", {used} : nat64)')
+    try:
+        # Refused for the quota, the delivery marks bob for a cleanup
+        assert "code = 452" in deliver("Full ibis", "<ibis@sender.example>", to="bob")
+    finally:
+        call("admin_set_quota", f'("bob", {quota} : nat64)')
+    assert clean_due("bob")
+    assert upgrade(identity) == ""
+    wait_until(lambda: not clean_due("bob"), "bob's cleanup after the upgrade")

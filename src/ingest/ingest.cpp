@@ -45,6 +45,8 @@ bool g_paused = false;
 std::map<int64_t, int64_t> g_upgrade_failures;
 // Upgrades take turns with parses and moves
 bool g_upgrade_turn = true;
+// Cleanups take turns with the rest
+bool g_clean_turn = false;
 #ifdef EMAIL_CANISTER_TEST_HOOKS
 bool g_trap_moves = false;
 #endif
@@ -134,10 +136,12 @@ IC_Async ingest_pump_async() {
   // mailbox alone. Upgrades take turns with the rest, so that mailboxes
   // already upgraded keep receiving while the others wait. Parsing goes
   // before moving, so that a message is searchable soon after its move. A
-  // mailbox whose parse cannot be claimed does not hold up the moves. The
-  // cleanup of expired mail waits until nothing else is to be done.
+  // mailbox whose parse cannot be claimed does not hold up the moves.
+  // Cleanups take turns with the rest too, so that a mailbox refused mail for
+  // its quota is cleaned while others receive.
   int64_t mailbox = 0;
   int64_t id = 0;
+  int64_t due = 0; // the cleanup's marks
   const auto now = static_cast<int64_t>(IC_API::time());
   const auto defer = static_cast<int64_t>(k_defer_ns);
   enum class Work { Upgrade, Parse, Move, Clean } work = Work::Move;
@@ -163,12 +167,17 @@ IC_Async ingest_pump_async() {
            take(store::claim_move(k_max_attempts, now, defer, id), Work::Move);
   };
   const auto clean = [&] {
-    return take(store::claim_clean(now, defer, mailbox), Work::Clean);
+    return take(store::claim_clean(now, defer, mailbox, due), Work::Clean);
   };
-  if ((g_upgrade_turn ? upgrade() || receive() : receive() || upgrade()) ||
-      clean())
+  const auto rest = [&] {
+    return g_upgrade_turn ? upgrade() || receive() : receive() || upgrade();
+  };
+  if (g_clean_turn ? clean() || rest() : rest() || clean()) {
     g_upgrade_turn = work != Work::Upgrade;
-  else if (failed) claim = store::Claim::Failed;
+    g_clean_turn = work != Work::Clean;
+  } else if (failed) {
+    claim = store::Claim::Failed;
+  }
   if (claim == store::Claim::Claimed) {
     g_pumping = true; // the co_await commits this and the recorded attempt
     g_pumping_since = IC_API::time();
@@ -215,11 +224,11 @@ IC_Async ingest_pump_async() {
           co_await IC_Call::unbounded_wait(self, "ingest_clean")
               .with_arg(CandidTypeNat64{static_cast<uint64_t>(mailbox)});
       // One that failed after it ran waits for the next mark, so a message
-      // that cannot be deleted never makes the pump loop. One that never ran
-      // is tried again later.
+      // that cannot be deleted never makes the pump loop; a mark made during
+      // the call stays. One that never ran is tried again later.
       if (!result) {
         not_run = !ran(result.error());
-        if (!not_run) store::stop_cleaning(mailbox);
+        if (!not_run) store::stop_cleaning(mailbox, due);
       }
     } else {
       IC_CallResult<IC_CallReply> result =

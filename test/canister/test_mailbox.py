@@ -25,6 +25,7 @@ from .support import (
     add_mailbox,
     add_member,
     call,
+    clean_due,
     create_mailbox,
     deliver,
     entry_line,
@@ -686,10 +687,6 @@ def test__quota_defers_mail_and_redelivery_is_free() -> None:
         assert number(entry_line("bob"), "used_bytes") == used
     finally:
         call("admin_set_quota", '("bob", 2147483648 : nat64)')
-
-
-def clean_due(local: str) -> bool:
-    return "true" in call("dev_clean_due", f'("{local}")')
 
 
 def message_count(local: str) -> int:

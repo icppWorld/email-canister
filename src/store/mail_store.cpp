@@ -599,16 +599,27 @@ static int64_t delete_expired(const Mailbox &box, int64_t now_ns) {
 }
 
 bool clean_soon(int64_t mailbox) {
-  db::Stmt mark(db::control(), "UPDATE mailboxes SET clean_due = 1 WHERE "
-                               "id = ? AND clean_due = 0 AND vacant = 0 AND "
-                               "purging = 0");
+  // Each mark counts, so that a failed cleanup clears only the marks it saw
+  db::Stmt mark(db::control(), "UPDATE mailboxes SET clean_due = clean_due + 1 "
+                               "WHERE id = ? AND vacant = 0 AND purging = 0");
   return mark && mark.integer(1, mailbox).done();
 }
 
-bool stop_cleaning(int64_t mailbox) {
-  db::Stmt stop(db::control(),
-                "UPDATE mailboxes SET clean_due = 0 WHERE id = ?");
-  return stop && stop.integer(1, mailbox).done();
+bool clean_if_expired(const Mailbox &box, int64_t now_ns) {
+  // On the index of the mail out of the Inbox, messages_expiring. A probe
+  // that fails marks too: the cleanup, in a write of its own, finds out.
+  db::Stmt probe(box.file, "SELECT 1 FROM messages WHERE folder != 0 AND "
+                           "folder_ns < ? LIMIT 1");
+  const bool expired = !probe ||
+                       probe.integer(1, now_ns - k_keep_filed_ns).row() ||
+                       probe.failed();
+  return !expired || clean_soon(box.id);
+}
+
+bool stop_cleaning(int64_t mailbox, int64_t due) {
+  db::Stmt stop(db::control(), "UPDATE mailboxes SET clean_due = 0 "
+                               "WHERE id = ? AND clean_due = ?");
+  return stop && stop.integer(1, mailbox).integer(2, due).done();
 }
 
 bool clean_pending() {
@@ -618,14 +629,15 @@ bool clean_pending() {
   return !select || select.integer(1, k_held_ns).row() || select.failed();
 }
 
-Claim claim_clean(int64_t now_ns, int64_t defer_ns, int64_t &mailbox) {
+Claim claim_clean(int64_t now_ns, int64_t defer_ns, int64_t &mailbox,
+                  int64_t &due) {
   {
     // A download and a hold keep the pumps away through retry_after_ns. A
     // file of another version waits for its upgrade or its release.
     db::Stmt select(db::control(),
-                    "SELECT id FROM mailboxes WHERE clean_due > 0 AND "
-                    "retry_after_ns <= ?1 AND schema = ?2 AND vacant = 0 AND "
-                    "purging = 0 AND needs_repair = '' "
+                    "SELECT id, clean_due FROM mailboxes WHERE clean_due > 0 "
+                    "AND retry_after_ns <= ?1 AND schema = ?2 AND vacant = 0 "
+                    "AND purging = 0 AND needs_repair = '' "
                     "ORDER BY id <= ?3, id LIMIT 1");
     if (!select) return Claim::Failed;
     if (!select.integer(1, now_ns)
@@ -635,6 +647,7 @@ Claim claim_clean(int64_t now_ns, int64_t defer_ns, int64_t &mailbox) {
       return select.failed() ? Claim::Failed : Claim::Empty;
     }
     mailbox = select.column_integer(0);
+    due = select.column_integer(1);
     g_cleaned_last = mailbox;
   }
   sqlite3 *file = nullptr;
@@ -648,8 +661,12 @@ bool clean_expired(int64_t mailbox, int64_t now_ns) {
   if (!write) return false;
   const int64_t found = delete_expired(Mailbox{mailbox, write.file()}, now_ns);
   if (found < 0) return false;
-  // Fewer than a write takes: none is left until the next due mark
-  if (found < k_expired_per_write && !stop_cleaning(mailbox)) return false;
+  // Fewer than a write takes: none is left, whatever marks came since
+  if (found < k_expired_per_write) {
+    db::Stmt done(db::control(),
+                  "UPDATE mailboxes SET clean_due = 0 WHERE id = ?");
+    if (!done || !done.integer(1, mailbox).done()) return false;
+  }
   return write.commit();
 }
 
@@ -711,7 +728,8 @@ int64_t move_messages(const Mailbox &box, const std::vector<uint64_t> &uids,
   // Expired mail the cleanup has not reached is still listed, and moves like
   // any other: the pump deletes the rest in a write of its own
   const int64_t moved = file_messages(box, uids, folder, now_ns);
-  return moved >= 0 && clean_soon(box.id) && write.commit() ? moved : -1;
+  if (moved < 0 || !clean_if_expired(box, now_ns)) return -1;
+  return write.commit() ? moved : -1;
 }
 
 Page search(const Mailbox &box, int64_t folder, const std::string &query,

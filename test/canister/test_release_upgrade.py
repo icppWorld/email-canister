@@ -1,7 +1,8 @@
 """An upgrade from the last release keeps the mail, on a local replica: the
 release's wasm, from GitHub and checked by its sha256, takes mail, and is then
-upgraded to this build, which takes control.db, and through its pump each
-mailbox file, to its schema.
+upgraded to this build, which takes control.db to its schema. The mailbox files
+are at this build's schema already. The mail, its folders and flags, and the
+blocks stay, and the pump cleans out expired mail with the upgraded registry.
 
 $ make build-test
 $ icp network start -d
@@ -60,10 +61,6 @@ def release_wasm(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return wasm
 
 
-def busy() -> bool:
-    return "busy:" in page(USER_A)
-
-
 def test__an_upgrade_from_the_last_release_keeps_the_mail(
     identity: str, release_wasm: Path
 ) -> None:
@@ -99,7 +96,6 @@ def test__an_upgrade_from_the_last_release_keeps_the_mail(
     assert unread(USER_A, "alice") == 1
 
     assert upgrade(identity) == ""
-    wait_until(lambda: not busy(), "alice's upgrade")
     inbox = page(USER_A)
     assert "Kept puffin" in inbox and "Kept gannet" in inbox
     assert "Kept shag" in page(USER_A, folder=1)
@@ -108,8 +104,8 @@ def test__an_upgrade_from_the_last_release_keeps_the_mail(
     assert "tern@birds.example" in mail("mail_blocked", "alice", "()", USER_A)
     assert 'result = "ok"' in call("admin_check", '("alice", null)')
 
-    # control.db's version 2: new mail marks the mailbox, and the pump then
-    # deletes the mail past its 30 days in Trash. The block still holds.
+    # control.db's version 2: new mail finds the mail past its 30 days in
+    # Trash, and has the pump delete it. The block still holds.
     call(
         "dev_file_exec",
         f'("alice", "UPDATE messages SET folder_ns = 1 WHERE uid = {shag}")',

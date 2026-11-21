@@ -242,7 +242,7 @@ const std::vector<const char *> k_control_steps = {
     // Version 2: the mailboxes whose expired Trash and Spam mail the ingest
     // pump deletes
     R"sql(
-ALTER TABLE mailboxes ADD COLUMN clean_due INTEGER NOT NULL DEFAULT 0; -- expired Trash and Spam mail may wait for the pump
+ALTER TABLE mailboxes ADD COLUMN clean_due INTEGER NOT NULL DEFAULT 0; -- marks since the last cleanup: expired Trash and Spam mail may wait for the pump
 CREATE INDEX mailboxes_clean_due ON mailboxes(id) WHERE clean_due > 0;
 )sql",
 };
