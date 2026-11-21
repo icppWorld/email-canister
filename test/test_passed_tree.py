@@ -7,12 +7,16 @@ $ pytest test/test_passed_tree.py
 
 import json
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
 
 # pylint: disable=missing-function-docstring,redefined-outer-name
+
+# The stand-in gh runs the script's filters with jq, as gh itself would
+pytestmark = pytest.mark.skipif(shutil.which("jq") is None, reason="needs jq")
 
 ROOT = Path(__file__).parent.parent
 SCRIPT = ROOT / "scripts" / "passed-tree.sh"
@@ -28,13 +32,23 @@ name = "run-" + run.group(1) if run else "artifacts"
 path = os.path.join(os.environ["FAKE_GH"], name + ".json")
 if not os.path.exists(path):
     sys.exit("gh: not found")
-sys.exit(subprocess.run(["jq", "-r", jq, path]).returncode)
+code = subprocess.run(["jq", "-r", jq, path]).returncode
+# A listing that answers its first page and then fails
+sys.exit(code or os.path.exists(path + ".fails"))
 """
+
+
+# Without the caller's repository: git would use it instead of cwd
+ENV = {
+    k: v
+    for k, v in os.environ.items()
+    if k not in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR")
+}
 
 
 def git(repo: Path, *args: str) -> str:
     return subprocess.run(
-        ["git", *args], cwd=repo, check=True, capture_output=True, text=True
+        ["git", *args], cwd=repo, env=ENV, check=True, capture_output=True, text=True
     ).stdout.strip()
 
 
@@ -119,7 +133,7 @@ def answer(
 
 def decide(repo: Path, answers: Path) -> str:
     env = {
-        **os.environ,
+        **ENV,
         "PATH": f"{answers.parent / 'bin'}{os.pathsep}{os.environ['PATH']}",
         "FAKE_GH": str(answers),
         "GITHUB_REPOSITORY": "owner/repo",
@@ -222,3 +236,25 @@ def test__the_script_is_executable_in_git() -> None:
     # The workflow runs it directly
     mode = git(ROOT, "ls-files", "-s", "scripts/passed-tree.sh").split()[0]
     assert mode == "100755"
+
+
+def test__a_listing_that_fails_part_way_runs_the_tests(
+    tmp_path: Path, answers: Path
+) -> None:
+    repo, pr_head = merged(tmp_path)
+    answer(answers, [artifact(7, pr_head)], {7: passing_run(pr_head)})
+    (answers / "artifacts.json.fails").touch()
+    assert decide(repo, answers) == "run-tests=true"
+
+
+def test__a_run_that_cannot_be_read_runs_the_tests_whatever_comes_after(
+    tmp_path: Path, answers: Path
+) -> None:
+    repo, pr_head = merged(tmp_path)
+    # Run 6 cannot be read; run 7 passed
+    answer(
+        answers,
+        [artifact(6, pr_head), artifact(7, pr_head)],
+        {7: passing_run(pr_head)},
+    )
+    assert decide(repo, answers) == "run-tests=true"
