@@ -199,9 +199,8 @@ bool add_unseen(int64_t mailbox, int64_t unseen) {
 
 namespace store {
 
-static int64_t file_messages(const Mailbox &box,
-                             const std::vector<uint64_t> &uids, int64_t folder,
-                             int64_t now_ns);
+static bool file_messages(const Mailbox &box, const std::vector<uint64_t> &uids,
+                          int64_t folder, int64_t now_ns, Moved &done);
 
 std::string domain() {
   db::Stmt select(db::control(),
@@ -374,9 +373,10 @@ bool process(int64_t mailbox, int64_t id) {
                 .done() &&
             count.integer(1, mailbox).done();
   // Mail that arrived more than 30 days ago is deleted instead
+  Moved filed;
   if (ok && *spam)
     ok = file_messages(box, {static_cast<uint64_t>(uid)}, Spam,
-                       static_cast<int64_t>(IC_API::time())) >= 0;
+                       static_cast<int64_t>(IC_API::time()), filed);
   return ok && write.commit();
 }
 
@@ -675,11 +675,10 @@ bool clean_expired(int64_t mailbox, int64_t now_ns) {
 }
 
 // Puts the messages in `folder`, in the caller's write. Mail that arrived more
-// than 30 days ago is deleted instead of going to Spam. Returns how many
-// moved, or -1.
-static int64_t file_messages(const Mailbox &box,
-                             const std::vector<uint64_t> &uids, int64_t folder,
-                             int64_t now_ns) {
+// than 30 days ago is deleted instead of going to Spam. Adds the uids to
+// `done`. False on failure.
+static bool file_messages(const Mailbox &box, const std::vector<uint64_t> &uids,
+                          int64_t folder, int64_t now_ns, Moved &done) {
   db::Stmt find(
       box.file,
       "SELECT folder, flags, received_ns FROM messages WHERE uid = ?");
@@ -692,7 +691,6 @@ static int64_t file_messages(const Mailbox &box,
                             "END, modseq = ?3 WHERE uid = ?4");
   std::vector<uint64_t> expired;
   int64_t modseq = 0; // taken at the first move
-  int64_t moved = 0;
   int64_t unseen = 0;
   bool ok = find && update;
   for (size_t i = 0; ok && i < uids.size(); ++i) {
@@ -708,7 +706,9 @@ static int64_t file_messages(const Mailbox &box,
     find.reset();
     if (from == folder) continue;
     if (folder == Spam && received_ns < now_ns - k_keep_filed_ns) {
-      expired.push_back(uids[i]);
+      // A uid named twice is deleted, and reported, once
+      if (std::find(expired.begin(), expired.end(), uids[i]) == expired.end())
+        expired.push_back(uids[i]);
       continue;
     }
     if (modseq == 0) modseq = next_modseq(box.id);
@@ -719,22 +719,21 @@ static int64_t file_messages(const Mailbox &box,
                            .integer(3, modseq)
                            .integer(4, uid)
                            .done();
-    ++moved;
+    done.moved.push_back(uids[i]);
   }
   ok = ok && add_unseen(box.id, unseen) &&
        (expired.empty() || remove_messages(box, expired) >= 0);
-  return ok ? moved : -1;
+  done.deleted.insert(done.deleted.end(), expired.begin(), expired.end());
+  return ok;
 }
 
-int64_t move_messages(const Mailbox &box, const std::vector<uint64_t> &uids,
-                      int64_t folder, int64_t now_ns) {
+bool move_messages(const Mailbox &box, const std::vector<uint64_t> &uids,
+                   int64_t folder, int64_t now_ns, Moved &done) {
   MailboxWrite write(box);
-  if (!write) return -1;
   // Expired mail the cleanup has not reached is still listed, and moves like
   // any other: the pump deletes the rest in a write of its own
-  const int64_t moved = file_messages(box, uids, folder, now_ns);
-  if (moved < 0 || !clean_if_expired(box, now_ns)) return -1;
-  return write.commit() ? moved : -1;
+  return write && file_messages(box, uids, folder, now_ns, done) &&
+         clean_if_expired(box, now_ns) && write.commit();
 }
 
 Page search(const Mailbox &box, int64_t folder, const std::string &query,

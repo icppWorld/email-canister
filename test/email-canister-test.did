@@ -198,7 +198,10 @@ service : () -> {
     "mail_delete" : (text, vec nat64, nat64) -> (nat64);
     // uids and the folder to move them to. Trash keeps mail 30 days, Spam
     // until 30 days after it arrived: older mail moved there is deleted.
-    "mail_move" : (text, vec nat64, nat64) -> (nat64);
+    // Replies how many moved, the uids moved, and the uids deleted; a uid in
+    // neither was not there, or was in the folder already. A client that
+    // reads only the count still works.
+    "mail_move" : (text, vec nat64, nat64) -> (nat64, vec nat64, vec nat64);
     // true when this call blocked the address, false when it was already;
     // at 1,000 addresses the oldest block makes room
     "mail_block" : (text, text) -> (bool);

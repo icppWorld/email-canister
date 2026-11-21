@@ -217,9 +217,10 @@ void mail_delete() {
 }
 
 // Moves messages between the Inbox, Trash and Spam, and returns how many
-// moved; a uid that does not exist is skipped. Mail stays in Trash for 30
-// days, and in Spam until 30 days after it arrived: older mail marked as Spam
-// is deleted at once.
+// moved, the uids moved, and the uids deleted; a uid that does not exist, or
+// is in the folder already, is skipped. Mail stays in Trash for 30 days, and
+// in Spam until 30 days after it arrived: older mail marked as Spam is
+// deleted at once.
 void mail_move() {
   IC_API ic_api(CanisterUpdate{std::string(__func__)}, false);
   std::vector<uint64_t> uids;
@@ -227,11 +228,18 @@ void mail_move() {
   const store::Mailbox box = require_writable_file(read_mailbox(
       ic_api, {CandidTypeVecNat64{&uids}, CandidTypeNat64{&folder}}));
   require_batch(uids);
-  const int64_t moved = store::move_messages(
-      box, uids, to_folder(folder), static_cast<int64_t>(IC_API::time()));
-  if (moved < 0) IC_API::trap("the move failed");
+  store::Moved done;
+  if (!store::move_messages(box, uids, to_folder(folder),
+                            static_cast<int64_t>(IC_API::time()), done))
+    IC_API::trap("the move failed");
   ingest::arm(); // to clean out expired mail
-  ic_api.to_wire(nat64(moved));
+  // A reply may carry more results than a caller reads, so a client that
+  // reads the count alone still works
+  CandidArgs results;
+  results.append(nat64(static_cast<int64_t>(done.moved.size())));
+  results.append(CandidTypeVecNat64{done.moved});
+  results.append(CandidTypeVecNat64{done.deleted});
+  ic_api.to_wire(results);
 }
 
 // New mail from the address, as envelope sender or From, goes to Spam, for

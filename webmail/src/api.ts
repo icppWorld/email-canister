@@ -176,7 +176,13 @@ export type Mailbox = {
   mail_set_flags(uids: bigint[], set: bigint, clear: bigint): Promise<void>
   // For good, the messages still in `folder`: mail_move puts mail in Trash
   mail_delete(uids: bigint[], folder: bigint): Promise<bigint>
-  mail_move(uids: bigint[], folder: bigint): Promise<bigint>
+  // How many moved, the uids moved, and the uids deleted instead: mail moved
+  // into Spam that arrived more than 30 days ago. A vec nat64 in a reply
+  // decodes to a BigUint64Array.
+  mail_move(
+    uids: bigint[],
+    folder: bigint
+  ): Promise<[bigint, BigUint64Array, BigUint64Array]>
   // Whether this call blocked the address: false when it was already
   mail_block(address: string): Promise<boolean>
   // Whether the address was blocked

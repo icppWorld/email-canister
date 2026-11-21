@@ -114,12 +114,18 @@ std::vector<SeenBy> seen_by(const Mailbox &box, int64_t uid);
 int64_t delete_messages(const Mailbox &box, const std::vector<uint64_t> &uids,
                         int64_t folder);
 
+// What a move did: the uids it moved, and the ones it deleted instead. A uid
+// in neither was not there, or was in the folder already.
+struct Moved {
+  std::vector<uint64_t> moved;
+  std::vector<uint64_t> deleted;
+};
 // Moves the messages to `folder`, and marks the mailbox for a cleanup when it
 // holds expired mail. Mail that arrived more than 30 days ago is deleted
-// instead of going to Spam, and does not count. Returns how many moved, or -1
-// on failure.
-int64_t move_messages(const Mailbox &box, const std::vector<uint64_t> &uids,
-                      int64_t folder, int64_t now_ns);
+// instead of going to Spam. Fills `done`; false on failure, when nothing
+// changed.
+bool move_messages(const Mailbox &box, const std::vector<uint64_t> &uids,
+                   int64_t folder, int64_t now_ns, Moved &done);
 
 // Mail in Trash is deleted 30 days after it left the Inbox, and mail in Spam
 // 30 days after it arrived, by turns of the ingest pump, each a write of its

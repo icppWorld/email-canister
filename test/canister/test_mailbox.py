@@ -568,9 +568,12 @@ def test__mail_from_a_blocked_sender_goes_to_spam() -> None:
 
     # Not spam: back in the Inbox, and unread there
     heron = uids(found(USER_B, "heron", folder=2))[0]
-    assert "(1 : nat64)" in mail(
-        "mail_move", bob, f"(vec {{ {heron} : nat64 }}, 0 : nat64)", USER_B
-    )
+    moved = mail("mail_move", bob, f"(vec {{ {heron} : nat64 }}, 0 : nat64)", USER_B)
+    # The count, the uids moved, and none deleted
+    assert re.search(
+        rf"\(\s*1 : nat64,\s*vec \{{\s*{heron} : nat64;?\s*\}},\s*vec \{{\s*\}}",
+        moved,
+    ), moved
     assert unread(USER_B, bob) == before + 2
 
     # Unblocked, the sender's new mail stays in the Inbox
