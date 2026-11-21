@@ -581,7 +581,7 @@ void test_folders(MockIC &mock_ic) {
     CALL(test, dev_file_exec,
          "(\"fox\", \"WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 "
          "FROM c WHERE x < 1000) INSERT INTO blocked SELECT 'a' || x || "
-         "'@example.com', 'p', x FROM c\")",
+         "'@example.com', 'aaaaa-aa', x FROM c\")",
          CONTROLLER);
     // An address on it already is no change
     expect(test,
