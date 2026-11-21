@@ -15,8 +15,6 @@ import pytest
 
 # pylint: disable=missing-function-docstring,redefined-outer-name
 
-# The stand-in gh runs the script's filters with jq, as gh itself would
-pytestmark = pytest.mark.skipif(shutil.which("jq") is None, reason="needs jq")
 
 ROOT = Path(__file__).parent.parent
 SCRIPT = ROOT / "scripts" / "passed-tree.sh"
@@ -114,6 +112,9 @@ def passing_run(head_sha: str, base: str = "main") -> dict[str, object]:
 @pytest.fixture
 def answers(tmp_path: Path) -> Path:
     """The directory the stand-in gh answers from"""
+    # It runs the script's filters with jq, as gh itself would
+    if shutil.which("jq") is None:
+        pytest.fail("these tests need jq: see the README's setup")
     folder = tmp_path / "gh"
     folder.mkdir()
     (tmp_path / "bin").mkdir()
