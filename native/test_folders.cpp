@@ -127,6 +127,17 @@ void test_folders(MockIC &mock_ic) {
     expect(test, fox(test), "unseen = 4 : ");
   }
   {
+    const std::string test = "the Inbox's list reads its index alone";
+    // Without it, the list reads every newer message in Trash and Spam
+    db::Stmt plan(
+        store::mailbox_file(std::stoll(fox_id())),
+        (std::string("EXPLAIN QUERY PLAN ") + store::k_list_inbox).c_str());
+    std::string steps;
+    while (plan && plan.row())
+      steps += plan.column_text(3) + "\n";
+    expect(test, steps, "USING INDEX messages_inbox ");
+  }
+  {
     const std::string test = "the list gives each message's From address";
     // Seeded mail is not parsed: here as mail parsed before the column was
     // added has it, in its sender text only, and as the parse stores it
@@ -149,7 +160,8 @@ void test_folders(MockIC &mock_ic) {
   }
   {
     const std::string test = "a move to Trash takes unread mail off the count";
-    expect(test, move(test, "vec { 1; 2; 99 }", 1), "(2 : nat64)");
+    expect_equal(test, move(test, "vec { 1; 2; 99 }", 1),
+                 "(2 : nat64, vec { 1 : nat64; 2 : nat64 }, vec {})");
     const std::string trash = listed(test, 1);
     expect(test, trash, "uid = 2 : ");
     expect(test, trash, "folder = 1 : ");
@@ -157,7 +169,8 @@ void test_folders(MockIC &mock_ic) {
     expect(test, fox(test), "unseen = 2 : ");
     expect(test, fox(test), "message_count = 4 : ");
     // Already there: nothing moves
-    expect(test, move(test, "vec { 1 }", 1), "(0 : nat64)");
+    expect_equal(test, move(test, "vec { 1 }", 1),
+                 "(0 : nat64, vec {}, vec {})");
   }
   {
     const std::string test = "reading mail in Trash leaves the count alone";
@@ -183,17 +196,20 @@ void test_folders(MockIC &mock_ic) {
   {
     const std::string test = "a restore counts unread mail again";
     // uid 1 was read in Trash, uid 2 was not
-    expect(test, move(test, "vec { 1; 2 }", 0), "(2 : nat64)");
+    expect_equal(test, move(test, "vec { 1; 2 }", 0),
+                 "(2 : nat64, vec { 1 : nat64; 2 : nat64 }, vec {})");
     expect(test, fox(test), "unseen = 3 : ");
     expect(test, listed(test, 1), "items = vec {}");
   }
   {
     const std::string test = "Spam keeps unread mail off the count too";
-    expect(test, move(test, "vec { 3 }", 2), "(1 : nat64)");
+    expect_equal(test, move(test, "vec { 3 }", 2),
+                 "(1 : nat64, vec { 3 : nat64 }, vec {})");
     expect(test, fox(test), "unseen = 2 : ");
     expect(test, listed(test, 2), "uid = 3 : ");
     // From Spam to Trash, still off the count
-    expect(test, move(test, "vec { 3 }", 1), "(1 : nat64)");
+    expect_equal(test, move(test, "vec { 3 }", 1),
+                 "(1 : nat64, vec { 3 : nat64 }, vec {})");
     expect(test, fox(test), "unseen = 2 : ");
     expect(test, CALL(test, admin_check, "(\"fox\", null)", CONTROLLER),
            "result = \"ok\"");
@@ -245,17 +261,18 @@ void test_folders(MockIC &mock_ic) {
         "only this canister can call this method");
   {
     const std::string test = "Trash empties itself after 30 days, 20 per turn";
-    expect(test, move(test, uid_vec(5, 25), 1), "(25 : nat64)");
+    // A long reply prints over several lines: the count ends in a comma
+    expect(test, move(test, uid_vec(5, 25), 1), "25 : nat64,");
     expect(test, fox(test), "message_count = 28 : ");
     later_by_days(29);
     // Nothing has expired: a move costs the pump no turn
-    expect(test, move(test, "vec {}", 1), "(0 : nat64)");
+    expect_equal(test, move(test, "vec {}", 1), "(0 : nat64, vec {}, vec {})");
     check(test, !clean_due(), "a move marked a mailbox with nothing expired");
     clean(test);
     expect(test, fox(test), "message_count = 28 : ");
     later_by_days(2);
     // A move leaves the deleting to the pump
-    expect(test, move(test, "vec {}", 1), "(0 : nat64)");
+    expect_equal(test, move(test, "vec {}", 1), "(0 : nat64, vec {}, vec {})");
     expect(test, fox(test), "message_count = 28 : ");
     check(test, clean_due(), "a move did not mark the expired mail");
     clean(test);
@@ -271,12 +288,16 @@ void test_folders(MockIC &mock_ic) {
   {
     const std::string test = "mail past its 30 days is restored, not deleted";
     arrived(test, "1, 2", 0);
-    expect(test, move(test, "vec { 1 }", 1), "(1 : nat64)");
-    expect(test, move(test, "vec { 2 }", 2), "(1 : nat64)");
+    expect_equal(test, move(test, "vec { 1 }", 1),
+                 "(1 : nat64, vec { 1 : nat64 }, vec {})");
+    expect_equal(test, move(test, "vec { 2 }", 2),
+                 "(1 : nat64, vec { 2 : nat64 }, vec {})");
     later_by_days(31);
     // Restore, and Not spam, before the pump reached them
-    expect(test, move(test, "vec { 1 }", 0), "(1 : nat64)");
-    expect(test, move(test, "vec { 2 }", 0), "(1 : nat64)");
+    expect_equal(test, move(test, "vec { 1 }", 0),
+                 "(1 : nat64, vec { 1 : nat64 }, vec {})");
+    expect_equal(test, move(test, "vec { 2 }", 0),
+                 "(1 : nat64, vec { 2 : nat64 }, vec {})");
     clean(test);
     expect(test, fox(test), "message_count = 3 : ");
     const std::string inbox = listed(test, 0);
@@ -288,7 +309,8 @@ void test_folders(MockIC &mock_ic) {
   {
     const std::string test = "Spam's 30 days count from the mail's arrival";
     arrived(test, "30", 25);
-    expect(test, move(test, "vec { 30 }", 2), "(1 : nat64)");
+    expect_equal(test, move(test, "vec { 30 }", 2),
+                 "(1 : nat64, vec { 30 : nat64 }, vec {})");
     later_by_days(4);
     clean(test);
     expect(test, listed(test, 2), "uid = 30 : ");
@@ -300,8 +322,12 @@ void test_folders(MockIC &mock_ic) {
   {
     const std::string test = "a move from Spam to Trash keeps Spam's time";
     arrived(test, "31", 25);
-    expect(test, move(test, "vec { 31 }", 2), "(1 : nat64)");
-    expect(test, move(test, "vec { 31 }", 1), "(1 : nat64)");
+    expect_equal(test, move(test, "vec { 31 }", 2),
+                 "(1 : nat64, vec { 31 : nat64 }, vec {})");
+    // Past 30 days since it arrived by now: only a move into Spam deletes
+    arrived(test, "31", 31);
+    expect_equal(test, move(test, "vec { 31 }", 1),
+                 "(1 : nat64, vec { 31 : nat64 }, vec {})");
     later_by_days(6);
     clean(test);
     expect_not(test, listed(test, 1), "uid = 31 : ");
@@ -309,11 +335,17 @@ void test_folders(MockIC &mock_ic) {
   }
   {
     const std::string test = "mail marked as Spam 30 days after it arrived is "
-                             "deleted, and does not count as moved";
+                             "deleted, does not count as moved, and the reply "
+                             "says which";
     arrived(test, "32", 31);
     arrived(test, "33", 0);
     const std::string unseen = field(fox(test), "unseen");
-    expect(test, move(test, "vec { 32; 33 }", 2), "(1 : nat64)");
+    // 33 named twice is in Spam the second time; 999 is not there. A client
+    // compares no clocks to know what it may undo.
+    expect_equal(test, move(test, "vec { 32; 33; 33; 32; 999 }", 2),
+                 "(1 : nat64, vec { 33 : nat64 }, vec { 32 : nat64 })");
+    expect_equal(test, move(test, "vec { 32; 33 }", 2),
+                 "(0 : nat64, vec {}, vec {})");
     const std::string spam = listed(test, 2);
     expect(test, spam, "uid = 33 : ");
     expect_not(test, spam, "uid = 32 : ");
@@ -340,7 +372,8 @@ void test_folders(MockIC &mock_ic) {
     const std::string test = "mail that cannot be deleted stops its cleanup "
                              "only";
     arrived(test, "4", 0);
-    expect(test, move(test, "vec { 4 }", 1), "(1 : nat64)");
+    expect_equal(test, move(test, "vec { 4 }", 1),
+                 "(1 : nat64, vec { 4 : nat64 }, vec {})");
     later_by_days(31);
     CALL(test, dev_file_exec,
          "(\"fox\", \"CREATE TRIGGER damaged BEFORE DELETE ON messages WHEN "
@@ -351,7 +384,8 @@ void test_folders(MockIC &mock_ic) {
     // Delivery and moves go on
     CALL(test, ingest_move, "(" + queue_mail(test, "prompt") + ")", SELF);
     expect(test, listed(test, 0), "envelope_from = \"prompt@sender.example\"");
-    expect(test, move(test, "vec { 1 }", 1), "(1 : nat64)");
+    expect_equal(test, move(test, "vec { 1 }", 1),
+                 "(1 : nat64, vec { 1 : nat64 }, vec {})");
     CALL(test, dev_file_exec, "(\"fox\", \"DROP TRIGGER damaged\")",
          CONTROLLER);
     clean(test);
@@ -382,6 +416,29 @@ void test_folders(MockIC &mock_ic) {
     CALL(test, mail_unblock, "(\"fox\", \"stale@sender.example\")", USER_A);
   }
   {
+    const std::string test = "the parse leaves mail from a blocked From "
+                             "address that a member put in the Inbox";
+    CALL(test, mail_block, "(\"fox\", \"heron@sender.example\")", USER_A);
+    // Its envelope sender is blocked too, so delivery files it in Spam
+    CALL(test, ingest_move, "(" + queue_mail(test, "heron") + ")", SELF);
+    const std::string id =
+        std::to_string(fox_integer("SELECT max(id) FROM messages"));
+    const std::string uid = std::to_string(
+        fox_integer("SELECT uid FROM messages WHERE id = " + id));
+    expect(test, listed(test, 2), "uid = " + uid + " : ");
+    // Not spam, before the parse
+    expect_equal(test, move(test, "vec { " + uid + " }", 0),
+                 "(1 : nat64, vec { " + uid + " : nat64 }, vec {})");
+    CALL(test, ingest_process, "(" + fox_id() + ", " + id + ")", SELF);
+    check(test,
+          fox_integer("SELECT folder FROM messages WHERE state = 1 AND id = " +
+                      id) == 0,
+          "the parse filed it in Spam again");
+    expect(test, CALL(test, admin_check, "(\"fox\", null)", CONTROLLER),
+           "result = \"ok\"");
+    CALL(test, mail_unblock, "(\"fox\", \"heron@sender.example\")", USER_A);
+  }
+  {
     const std::string test = "a cleanup takes turns with mail to be parsed";
     CALL(test, dev_file_exec,
          "(\"fox\", \"UPDATE messages SET folder_ns = 1 WHERE uid = 1\")",
@@ -403,13 +460,14 @@ void test_folders(MockIC &mock_ic) {
     const std::string test = "a mark made while a cleanup fails stays";
     // Something to parse for the turns between the cleanups
     CALL(test, ingest_move, "(" + queue_mail(test, "rook") + ")", SELF);
-    expect(test, move(test, "vec { 2 }", 1), "(1 : nat64)");
+    expect_equal(test, move(test, "vec { 2 }", 1),
+                 "(1 : nat64, vec { 2 : nat64 }, vec {})");
     CALL(test, dev_file_exec,
          "(\"fox\", \"UPDATE messages SET folder_ns = 1 WHERE uid = 2; "
          "CREATE TRIGGER damaged BEFORE DELETE ON messages WHEN old.uid = 2 "
          "BEGIN SELECT RAISE(ABORT, 'damaged'); END\")",
          CONTROLLER);
-    expect(test, move(test, "vec {}", 1), "(0 : nat64)");
+    expect_equal(test, move(test, "vec {}", 1), "(0 : nat64, vec {}, vec {})");
     check(test, clean_due(), "a move did not mark the expired mail");
     mock_ic.register_method("ingest_clean", ingest_clean_after_a_mark);
     for (int turn = 0; turn < 3 && !g_marked_meanwhile; ++turn)
@@ -454,12 +512,12 @@ void test_folders(MockIC &mock_ic) {
     CALL(test, dev_seed, "(\"fox\", 100, 21)", CONTROLLER);
     const auto last =
         static_cast<int>(fox_integer("SELECT max(uid) FROM messages"));
-    expect(test, move(test, uid_vec(last - 20, 21), 1), "(21 : nat64)");
+    expect(test, move(test, uid_vec(last - 20, 21), 1), "21 : nat64,");
     CALL(test, dev_seed, "(\"vixen\", 1, 21)", CONTROLLER);
     expect(
         test,
         CALL(test, mail_move, "(\"vixen\", " + uid_vec(1, 21) + ", 1)", USER_A),
-        "(21 : nat64)");
+        "21 : nat64,");
     later_by_days(31);
     move(test, "vec {}", 1);
     CALL(test, mail_move, "(\"vixen\", vec {}, 1)", USER_A);
@@ -505,8 +563,13 @@ void test_folders(MockIC &mock_ic) {
 
   {
     const std::string test = "a blocked address is kept in lower case";
-    CALL(test, mail_block, "(\"fox\", \"Spammer@Example.COM\")", USER_A);
-    CALL(test, mail_block, "(\"fox\", \"spammer@example.com\")", USER_A);
+    expect(test,
+           CALL(test, mail_block, "(\"fox\", \"Spammer@Example.COM\")", USER_A),
+           "(true)");
+    // Blocked already
+    expect(test,
+           CALL(test, mail_block, "(\"fox\", \"spammer@example.com\")", USER_A),
+           "(false)");
     const std::string list = CALL(test, mail_blocked, "(\"fox\")", USER_A);
     expect(test, list, "address = \"spammer@example.com\"");
     expect(test, list, "blocked_by = principal \"" + USER_A + "\"");
@@ -526,23 +589,64 @@ void test_folders(MockIC &mock_ic) {
         USER_B, "no such mailbox for this principal");
   {
     const std::string test = "an unblocked address is off the list";
-    CALL(test, mail_unblock, "(\"fox\", \"SPAMMER@example.com\")", USER_A);
-    CALL(test, mail_unblock, "(\"fox\", \"spammer@example.com\")", USER_A);
+    expect(
+        test,
+        CALL(test, mail_unblock, "(\"fox\", \"SPAMMER@example.com\")", USER_A),
+        "(true)");
+    // Unblocked already: the write is rolled back, never committed
+    db::fail_statements("UPDATE counters SET message_count");
+    expect(
+        test,
+        CALL(test, mail_unblock, "(\"fox\", \"spammer@example.com\")", USER_A),
+        "(false)");
+    check(test, db::fail_statements("") == 0,
+          "an unblock that changed nothing committed its write");
     expect(test, CALL(test, mail_blocked, "(\"fox\")", USER_A), "(vec {})");
   }
   {
-    const std::string test = "the blocked list holds 1000 addresses";
+    const std::string test = "at 1000 addresses a new block replaces the "
+                             "oldest";
     CALL(test, dev_file_exec,
          "(\"fox\", \"WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 "
          "FROM c WHERE x < 1000) INSERT INTO blocked SELECT 'a' || x || "
-         "'@example.com', 'p', 0 FROM c\")",
+         "'@example.com', 'aaaaa-aa', x FROM c\")",
          CONTROLLER);
-    TRAPS("a full list takes no more", mail_block,
-          "(\"fox\", \"more@example.com\")", USER_A,
-          "the mailbox blocks 1000 addresses already");
     // An address on it already is no change
-    CALL(test, mail_block, "(\"fox\", \"a7@example.com\")", USER_A);
-    CALL(test, mail_unblock, "(\"fox\", \"a7@example.com\")", USER_A);
-    CALL(test, mail_block, "(\"fox\", \"more@example.com\")", USER_A);
+    expect(test,
+           CALL(test, mail_block, "(\"fox\", \"a7@example.com\")", USER_A),
+           "(false)");
+    expect(test,
+           CALL(test, mail_block, "(\"fox\", \"more@example.com\")", USER_A),
+           "(true)");
+    const std::string list = CALL(test, mail_blocked, "(\"fox\")", USER_A);
+    check(test, count(list, "address = ") == 1000, "not 1000 addresses");
+    expect(test, list, "\"more@example.com\"");
+    expect(test, list, "\"a2@example.com\"");
+    expect_not(test, list, "\"a1@example.com\"");
+  }
+  {
+    const std::string test = "a blocked list that cannot be read is not "
+                             "answered";
+    CALL(test, dev_file_exec,
+         "(\"fox\", \"ALTER TABLE blocked RENAME TO kept\")", CONTROLLER);
+    TRAPS("a blocked list with no table", mail_blocked, "(\"fox\")", USER_A,
+          "the blocked list cannot be read");
+    // One that fails after its first rows, as a damaged page would: the
+    // index gives the rows in the list's order, newest first, with no sort,
+    // so 999 come back before the oldest, a2, fails
+    CALL(test, dev_file_exec,
+         "(\"fox\", \"CREATE INDEX by_time ON kept(at_ns DESC, address); "
+         "CREATE VIEW blocked AS SELECT address, CASE address WHEN "
+         "'a2@example.com' THEN abs(-9223372036854775807 - 1) ELSE "
+         "blocked_by END AS blocked_by, at_ns FROM kept\")",
+         CONTROLLER);
+    TRAPS("a blocked list that fails partway", mail_blocked, "(\"fox\")",
+          USER_A, "the blocked list cannot be read");
+    CALL(test, dev_file_exec,
+         "(\"fox\", \"DROP VIEW blocked; DROP INDEX by_time; ALTER TABLE kept "
+         "RENAME TO blocked\")",
+         CONTROLLER);
+    expect(test, CALL(test, mail_blocked, "(\"fox\")", USER_A),
+           "\"more@example.com\"");
   }
 }

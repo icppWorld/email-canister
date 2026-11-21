@@ -199,9 +199,8 @@ bool add_unseen(int64_t mailbox, int64_t unseen) {
 
 namespace store {
 
-static int64_t file_messages(const Mailbox &box,
-                             const std::vector<uint64_t> &uids, int64_t folder,
-                             int64_t now_ns);
+static bool file_messages(const Mailbox &box, const std::vector<uint64_t> &uids,
+                          int64_t folder, int64_t now_ns, Moved &done);
 
 std::string domain() {
   db::Stmt select(db::control(),
@@ -284,15 +283,17 @@ bool process(int64_t mailbox, int64_t id) {
   if (box.file == nullptr) return false;
   int64_t folder = Inbox;
   int64_t uid = 0;
+  bool put_back = false; // in the Inbox by a member's move
   {
-    db::Stmt state(box.file,
-                   "SELECT state, folder, uid FROM messages WHERE id = ?");
+    db::Stmt state(box.file, "SELECT state, folder, uid, folder_ns "
+                             "FROM messages WHERE id = ?");
     if (!state) return false;
     if (!state.integer(1, id).row())
       return !state.failed(); // deleted since it was claimed
     if (state.column_integer(0) != Queued) return true;
     folder = state.column_integer(1);
     uid = state.column_integer(2);
+    put_back = state.column_integer(3) != 0;
   }
   int64_t attempts = 1;
   {
@@ -335,9 +336,10 @@ bool process(int64_t mailbox, int64_t id) {
   const int64_t attachments = summary.attachments;
   mime_summary_free(&summary);
   // Mail from a blocked From address goes to Spam, as the move sends mail
-  // from a blocked envelope sender there
+  // from a blocked envelope sender there, unless a member put it in the
+  // Inbox: a parse after Not spam must not undo it
   std::optional<bool> spam = false;
-  if (folder == Inbox) spam = is_blocked(box.file, sender_address);
+  if (folder == Inbox && !put_back) spam = is_blocked(box.file, sender_address);
   if (!spam) return false;
 
   MailboxWrite write(box);
@@ -371,9 +373,10 @@ bool process(int64_t mailbox, int64_t id) {
                 .done() &&
             count.integer(1, mailbox).done();
   // Mail that arrived more than 30 days ago is deleted instead
+  Moved filed;
   if (ok && *spam)
     ok = file_messages(box, {static_cast<uint64_t>(uid)}, Spam,
-                       static_cast<int64_t>(IC_API::time())) >= 0;
+                       static_cast<int64_t>(IC_API::time()), filed);
   return ok && write.commit();
 }
 
@@ -413,18 +416,19 @@ IngestStats ingest_stats() {
   return stats;
 }
 
+// The Inbox and the mail out of it each have an index, which a query uses
+// only when it repeats the index's condition
+const char *const k_list_inbox =
+    "SELECT " SUMMARY_COLUMNS " FROM messages WHERE folder = 0 AND "
+    "folder = ?1 AND uid < ?2 ORDER BY uid DESC LIMIT ?3";
+const char *const k_list_filed =
+    "SELECT " SUMMARY_COLUMNS " FROM messages WHERE folder != 0 AND "
+    "folder = ?1 AND uid < ?2 ORDER BY uid DESC LIMIT ?3";
+
 Page list_messages(const Mailbox &box, int64_t folder,
                    std::optional<int64_t> cursor, int64_t limit) {
   Page page;
-  // The mail out of the Inbox has an index, which a query uses only when it
-  // repeats the index's condition
-  db::Stmt select(box.file,
-                  folder == Inbox
-                      ? "SELECT " SUMMARY_COLUMNS " FROM messages WHERE "
-                        "folder = ?1 AND uid < ?2 ORDER BY uid DESC LIMIT ?3"
-                      : "SELECT " SUMMARY_COLUMNS " FROM messages WHERE "
-                        "folder != 0 AND folder = ?1 AND uid < ?2 "
-                        "ORDER BY uid DESC LIMIT ?3");
+  db::Stmt select(box.file, folder == Inbox ? k_list_inbox : k_list_filed);
   if (!select) return page;
   select.integer(1, folder)
       .integer(2, cursor.value_or(std::numeric_limits<int64_t>::max()))
@@ -671,23 +675,22 @@ bool clean_expired(int64_t mailbox, int64_t now_ns) {
 }
 
 // Puts the messages in `folder`, in the caller's write. Mail that arrived more
-// than 30 days ago is deleted instead of going to Spam. Returns how many
-// moved, or -1.
-static int64_t file_messages(const Mailbox &box,
-                             const std::vector<uint64_t> &uids, int64_t folder,
-                             int64_t now_ns) {
+// than 30 days ago is deleted instead of going to Spam. Adds the uids to
+// `done`. False on failure.
+static bool file_messages(const Mailbox &box, const std::vector<uint64_t> &uids,
+                          int64_t folder, int64_t now_ns, Moved &done) {
   db::Stmt find(
       box.file,
       "SELECT folder, flags, received_ns FROM messages WHERE uid = ?");
   // Spam's 30 days count from the message's arrival, Trash's from when it
-  // left the Inbox, so a move from Spam to Trash keeps its time
+  // left the Inbox, so a move from Spam to Trash keeps its time. In the Inbox
+  // it marks mail a member put there, which the parse leaves there.
   db::Stmt update(box.file, "UPDATE messages SET folder = ?1, folder_ns = CASE "
-                            "WHEN ?1 = 0 THEN 0 WHEN ?1 = 2 THEN received_ns "
+                            "WHEN ?1 = 0 THEN ?2 WHEN ?1 = 2 THEN received_ns "
                             "WHEN folder = 0 THEN ?2 ELSE folder_ns "
                             "END, modseq = ?3 WHERE uid = ?4");
   std::vector<uint64_t> expired;
   int64_t modseq = 0; // taken at the first move
-  int64_t moved = 0;
   int64_t unseen = 0;
   bool ok = find && update;
   for (size_t i = 0; ok && i < uids.size(); ++i) {
@@ -703,7 +706,9 @@ static int64_t file_messages(const Mailbox &box,
     find.reset();
     if (from == folder) continue;
     if (folder == Spam && received_ns < now_ns - k_keep_filed_ns) {
-      expired.push_back(uids[i]);
+      // A uid named twice is deleted, and reported, once
+      if (std::find(expired.begin(), expired.end(), uids[i]) == expired.end())
+        expired.push_back(uids[i]);
       continue;
     }
     if (modseq == 0) modseq = next_modseq(box.id);
@@ -714,22 +719,21 @@ static int64_t file_messages(const Mailbox &box,
                            .integer(3, modseq)
                            .integer(4, uid)
                            .done();
-    ++moved;
+    done.moved.push_back(uids[i]);
   }
   ok = ok && add_unseen(box.id, unseen) &&
        (expired.empty() || remove_messages(box, expired) >= 0);
-  return ok ? moved : -1;
+  done.deleted.insert(done.deleted.end(), expired.begin(), expired.end());
+  return ok;
 }
 
-int64_t move_messages(const Mailbox &box, const std::vector<uint64_t> &uids,
-                      int64_t folder, int64_t now_ns) {
+bool move_messages(const Mailbox &box, const std::vector<uint64_t> &uids,
+                   int64_t folder, int64_t now_ns, Moved &done) {
   MailboxWrite write(box);
-  if (!write) return -1;
   // Expired mail the cleanup has not reached is still listed, and moves like
   // any other: the pump deletes the rest in a write of its own
-  const int64_t moved = file_messages(box, uids, folder, now_ns);
-  if (moved < 0 || !clean_if_expired(box, now_ns)) return -1;
-  return write.commit() ? moved : -1;
+  return write && file_messages(box, uids, folder, now_ns, done) &&
+         clean_if_expired(box, now_ns) && write.commit();
 }
 
 Page search(const Mailbox &box, int64_t folder, const std::string &query,
@@ -767,43 +771,49 @@ Page search(const Mailbox &box, int64_t folder, const std::string &query,
   return page;
 }
 
-Block block(const Mailbox &box, const std::string &address,
-            const std::string &principal, int64_t now_ns) {
+std::optional<bool> block(const Mailbox &box, const std::string &address,
+                          const std::string &principal, int64_t now_ns) {
   MailboxWrite write(box);
-  if (!write) return Block::Failed;
+  if (!write) return std::nullopt;
+  int64_t over = 0; // the oldest blocks that make room
   {
     db::Stmt count(box.file, "SELECT count(*), EXISTS(SELECT 1 FROM blocked "
                              "WHERE address = ?) FROM blocked");
-    if (!count || !count.text(1, address).row()) return Block::Failed;
-    if (count.column_integer(1) != 0) return Block::Done;
-    if (count.column_integer(0) >= k_max_blocked) return Block::Full;
+    if (!count || !count.text(1, address).row()) return std::nullopt;
+    if (count.column_integer(1) != 0) return false;
+    over = count.column_integer(0) - k_max_blocked + 1;
   }
+  db::Stmt oldest(box.file, "DELETE FROM blocked WHERE address IN (SELECT "
+                            "address FROM blocked ORDER BY at_ns, address "
+                            "LIMIT ?)");
   db::Stmt insert(box.file, "INSERT INTO blocked(address, blocked_by, at_ns) "
                             "VALUES(?, ?, ?)");
-  return insert &&
-                 insert.text(1, address)
-                     .text(2, principal)
-                     .integer(3, now_ns)
-                     .done() &&
-                 write.commit()
-             ? Block::Done
-             : Block::Failed;
+  if (!oldest || !insert || (over > 0 && !oldest.integer(1, over).done()) ||
+      !insert.text(1, address).text(2, principal).integer(3, now_ns).done() ||
+      !write.commit()) {
+    return std::nullopt;
+  }
+  return true;
 }
 
-bool unblock(const Mailbox &box, const std::string &address) {
+std::optional<bool> unblock(const Mailbox &box, const std::string &address) {
   MailboxWrite write(box);
   db::Stmt remove(box.file, "DELETE FROM blocked WHERE address = ?");
-  return write && remove && remove.text(1, address).done() && write.commit();
+  if (!write || !remove || !remove.text(1, address).done()) return std::nullopt;
+  if (db::changes(box.file) == 0) return false; // rolled back: nothing changed
+  if (!write.commit()) return std::nullopt;
+  return true;
 }
 
-std::vector<Blocked> blocked(const Mailbox &box) {
-  std::vector<Blocked> found;
+std::optional<std::vector<Blocked>> blocked(const Mailbox &box) {
   db::Stmt select(box.file, "SELECT address, blocked_by, at_ns FROM blocked "
                             "ORDER BY at_ns DESC, address");
-  if (!select) return found;
+  if (!select) return std::nullopt;
+  std::vector<Blocked> found;
   while (select.row())
     found.push_back({select.column_text(0), select.column_text(1),
                      select.column_integer(2)});
+  if (select.failed()) return std::nullopt;
   return found;
 }
 

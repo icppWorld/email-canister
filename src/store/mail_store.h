@@ -90,6 +90,8 @@ struct Page {
 
 Page list_messages(const Mailbox &box, int64_t folder,
                    std::optional<int64_t> cursor, int64_t limit);
+// list_messages' query of the Inbox, so that a test can check its plan
+extern const char *const k_list_inbox;
 bool get_message(const Mailbox &box, int64_t uid, Summary &summary,
                  std::vector<uint8_t> &raw);
 // Sets the flags in `set` and clears those in `clear` on each message, so
@@ -112,12 +114,18 @@ std::vector<SeenBy> seen_by(const Mailbox &box, int64_t uid);
 int64_t delete_messages(const Mailbox &box, const std::vector<uint64_t> &uids,
                         int64_t folder);
 
+// What a move did: the uids it moved, and the ones it deleted instead. A uid
+// in neither was not there, or was in the folder already.
+struct Moved {
+  std::vector<uint64_t> moved;
+  std::vector<uint64_t> deleted;
+};
 // Moves the messages to `folder`, and marks the mailbox for a cleanup when it
 // holds expired mail. Mail that arrived more than 30 days ago is deleted
-// instead of going to Spam, and does not count. Returns how many moved, or -1
-// on failure.
-int64_t move_messages(const Mailbox &box, const std::vector<uint64_t> &uids,
-                      int64_t folder, int64_t now_ns);
+// instead of going to Spam. Fills `done`; false on failure, when nothing
+// changed.
+bool move_messages(const Mailbox &box, const std::vector<uint64_t> &uids,
+                   int64_t folder, int64_t now_ns, Moved &done);
 
 // Mail in Trash is deleted 30 days after it left the Inbox, and mail in Spam
 // 30 days after it arrived, by turns of the ingest pump, each a write of its
@@ -152,17 +160,20 @@ Page search(const Mailbox &box, int64_t folder, const std::string &query,
 // Senders whose mail goes to Spam, by envelope sender or From address. The
 // addresses are in lower case.
 const int64_t k_max_blocked = 1000;
-enum class Block { Done, Full, Failed };
-Block block(const Mailbox &box, const std::string &address,
-            const std::string &principal, int64_t now_ns);
-// False when the write failed; an address not blocked is no failure
-bool unblock(const Mailbox &box, const std::string &address);
+// True when this call blocked the address, false when it was blocked
+// already, nullopt on failure. At k_max_blocked addresses the oldest block
+// makes room, so that marking mail as Spam never fails for lack of it.
+std::optional<bool> block(const Mailbox &box, const std::string &address,
+                          const std::string &principal, int64_t now_ns);
+// True when the address was blocked, nullopt on failure
+std::optional<bool> unblock(const Mailbox &box, const std::string &address);
 struct Blocked {
   std::string address;
   std::string blocked_by;
   int64_t at_ns{0};
 };
-std::vector<Blocked> blocked(const Mailbox &box);
+// The list, newest first; nullopt when it cannot be read
+std::optional<std::vector<Blocked>> blocked(const Mailbox &box);
 // Whether mail from `address` goes to Spam; nullopt when that cannot be read
 std::optional<bool> is_blocked(sqlite3 *file, const std::string &address);
 

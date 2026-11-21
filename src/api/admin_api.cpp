@@ -25,8 +25,10 @@ int64_t g_mailbox_cap = 100;
 int64_t g_backlog_cap = 1000;
 int64_t g_dedupe_window_ns = 7LL * 24 * 3600 * 1'000'000'000;
 const uint64_t k_default_quota_bytes = 2ULL * 1024 * 1024 * 1024;
-// The store keeps a quota as a signed 64-bit number
-const uint64_t k_max_quota_bytes = std::numeric_limits<int64_t>::max();
+// A file of small mail is about 1.4 times the bytes its quota counts, so this
+// quota fills a file of about 6 GB, on which a schema step that builds an index
+// still fits in one call: the Inbox's index of step 4 builds about 7.7 GB
+const uint64_t k_max_quota_bytes = 4ULL * 1024 * 1024 * 1024;
 
 void require_controller(IC_API &ic_api) {
   CandidTypePrincipal caller = ic_api.get_caller();
@@ -660,7 +662,8 @@ void dev_fail_statements() {
       CandidTypeNat64{static_cast<uint64_t>(db::fail_statements(sql))});
 }
 
-// Runs SQL on a mailbox's file, around the registry, as a fault would
+// Runs SQL on a mailbox's file, around the registry, as a fault would, or
+// as a schema step does, to measure it
 void dev_file_exec() {
   IC_API ic_api(CanisterUpdate{std::string(__func__)}, false);
   require_controller(ic_api);
@@ -673,6 +676,7 @@ void dev_file_exec() {
   const std::string error =
       db::exec_in_mailbox(require_test_entry(local).id, sql);
   if (!error.empty()) IC_API::trap(error);
+  dev_record_cost(__func__);
   ic_api.to_wire();
 }
 

@@ -88,9 +88,9 @@ void test_admin(MockIC &mock_ic) {
     expect_not(test, me, "local = \"alice\"");
   }
   {
-    // One more than the store can hold, which it would keep as negative
-    const std::string test = "a quota the store cannot hold is refused";
-    const std::string too_large = "9_223_372_036_854_775_808";
+    // A file larger than a schema step's index build fits in one call
+    const std::string test = "a quota above 4 GiB is refused";
+    const std::string too_large = "4_294_967_297";
     TRAPS(test, admin_create_mailbox,
           "(record { local = \"huge\"; quota_bytes = opt " + too_large +
               "; first_member = null })",
@@ -99,6 +99,13 @@ void test_admin(MockIC &mock_ic) {
                "local = \"huge\"");
     TRAPS(test, admin_set_quota, "(\"alice\", " + too_large + ")", CONTROLLER,
           "quota too large");
+    // One more than the store can hold, which it would keep as negative
+    TRAPS(test, admin_set_quota, "(\"alice\", 9_223_372_036_854_775_808)",
+          CONTROLLER, "quota too large");
+    CALL(test, admin_set_quota, "(\"alice\", 4_294_967_296)", CONTROLLER);
+    expect(test, CALL(test, admin_list_entries, "()", CONTROLLER),
+           "quota_bytes = 4_294_967_296");
+    CALL(test, admin_set_quota, "(\"alice\", 2_147_483_648)", CONTROLLER);
   }
   TRAPS("an invalid address is refused", admin_create_mailbox,
         "(record { local = \"a b\"; quota_bytes = null; first_member = null })",

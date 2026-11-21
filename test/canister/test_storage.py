@@ -4,11 +4,14 @@ $ make build-test
 $ icp network start -d
 $ pytest --network=local --identity=$TEST_IDENTITY test/canister/test_storage.py
 
-Reinstalls the email-canister-test canister, which erases its mail.
+Reinstalls the email-canister-test canister, which erases its mail. With
+MEASURE=1, the build of the Inbox's index is measured on a mailbox of about
+100 MB.
 """
 
 # pylint: disable=missing-function-docstring, redefined-outer-name, unused-argument
 
+import os
 import re
 import time
 from typing import Optional
@@ -19,6 +22,7 @@ from .support import (
     CANISTER_NAME,
     DOMAIN,
     OK,
+    ROOT,
     add_mailbox,
     call,
     clean_due,
@@ -35,6 +39,7 @@ from .support import (
     wait_until,
     wait_until_drained,
 )
+from .test_mailbox import seed
 
 WEEK_NS = 7 * 24 * 3600 * 1_000_000_000
 
@@ -296,3 +301,31 @@ def test__an_upgrade_picks_up_a_cleanup_due(identity: str) -> None:
     assert clean_due("bob")
     assert upgrade(identity) == ""
     wait_until(lambda: not clean_due("bob"), "bob's cleanup after the upgrade")
+
+
+def test__the_inbox_index_of_a_full_file_builds_in_one_call() -> None:
+    # Mailbox schema step 4 builds messages_inbox over a whole file in one
+    # call of the pump, so a file of small seeded mail must fit
+    step = re.search(
+        r"CREATE INDEX messages_inbox [^;]*;",
+        (ROOT / "src" / "store" / "db.cpp").read_text(),
+    )
+    assert step, "no step builds messages_inbox"
+    add_mailbox("dense", fake_principal(7))
+    before = database_bytes()
+    seed("dense", 100_000 if os.environ.get("MEASURE") == "1" else 10_000)
+    file_bytes = database_bytes() - before
+    output = call("dev_file_exec", '("dense", "DROP INDEX messages_inbox")')
+    assert "Failed" not in output, output
+    output = call("dev_file_exec", f'("dense", "{step.group(0)}")')
+    assert "Failed" not in output, output
+    spent = cost("dev_file_exec")
+    per_mb = spent / (file_bytes / 1e6)
+    print(
+        f"messages_inbox built on {file_bytes / 1e6:.0f} MB: {spent:,} "
+        f"instructions, {per_mb:,.0f} per MB, so about "
+        f"{40e9 / per_mb / 1e3:.1f} GB in one call"
+    )
+    # A file of small mail is about 1.4 times the bytes its quota counts, so
+    # the largest quota, 4 GiB, makes a file of about 6 GB, which must fit
+    assert per_mb * 6_000 < 40e9, f"{per_mb:,.0f} instructions per MB"

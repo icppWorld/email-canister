@@ -174,11 +174,11 @@ export const idlFactory: IDL.InterfaceFactory = ({ IDL }) => {
     ),
     mail_move: IDL.Func(
       [IDL.Text, IDL.Vec(IDL.Nat64), IDL.Nat64],
-      [IDL.Nat64],
+      [IDL.Nat64, IDL.Vec(IDL.Nat64), IDL.Vec(IDL.Nat64)],
       []
     ),
-    mail_block: IDL.Func([IDL.Text, IDL.Text], [], []),
-    mail_unblock: IDL.Func([IDL.Text, IDL.Text], [], []),
+    mail_block: IDL.Func([IDL.Text, IDL.Text], [IDL.Bool], []),
+    mail_unblock: IDL.Func([IDL.Text, IDL.Text], [IDL.Bool], []),
     mail_blocked: IDL.Func([IDL.Text], [IDL.Vec(Blocked)], ['query']),
     mail_send: IDL.Func([IDL.Text, SendRequest], [IDL.Nat64], []),
     mail_outbox_list: IDL.Func(
