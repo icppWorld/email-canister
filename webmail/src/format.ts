@@ -1,3 +1,30 @@
+// "Message", "this message" or "3 messages": `one` says a single one, and
+// `noun` more than one
+export const messages = (count: number, one: string, noun = 'messages') =>
+  count === 1 ? one : `${count} ${noun}`
+
+export const was = (count: number) => (count === 1 ? 'was' : 'were')
+
+// "was no longer here", of mail another member moved or deleted first
+export const noLongerHere = (count: number) => `${was(count)} no longer here`
+
+// A note of what was done to messages, in parts of a count and what happened
+// to that many, leaving out a count of none. The first part names the
+// messages, as `one` and `noun` say them; the others give only the number.
+export function noteOf(
+  parts: [count: number, what: string][],
+  one: string,
+  noun?: string
+): string {
+  return parts
+    .filter(([count]) => count > 0)
+    .map(
+      ([count, what], i) =>
+        `${i === 0 ? messages(count, one, noun) : count} ${what}`
+    )
+    .join('. ')
+}
+
 export function formatBytes(bytes: bigint): string {
   const n = Number(bytes)
   if (n >= 1024 ** 3) return `${(n / 1024 ** 3).toFixed(1)} GB`

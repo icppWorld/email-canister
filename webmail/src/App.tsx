@@ -14,6 +14,7 @@ import { Inbox, isFolder } from './Inbox'
 import { Menu } from './Menu'
 import { Sent } from './Sent'
 import { deployment } from './settings'
+import { store, stored } from './storage'
 import {
   ToastBar,
   type ShownToast,
@@ -51,22 +52,11 @@ function hashOf(local: string, view: Page): string {
   return `#${local}${view === 'inbox' ? '' : `/${view}`}`
 }
 
-// The mailbox a person last chose, kept in this browser only
-function remembered(principal: string): string | null {
-  try {
-    return window.localStorage.getItem(`mailbox:${principal}`)
-  } catch {
-    return null
-  }
-}
-
-function remember(principal: string, local: string): void {
-  try {
-    window.localStorage.setItem(`mailbox:${principal}`, local)
-  } catch {
-    // Not kept: the first mailbox opens next time
-  }
-}
+// The mailbox a person last chose, kept in this browser only: without it,
+// the first mailbox opens
+const remembered = (principal: string) => stored(`mailbox:${principal}`)
+const remember = (principal: string, local: string) =>
+  store(`mailbox:${principal}`, local)
 
 // The light and dark versions swap with the system setting, without script
 function Logo({ large = false }: { large?: boolean }) {
@@ -421,16 +411,14 @@ export function App() {
         >
           Inbox
         </button>
-        <button
+        <IconButton
           className={refreshing ? 'refresh spinning' : 'refresh'}
-          aria-label="Refresh"
+          label="Refresh"
+          icon="refresh"
           aria-busy={refreshing}
-          title="Refresh"
           disabled={refreshing}
           onClick={refreshInbox}
-        >
-          <Icon name="refresh" />
-        </button>
+        />
       </div>
       {(Object.keys(PAGES) as Page[])
         // Blocked senders is in the menu

@@ -22,20 +22,26 @@ import {
   type Summary,
 } from './api'
 import type { Draft } from './Compose'
-import { formatNs, formatTime, memberName } from './format'
+import { attempt, BATCH, inBatches } from './batch'
+import {
+  formatNs,
+  formatTime,
+  memberName,
+  messages,
+  noLongerHere,
+  noteOf,
+} from './format'
 import { Icon, type IconName } from './Icon'
 import { MessageBody } from './MessageBody'
 import { deliveredVia, parseMail, saveFile, type ParsedMail } from './mime'
 import { BackButton, IconButton, StarButton } from './Buttons'
-import { Bulk } from './Bulk'
+import { Bulk, RowPick, useTicks } from './Bulk'
 import { Menu } from './Menu'
-import { Splitter, useListWidth } from './Splitter'
+import { Split } from './Splitter'
 import type { Toast, ToastAction } from './Toast'
 
 const PAGE_SIZE = 50n
 const REFRESH_MS = 20_000
-// The most messages the canister lists, flags, moves or deletes in one call
-const BATCH = 100
 // A search page can come back empty with a cursor, when the canister's budget
 // ran out before a match: a load reads on by itself up to this many pages
 const SEARCH_CALLS = 5
@@ -69,36 +75,6 @@ type MoreAction = {
   run: (sender: string) => Promise<unknown>
 }
 
-// Runs an action, showing a refusal with onError. A new action clears the
-// refusal shown before, and keeps one its own work shows.
-async function attempt(
-  run: () => Promise<unknown>,
-  onError: (text: string) => void
-): Promise<void> {
-  onError('')
-  try {
-    await run()
-  } catch (e) {
-    onError(errorText(e))
-  }
-}
-
-// A call for many messages, in parts the canister takes. Returns the uids it
-// got through, and the refusal that stopped it.
-async function inBatches(
-  uids: bigint[],
-  call: (part: bigint[]) => Promise<unknown>
-): Promise<{ done: bigint[]; error?: unknown }> {
-  for (let at = 0; at < uids.length; at += BATCH) {
-    try {
-      await call(uids.slice(at, at + BATCH))
-    } catch (error) {
-      return { done: uids.slice(0, at), error }
-    }
-  }
-  return { done: uids }
-}
-
 // What a move did, as the canister replied: the uids it moved, how many it
 // deleted for good instead (mail moved into Spam more than 30 days after it
 // arrived), and how many it did neither to, being no longer in the folder, as
@@ -123,10 +99,6 @@ async function moveAll(
   return { done, result: { moved, deleted, gone }, error }
 }
 
-// "Message", "this message" or "3 messages"
-const messages = (count: number, one: string) =>
-  count === 1 ? one : `${count} messages`
-
 // The flags that star a message, or take its star off
 const starring = (flags: bigint): [bigint, bigint] =>
   flags & FLAG_FLAGGED ? [0n, FLAG_FLAGGED] : [FLAG_FLAGGED, 0n]
@@ -137,24 +109,18 @@ function movedText(
   to: string,
   also: string
 ): string {
-  const parts: string[] = []
-  // The first part says "Message" or "3 messages", the others only the number
-  const many = (n: number) =>
-    parts.length === 0 ? messages(n, 'Message') : `${n}`
-  if (moved.length > 0) {
-    parts.push(`${many(moved.length)} moved to ${to}${also && ` and ${also}`}`)
-  }
-  if (deleted > 0) {
-    const they = deleted === 1 ? 'it' : 'they'
-    parts.push(
-      `${many(deleted)} deleted for good: ${they} arrived more than 30 days ago`
-    )
-  }
-  if (gone > 0) {
-    parts.push(`${many(gone)} ${gone === 1 ? 'was' : 'were'} no longer here`)
-  }
-  if (also && moved.length === 0) parts.push(also)
-  return parts.join('. ')
+  const they = deleted === 1 ? 'it' : 'they'
+  const text = noteOf(
+    [
+      [moved.length, `moved to ${to}${also && ` and ${also}`}`],
+      [deleted, `deleted for good: ${they} arrived more than 30 days ago`],
+      [gone, noLongerHere(gone)],
+    ],
+    'Message'
+  )
+  return also && moved.length === 0
+    ? [text, also].filter(Boolean).join('. ')
+    : text
 }
 
 // Brings messages back to the folder they left, then puts back the blocks that
@@ -162,21 +128,18 @@ function movedText(
 // moved leaves all as it was, so the same Undo can be tried again; after
 // that, the note says what was done and what was not. Mail moved back into
 // Spam more than 30 days after it arrived is deleted instead, which the note
-// says. Without messages it changes only the blocks, under a label that
-// promises no mail. Made here, so the toast holds only what it needs.
+// says. Without messages it changes only the blocks, and the caller gives it
+// a label that promises no mail. Made here, so the toast holds only what it
+// needs.
 function undo(
   backend: Mailbox,
   uids: bigint[],
   from: Folder,
-  { block = [], unblock = [] }: { block?: string[]; unblock?: string[] } = {},
-  { label, icon }: { label: string; icon: IconName } = {
-    label: 'Undo',
-    icon: 'undo',
-  }
+  { block = [], unblock = [] }: { block?: string[]; unblock?: string[] } = {}
 ): ToastAction {
   return {
-    label,
-    icon,
+    label: 'Undo',
+    icon: 'undo',
     reload: true,
     run: async () => {
       const { done, result, error } = await moveAll(backend, uids, from)
@@ -575,7 +538,7 @@ export function Inbox({
   })
   const [selected, setSelected] = useState<Summary | null>(null)
   // The messages ticked for an action on all of them
-  const [checked, setChecked] = useState<ReadonlySet<bigint>>(new Set())
+  const ticks = useTicks(items.map((m) => m.uid))
   const [query, setQuery] = useState('')
   const [activeQuery, setActiveQuery] = useState('')
   // The search shown now, for a reload by work that began under another
@@ -586,7 +549,6 @@ export function Inbox({
   // Flags set and mail moved here, which a reply read before them would undo
   const changes = useRef(0)
   const olderShown = useRef(false)
-  const listWidth = useListWidth()
   const touched = useRef(new Map<bigint, bigint>())
 
   const load = useCallback(
@@ -666,7 +628,7 @@ export function Inbox({
     changes.current++
     const gone = new Set(uids)
     setItems((previous) => previous.filter((m) => !gone.has(m.uid)))
-    setChecked((ticked) => new Set([...ticked].filter((uid) => !gone.has(uid))))
+    ticks.untick(gone)
     setSelected((previous) =>
       previous && gone.has(previous.uid) ? null : previous
     )
@@ -765,10 +727,10 @@ export function Inbox({
       if (result.moved.length > 0) {
         actions = [undo(backend, result.moved, folder, changes)]
       } else if (changed.length > 0) {
-        const named = spam
-          ? ({ label: 'Unblock', icon: 'unblock' } as const)
-          : ({ label: 'Block again', icon: 'block' } as const)
-        actions = [undo(backend, [], folder, changes, named)]
+        const named: Pick<ToastAction, 'label' | 'icon'> = spam
+          ? { label: 'Unblock', icon: 'unblock' }
+          : { label: 'Block again', icon: 'block' }
+        actions = [{ ...undo(backend, [], folder, changes), ...named }]
       }
       notify({ text, actions })
     }
@@ -919,15 +881,6 @@ export function Inbox({
   const bulkActions =
     folder === 'inbox' ? [toTrash, toSpam, markRead, markUnread] : actions
 
-  const tick = (uid: bigint, on: boolean) =>
-    setChecked((ticked) => {
-      const next = new Set(ticked)
-      if (on) next.add(uid)
-      else next.delete(uid)
-      return next
-    })
-  const ticked = items.filter((m) => checked.has(m.uid)).map((m) => m.uid)
-
   // Only the search shown now goes on, from where its own pages ended
   const cursor: [] | [bigint] = more.search === activeQuery ? more.cursor : []
   // A search with a cursor left, or whose first page is on its way, has not
@@ -942,10 +895,7 @@ export function Inbox({
   }
 
   return (
-    <div
-      className={selected ? 'split reading' : 'split'}
-      style={listWidth.style}
-    >
+    <Split reading={selected !== null}>
       <section className="list" aria-label="Messages">
         <div className="list-head">
           <form
@@ -990,19 +940,17 @@ export function Inbox({
           )}
           {items.length > 0 && (
             <Bulk
-              ticked={ticked.length}
-              total={items.length}
-              onAll={(all) =>
-                setChecked(new Set(all ? items.map((m) => m.uid) : []))
-              }
+              ticks={ticks}
               actions={bulkActions.map((action) => ({
                 ...action,
-                run: () => act(() => action.run(ticked)),
+                run: () => act(() => action.run(ticks.ticked)),
               }))}
               empty={
                 folder !== 'inbox' && !activeQuery
                   ? {
                       label: `Empty ${FOLDERS[folder].name}`,
+                      icon: 'trash',
+                      danger: true,
                       run: () => act(empty),
                     }
                   : undefined
@@ -1030,16 +978,7 @@ export function Inbox({
                 : actions
             return (
               <li key={m.uid.toString()} className="message-row">
-                {/* The label is the box's larger touch target */}
-                <label className="pick-area">
-                  <input
-                    type="checkbox"
-                    className="pick"
-                    aria-label={`Select ${title}`}
-                    checked={checked.has(m.uid)}
-                    onChange={(e) => tick(m.uid, e.target.checked)}
-                  />
-                </label>
+                <RowPick ticks={ticks} id={m.uid} name={title} />
                 <StarButton
                   flagged={flagged}
                   name={title}
@@ -1066,15 +1005,14 @@ export function Inbox({
                 {/* On hover, for a pointer; the boxes and the reader do the same */}
                 <span className="row-actions">
                   {rowActions.map((action) => (
-                    <button
+                    <IconButton
                       key={action.label}
-                      className="bare"
-                      aria-label={`${action.label}: ${title}`}
-                      title={action.label}
+                      variant="bare"
+                      label={action.label}
+                      name={title}
+                      icon={action.icon}
                       onClick={() => act(() => action.run([m.uid]))}
-                    >
-                      <Icon name={action.icon} />
-                    </button>
+                    />
                   ))}
                 </span>
               </li>
@@ -1090,7 +1028,6 @@ export function Inbox({
           />
         )}
       </section>
-      <Splitter width={listWidth.width} onChange={listWidth.change} />
       {selected ? (
         <Reader
           principal={principal}
@@ -1115,6 +1052,6 @@ export function Inbox({
       ) : (
         <div className="reader empty">Select a message to read it.</div>
       )}
-    </div>
+    </Split>
   )
 }

@@ -11,18 +11,18 @@ import {
   type OutboxMessage,
   type OutboxSummary,
 } from './api'
+import { attempt, BATCH, inBatches } from './batch'
 import { BackButton, IconButton } from './Buttons'
-import { Bulk } from './Bulk'
-import { memberName } from './format'
+import { Bulk, RowPick, useTicks } from './Bulk'
+import { memberName, messages, noLongerHere, noteOf, was } from './format'
 import { Icon } from './Icon'
 import { MessageBody } from './MessageBody'
 import { saveFile } from './mime'
-import { Splitter, useListWidth } from './Splitter'
+import { Split } from './Splitter'
 import type { Toast } from './Toast'
 
 const REFRESH_MS = 5_000
-// The most the canister lists, and deletes, in one call
-const LIST_MAX = 100n
+// The most sent messages the canister deletes in one call
 const DELETE_MAX = 200
 
 // What deletions did, as the canister replied: the mail it deleted, and of
@@ -30,22 +30,16 @@ const DELETE_MAX = 200
 // which was no longer there, as when another member deleted it
 type Deleted = { deleted: number; kept: number; gone: number }
 
-// One message, as the caller says it, or "3 sent messages"
-const sentMessages = (count: number, one: string) =>
-  count === 1 ? one : `${count} sent messages`
-
-function deletedText({ deleted, kept, gone }: Deleted): string {
-  const parts: string[] = []
-  // The first part says "1 sent message" or "3 sent messages", the others
-  // only the number
-  const many = (n: number) =>
-    parts.length === 0 ? sentMessages(n, '1 sent message') : `${n}`
-  const was = (n: number) => (n === 1 ? 'was' : 'were')
-  if (deleted > 0) parts.push(`${many(deleted)} deleted`)
-  if (kept > 0) parts.push(`${many(kept)} being sent ${was(kept)} kept`)
-  if (gone > 0) parts.push(`${many(gone)} ${was(gone)} no longer here`)
-  return parts.join('. ')
-}
+const deletedText = ({ deleted, kept, gone }: Deleted) =>
+  noteOf(
+    [
+      [deleted, 'deleted'],
+      [kept, `being sent ${was(kept)} kept`],
+      [gone, noLongerHere(gone)],
+    ],
+    '1 sent message',
+    'sent messages'
+  )
 
 // For good, in parts the canister takes, adding up what it did. `sending`
 // holds the ids the page listed as being sent.
@@ -55,16 +49,20 @@ async function deleteSent(
   sending: ReadonlySet<bigint>,
   done: Deleted
 ): Promise<void> {
-  for (let at = 0; at < ids.length; at += DELETE_MAX) {
-    const part = ids.slice(at, at + DELETE_MAX)
-    const deleted = new Set(await backend.mail_outbox_delete_many(part))
-    done.deleted += deleted.size
-    for (const id of part) {
-      if (deleted.has(id)) continue
-      if (sending.has(id)) done.kept++
-      else done.gone++
-    }
-  }
+  const { error } = await inBatches(
+    ids,
+    async (part) => {
+      const deleted = new Set(await backend.mail_outbox_delete_many(part))
+      done.deleted += deleted.size
+      for (const id of part) {
+        if (deleted.has(id)) continue
+        if (sending.has(id)) done.kept++
+        else done.gone++
+      }
+    },
+    DELETE_MAX
+  )
+  if (error) throw error
 }
 
 // The ids of the mail listed as being sent, or waiting to: mail that waited
@@ -251,10 +249,12 @@ export function Sent({
   const [items, setItems] = useState<OutboxSummary[]>([])
   const [cursor, setCursor] = useState<[] | [bigint]>([])
   const [selectedId, setSelectedId] = useState<bigint | null>(null)
-  // The messages ticked for an action on all of them
-  const [checked, setChecked] = useState<ReadonlySet<bigint>>(new Set())
+  // The messages ticked for an action on all of them. Mail being sent cannot
+  // be deleted, so it is not ticked.
+  const ticks = useTicks(
+    items.filter((m) => m.state !== OUTBOX_SENDING).map((m) => m.id)
+  )
   const [error, setError] = useState('')
-  const listWidth = useListWidth()
   // Replies can arrive out of order, and only the newest may be shown
   const latestLoad = useRef(0)
   const olderShown = useRef(false)
@@ -310,36 +310,38 @@ export function Sent({
     }
   }
 
-  // The messages given, or all of them page by page, for good once
-  // confirmed. Mail being sent is kept, as the canister replies. The note
-  // says what it did, also before a refusal, and the list loads again; the
-  // ticks of mail it deleted go with it, as an id is never used again.
+  // The messages given, or all of them, for good once confirmed. Mail being
+  // sent is kept, as the canister replies. The note says what it did, also
+  // before a refusal, and the list loads again; the ticks of mail it deleted
+  // go with it, as an id is never used again.
   const remove = async (ids: bigint[] | 'all') => {
     const asked =
       ids === 'all'
         ? 'Delete every message in Sent for good? Mail being sent is kept.'
-        : `Delete ${sentMessages(ids.length, 'this sent message')} for good?`
+        : `Delete ${messages(ids.length, 'this sent message', 'sent messages')} for good?`
     if (!window.confirm(asked)) return
     const done: Deleted = { deleted: 0, kept: 0, gone: 0 }
     try {
-      if (ids !== 'all') {
-        await deleteSent(backend, ids, sendingIn(items), done)
-      } else {
+      let listed = items
+      if (ids === 'all') {
+        // Every page first, then the deletes in the canister's largest parts
+        listed = []
         let at: [] | [bigint] = []
         do {
           const page = await backend.mail_outbox_list({
             cursor: at,
-            limit: LIST_MAX,
+            limit: BigInt(BATCH),
           })
-          await deleteSent(
-            backend,
-            page.items.map((m) => m.id),
-            sendingIn(page.items),
-            done
-          )
+          listed.push(...page.items)
           at = page.cursor
         } while (at.length > 0)
       }
+      await deleteSent(
+        backend,
+        ids === 'all' ? listed.map((m) => m.id) : ids,
+        sendingIn(listed),
+        done
+      )
     } finally {
       if (done.deleted + done.kept + done.gone > 0) {
         notify({ text: deletedText(done) })
@@ -350,52 +352,29 @@ export function Sent({
   }
 
   // A refusal shows above the list
-  const act = async (run: () => Promise<unknown>) => {
-    setError('')
-    try {
-      await run()
-    } catch (e) {
-      setError(errorText(e))
-    }
-  }
-
-  // Mail being sent cannot be deleted, so it is not ticked
-  const tickable = items.filter((m) => m.state !== OUTBOX_SENDING)
-  const ticked = tickable.filter((m) => checked.has(m.id)).map((m) => m.id)
-  const tick = (id: bigint, on: boolean) =>
-    setChecked((before) => {
-      const next = new Set(before)
-      if (on) next.add(id)
-      else next.delete(id)
-      return next
-    })
+  const act = (run: () => Promise<unknown>) => attempt(run, setError)
 
   const selected = items.find((m) => m.id === selectedId) ?? null
 
   return (
-    <div
-      className={selected ? 'split reading' : 'split'}
-      style={listWidth.style}
-    >
+    <Split reading={selected !== null}>
       <section className="list" aria-label="Sent mail">
         {items.length > 0 && (
           <div className="list-head">
             <Bulk
-              ticked={ticked.length}
-              total={tickable.length}
-              onAll={(all) =>
-                setChecked(new Set(all ? tickable.map((m) => m.id) : []))
-              }
+              ticks={ticks}
               actions={[
                 {
                   label: 'Delete',
                   icon: 'trash',
                   danger: true,
-                  run: () => act(() => remove(ticked)),
+                  run: () => act(() => remove(ticks.ticked)),
                 },
               ]}
               empty={{
                 label: 'Empty Sent',
+                icon: 'trash',
+                danger: true,
                 run: () => act(() => remove('all')),
               }}
             />
@@ -415,17 +394,12 @@ export function Sent({
             const sending = m.state === OUTBOX_SENDING
             return (
               <li key={m.id.toString()} className="message-row">
-                {/* The label is the box's larger touch target */}
-                <label className="pick-area">
-                  <input
-                    type="checkbox"
-                    className="pick"
-                    aria-label={`Select ${title}`}
-                    checked={!sending && checked.has(m.id)}
-                    disabled={sending}
-                    onChange={(e) => tick(m.id, e.target.checked)}
-                  />
-                </label>
+                <RowPick
+                  ticks={ticks}
+                  id={m.id}
+                  name={title}
+                  disabled={sending}
+                />
                 <button
                   className="message"
                   aria-current={selectedId === m.id}
@@ -445,14 +419,13 @@ export function Sent({
                 {/* On hover, for a pointer, as in the Inbox */}
                 {!sending && (
                   <span className="row-actions">
-                    <button
-                      className="bare"
-                      aria-label={`Delete: ${title}`}
-                      title="Delete"
+                    <IconButton
+                      variant="bare"
+                      label="Delete"
+                      name={title}
+                      icon="trash"
                       onClick={() => act(() => remove([m.id]))}
-                    >
-                      <Icon name="trash" />
-                    </button>
+                    />
                   </span>
                 )}
               </li>
@@ -468,7 +441,6 @@ export function Sent({
           />
         )}
       </section>
-      <Splitter width={listWidth.width} onChange={listWidth.change} />
       {selected ? (
         <Details
           key={selected.id.toString()}
@@ -493,6 +465,6 @@ export function Sent({
       ) : (
         <div className="reader empty">Select a message to see its status.</div>
       )}
-    </div>
+    </Split>
   )
 }

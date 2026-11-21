@@ -218,7 +218,6 @@ nav button:hover:not(:disabled) {
   background: var(--selected);
 }
 nav button.compose {
-  text-align: center;
   margin-bottom: 8px;
 }
 nav button[aria-current='true'] {
@@ -238,10 +237,6 @@ nav button[aria-current='true'] {
   flex: 1;
 }
 nav button.refresh {
-  display: grid;
-  place-items: center;
-  min-width: var(--control-height);
-  padding: 0;
   border-color: var(--border-strong);
   background: var(--surface-raised);
 }
@@ -393,10 +388,8 @@ nav button.mailbox {
 .split {
   height: 100%;
   display: grid;
-  /* The width the divider sets, within what leaves the reader its room */
-  grid-template-columns:
-    clamp(260px, var(--list-width, 380px), 100% - 320px)
-    auto minmax(0, 1fr);
+  /* The list's width is the divider's */
+  grid-template-columns: var(--list-width, 380px) auto minmax(0, 1fr);
 }
 .list {
   overflow-y: auto;
@@ -425,13 +418,14 @@ nav button.mailbox {
   position: sticky;
   top: 0;
   z-index: 1;
+  padding-top: 8px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
 }
 .search {
   display: flex;
   gap: 6px;
-  padding: 8px;
+  padding: 0 8px 8px;
 }
 .bulk {
   display: flex;
@@ -440,10 +434,6 @@ nav button.mailbox {
   align-items: center;
   gap: 6px;
   padding: 0 8px 8px 12px;
-}
-/* Without a search above it, as in Sent */
-.list-head > .bulk:first-child {
-  padding-top: 8px;
 }
 /* A button that is only its icon or text */
 button.bare {
@@ -585,11 +575,6 @@ button.star.on .icon {
   opacity: 0;
   pointer-events: none;
 }
-.toast button {
-  padding: 4px 8px;
-  color: inherit;
-  font-weight: 600;
-}
 /* A tint of the note's own text colour, as its background can be any */
 .toast button:hover:not(:disabled) {
   background: color-mix(in srgb, currentColor 20%, transparent);
@@ -729,9 +714,6 @@ button.star.on .icon {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.compose-bar button {
-  padding: 6px;
 }
 .compose-body {
   flex: 1;
@@ -966,9 +948,6 @@ th {
 .help ul {
   padding-left: 20px;
 }
-.admin button {
-  white-space: nowrap;
-}
 
 /* Touch: targets of at least 44px, with the row's box and star drawn as
    before, and a wider divider */
@@ -1002,16 +981,9 @@ th {
   .splitter {
     width: 16px;
   }
-  /* The compose window's buttons too; the bar keeps its height for them */
+  /* The compose window's bar keeps its height for its larger buttons */
   .compose-bar {
     padding-top: 0;
     padding-bottom: 0;
-  }
-  .compose-bar button {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 44px;
-    min-height: 44px;
   }
 }

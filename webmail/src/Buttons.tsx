@@ -4,26 +4,31 @@ import type { ButtonHTMLAttributes } from 'react'
 
 import { Icon, type IconName } from './Icon'
 
-// A button that is only its icon: the label is its name, and its tooltip
+// A button that is only its icon: the label is its tooltip, and with `name`,
+// which says what it acts on where there are several, its name. A bare one
+// keeps the icon's own size, as in a list row.
 export function IconButton({
   label,
+  name,
   icon,
   variant,
   className,
   ...props
 }: {
   label: string
+  name?: string
   icon: IconName
-  variant?: 'primary' | 'danger'
+  variant?: 'primary' | 'danger' | 'bare'
 } & Omit<
   ButtonHTMLAttributes<HTMLButtonElement>,
-  'aria-label' | 'title' | 'children'
+  'aria-label' | 'title' | 'children' | 'name'
 >) {
+  const kind = variant === 'bare' ? ['bare'] : ['icon-button', variant]
   return (
     <button
       {...props}
-      className={['icon-button', variant, className].filter(Boolean).join(' ')}
-      aria-label={label}
+      className={[...kind, className].filter(Boolean).join(' ')}
+      aria-label={name ? `${label}: ${name}` : label}
       title={label}
     >
       <Icon name={icon} />

@@ -9,7 +9,6 @@ import {
   type MailboxInfo,
 } from './api'
 import { IconButton } from './Buttons'
-import { Icon } from './Icon'
 import { textToHtml } from './mime'
 
 // Held in memory only, so a draft survives signing in again but not a reload
@@ -122,30 +121,24 @@ export function Compose({
       >
         <div className="compose-bar">
           <h2>{subject.trim() || 'New message'}</h2>
-          <button
+          <IconButton
             className="bare"
-            aria-label={minimised ? 'Restore' : 'Minimise'}
-            title={minimised ? 'Restore' : 'Minimise'}
+            label={minimised ? 'Restore' : 'Minimise'}
+            icon={minimised ? 'chevronUp' : 'minus'}
             onClick={() => setSize(minimised ? 'normal' : 'minimised')}
-          >
-            <Icon name={minimised ? 'chevronUp' : 'minus'} />
-          </button>
-          <button
+          />
+          <IconButton
             className="bare full-toggle"
-            aria-label={full ? 'Exit full screen' : 'Full screen'}
-            title={full ? 'Exit full screen' : 'Full screen'}
+            label={full ? 'Exit full screen' : 'Full screen'}
+            icon={full ? 'minimize' : 'maximize'}
             onClick={() => setSize(full ? 'normal' : 'full')}
-          >
-            <Icon name={full ? 'minimize' : 'maximize'} />
-          </button>
-          <button
+          />
+          <IconButton
             className="bare"
-            aria-label="Close"
-            title="Close"
+            label="Close"
+            icon="close"
             onClick={onClose}
-          >
-            <Icon name="close" />
-          </button>
+          />
         </div>
         {/* Hidden, not removed, when minimised: the fields keep what they hold */}
         <div className="compose-body" hidden={minimised}>

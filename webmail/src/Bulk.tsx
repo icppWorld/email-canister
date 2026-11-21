@@ -1,8 +1,9 @@
-// The bar above a list for the messages ticked in it: Select all, how many
-// are ticked, and what can be done to them. With none ticked, it can offer to
-// empty the folder.
+// Ticking messages in a list for an action on all of them: the row's box,
+// and the bar above the list with Select all, how many are ticked, and what
+// can be done to them. With none ticked, the bar can offer to empty the
+// folder.
 
-import { useEffect, useRef } from 'react'
+import { useState } from 'react'
 
 import { IconButton } from './Buttons'
 import type { IconName } from './Icon'
@@ -14,53 +15,90 @@ export type BulkAction = {
   run: () => void
 }
 
+// The messages ticked among `ids`, the ones listed that can be ticked
+export function useTicks(ids: bigint[]) {
+  const [checked, setChecked] = useState<ReadonlySet<bigint>>(new Set())
+  return {
+    ticked: ids.filter((id) => checked.has(id)),
+    total: ids.length,
+    has: (id: bigint) => checked.has(id),
+    tick: (id: bigint, on: boolean) =>
+      setChecked((before) => {
+        const next = new Set(before)
+        if (on) next.add(id)
+        else next.delete(id)
+        return next
+      }),
+    all: (on: boolean) => setChecked(new Set(on ? ids : [])),
+    // Mail that left the list leaves its tick, so it comes back unticked
+    untick: (gone: ReadonlySet<bigint>) =>
+      setChecked(
+        (before) => new Set([...before].filter((id) => !gone.has(id)))
+      ),
+  }
+}
+
+export type Ticks = ReturnType<typeof useTicks>
+
+// A row's box; the label is its larger touch target
+export function RowPick({
+  ticks,
+  id,
+  name,
+  disabled = false,
+}: {
+  ticks: Ticks
+  id: bigint
+  name: string // says which message
+  disabled?: boolean
+}) {
+  return (
+    <label className="pick-area">
+      <input
+        type="checkbox"
+        className="pick"
+        aria-label={`Select ${name}`}
+        checked={!disabled && ticks.has(id)}
+        disabled={disabled}
+        onChange={(e) => ticks.tick(id, e.target.checked)}
+      />
+    </label>
+  )
+}
+
 export function Bulk({
-  ticked,
-  total,
-  onAll,
+  ticks,
   actions,
   empty,
 }: {
-  ticked: number
-  total: number // the messages that can be ticked
-  onAll: (all: boolean) => void
+  ticks: Ticks
   actions: BulkAction[]
-  empty?: { label: string; run: () => void }
+  empty?: BulkAction
 }) {
-  const allBox = useRef<HTMLInputElement>(null)
-  const all = total > 0 && ticked === total
-  const some = ticked > 0 && !all
-  useEffect(() => {
-    if (allBox.current) allBox.current.indeterminate = some
-  }, [some])
-
+  const ticked = ticks.ticked.length
+  const all = ticks.total > 0 && ticked === ticks.total
+  const shown = ticked > 0 ? actions : empty ? [empty] : []
   return (
     <div className="bulk" role="toolbar" aria-label="Selected messages">
       <input
-        ref={allBox}
+        ref={(box) => {
+          if (box) box.indeterminate = ticked > 0 && !all
+        }}
         type="checkbox"
         aria-label="Select all"
         checked={all}
-        onChange={(e) => onAll(e.target.checked)}
+        onChange={(e) => ticks.all(e.target.checked)}
       />
-      {ticked > 0 ? (
-        <>
-          <span className="hint">{ticked} selected</span>
-          {actions.map((action) => (
-            <IconButton
-              key={action.label}
-              variant={action.danger ? 'danger' : undefined}
-              label={action.label}
-              icon={action.icon}
-              onClick={action.run}
-            />
-          ))}
-        </>
-      ) : (
-        empty && (
-          <IconButton label={empty.label} icon="trash" onClick={empty.run} />
-        )
-      )}
+      {ticked > 0 && <span className="hint">{ticked} selected</span>}
+      {shown.map((action) => (
+        <IconButton
+          key={action.label}
+          variant={action.danger ? 'danger' : undefined}
+          label={action.label}
+          icon={action.icon}
+          onClick={action.run}
+        />
+      ))}
     </div>
   )
 }
