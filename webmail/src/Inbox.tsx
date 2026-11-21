@@ -33,7 +33,13 @@ import {
 } from './format'
 import { Icon, type IconName } from './Icon'
 import { MessageBody } from './MessageBody'
-import { deliveredVia, parseMail, saveFile, type ParsedMail } from './mime'
+import {
+  deliveredVia,
+  frameBody,
+  parseMail,
+  saveFile,
+  type ParsedMail,
+} from './mime'
 import { BackButton, IconButton, StarButton } from './Buttons'
 import { Bulk, RowPick, useTicks } from './Bulk'
 import { Menu } from './Menu'
@@ -269,6 +275,15 @@ function Reader({
     () => (raw && (plain || unparsed) ? new TextDecoder().decode(raw) : ''),
     [raw, plain, unparsed]
   )
+  // Built once per message: it parses the message and encodes its images
+  const framed = useMemo(
+    () => (mail?.html ? frameBody(mail.html, mail.attachments) : null),
+    [mail]
+  )
+  // Its remote images, blocked until asked for, as loading them tells the
+  // sender when it was read; asked for this time only, so opening the message
+  // again blocks them again
+  const [images, setImages] = useState(false)
 
   // Mounted once per message (keyed by uid), so its state starts empty
   useEffect(() => {
@@ -395,6 +410,13 @@ function Reader({
             onClick={() => act(() => onSpam(read))}
           />
         )}
+        {framed?.remote && !images && (
+          <IconButton
+            label="Show images"
+            icon="image"
+            onClick={() => setImages(true)}
+          />
+        )}
         {more.length > 0 && (
           <Menu label="More actions">
             {more.map((action) => (
@@ -492,8 +514,8 @@ function Reader({
               ))}
             </ul>
           )}
-          {mail.html ? (
-            <MessageBody html={mail.html} attachments={mail.attachments} />
+          {framed ? (
+            <MessageBody framed={framed} images={images} />
           ) : (
             <pre className="body text">{mail.text}</pre>
           )}

@@ -21,6 +21,7 @@ import {
   openMail,
   openMenu,
   principalOf,
+  reader,
   roleColour,
   send,
   sha256,
@@ -54,6 +55,8 @@ test('serves a strict content security policy, caching that shows a new deploy, 
   const policy = headers['content-security-policy']
   expect(policy).toContain("default-src 'none'")
   expect(policy).toContain("script-src 'self'")
+  // https: for the message frames' images, which their own policy holds back
+  expect(policy).toContain("img-src 'self' data: https:;")
   expect(policy).toContain("font-src 'self';")
   expect(policy).toContain("connect-src 'self' https://icp0.io;")
   expect(policy).toContain("frame-ancestors 'none'")
@@ -323,6 +326,13 @@ for (const [colorScheme, word, body] of [
       '0100000000000000-00000000-0000-0000-0000-000000000000-000000/AAAAAAAAAAAAAAAAAAAAAAAAAAA=473" ' +
       'style="display: none; width: 1px; height: 1px;">',
   ],
+  // A link or meta the frame leaves out paints nothing
+  [
+    'dark',
+    'pipit',
+    '<link rel="stylesheet" href="https://t.example/s.css">' +
+      '<meta property="og:title" content="x"><p>pipit</p>',
+  ],
   // Other services' pixels, and "data:" in a remote image's query
   [
     'dark',
@@ -463,6 +473,120 @@ for (const [word, element, body] of [
     await context.close()
   })
 }
+
+// Images from the sender's servers tell the sender when the message was read:
+// blocked until Show images, for that opening only
+test('remote images load only after Show images, and only that time', async ({
+  browser,
+}) => {
+  const pic = 'https://images.example.test/pic.png'
+  const bg = 'https://images.example.test/bg.png'
+  deliver({
+    subject: 'Remote razorbill',
+    body:
+      // Neither may leak: a link that connects ahead, and a looser referrer
+      `<link rel="preconnect" href="https://ahead.example.test">` +
+      `<meta name="referrer" content="unsafe-url">` +
+      `<base href="https://ahead.example.test/">` +
+      // with a referrer policy of its own, and a template
+      `<p>razorbill</p><img src="${pic}" alt="Remote pic" referrerpolicy="unsafe-url">` +
+      `<template><p>kept aside</p></template>` +
+      `<div style="background:url(${bg})">x</div>` +
+      // Loaded once the frame has reached past the remote image
+      `<img src="data:image/png;base64,${PIXEL}" alt="Local pic">` +
+      // A link in a shadow root, and one that a second parse grows where an
+      // engine writes < and > in attributes out as they are
+      `<div><template shadowrootmode="open"><link rel="preconnect" href="https://ahead.example.test/shadow"></template></div>` +
+      // and one in a frame's own document
+      `<iframe srcdoc="<link rel=preconnect href=https://ahead.example.test/nested>"></iframe>` +
+      `<math><mtext><table><mglyph><style><!--</style><img title="--&gt;&lt;link rel=preconnect href=https://ahead.example.test/grown&gt;">`,
+  })
+  deliver({ subject: 'Local murrelet', body: '<p>murrelet</p>' })
+  deliver({
+    subject: 'Remote auklet',
+    body:
+      '<p>auklet</p><svg width="10" height="10">' +
+      '<image href="https://images.example.test/svg.png" width="10" height="10"/></svg>',
+  })
+  await waitDrained()
+  const { context, page } = await signedIn(browser, USER_A)
+  // On the context, which sees the sandboxed frame's requests too
+  const requested: string[] = []
+  const referrers: (string | undefined)[] = []
+  await context.route('https://images.example.test/**', (route) => {
+    requested.push(route.request().url())
+    referrers.push(route.request().headers()['referer'])
+    return route.fulfill({
+      contentType: 'image/png',
+      headers: { 'Cache-Control': 'no-store' },
+      body: Buffer.from(PIXEL, 'base64'),
+    })
+  })
+  const showImages = reader(page).getByRole('button', { name: 'Show images' })
+  const picture = bodyOf(page).getByAltText('Remote pic')
+  const local = bodyOf(page).getByAltText('Local pic')
+
+  await openMail(page, 'razorbill')
+  await expect(bodyOf(page).getByText('razorbill')).toBeVisible()
+  await expect(showImages).toBeVisible()
+  await expect(local).toHaveJSProperty('naturalWidth', 1)
+  expect(requested).toEqual([])
+  await expect(picture).toHaveJSProperty('naturalWidth', 0)
+  // The whole frame, its head and shadow roots included
+  const frame = page.frameLocator('iframe.body')
+  await expect(frame.locator('link')).toHaveCount(0)
+  await expect(frame.locator('iframe')).toHaveCount(0)
+  await expect(frame.locator('template')).toHaveCount(0)
+  await expect(frame.locator('base')).toHaveCount(0)
+  await expect(frame.locator('[referrerpolicy]')).toHaveCount(0)
+  await expect(frame.locator('meta[content="unsafe-url"]')).toHaveCount(0)
+
+  await showImages.click()
+  await expect(picture).toHaveJSProperty('naturalWidth', 1)
+  await expect.poll(() => requested).toEqual(expect.arrayContaining([pic, bg]))
+  expect(referrers.filter(Boolean)).toEqual([])
+  await expect(showImages).toHaveCount(0)
+
+  // A message without remote images has nothing to show
+  await openMail(page, 'murrelet')
+  await expect(bodyOf(page).getByText('murrelet')).toBeVisible()
+  await expect(showImages).toHaveCount(0)
+
+  // An SVG image is a remote image too
+  await openMail(page, 'auklet')
+  await expect(bodyOf(page).getByText('auklet')).toBeVisible()
+  await expect(showImages).toBeVisible()
+
+  // Opened again, its images are blocked again
+  const before = requested.length
+  await openMail(page, 'razorbill')
+  await expect(bodyOf(page).getByText('razorbill')).toBeVisible()
+  await expect(showImages).toBeVisible()
+  await expect(local).toHaveJSProperty('naturalWidth', 1)
+  expect(requested).toHaveLength(before)
+  await expect(picture).toHaveJSProperty('naturalWidth', 0)
+  await context.close()
+})
+
+test('a style with a long run of spaces does not hold the reader up', async ({
+  browser,
+}) => {
+  // The pattern this guards took minutes on runs this long
+  deliver({
+    subject: 'Spaced bunting',
+    body:
+      `<p>bunting</p><style>p{background:url(${' '.repeat(600_000)}x)}</style>` +
+      `<p style="--x:url(${' '.repeat(600_000)}x)">attribute</p>`,
+  })
+  await waitDrained()
+  const { context, page } = await signedIn(browser, USER_A)
+  await openMail(page, 'bunting')
+  await expect(bodyOf(page).getByText('bunting')).toBeVisible()
+  await expect(
+    reader(page).getByRole('button', { name: 'Show images' })
+  ).toHaveCount(0)
+  await context.close()
+})
 
 test('the Refresh button shows new mail straight away', async ({ browser }) => {
   const { context, page } = await signedIn(browser, USER_B)

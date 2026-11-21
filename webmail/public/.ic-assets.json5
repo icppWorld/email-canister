@@ -19,12 +19,14 @@
     // https://icp0.io itself, and on a custom domain to the page's own origin.
     // style-src allows inline style for the sandboxed message frames, which
     // inherit this policy; everything they can load is limited further there.
+    // img-src allows https: for the same frames: their own policy blocks remote
+    // images until the reader's Show images, for that message only.
     // font-src serves the brand's own font files.
     match: '**/*',
     security_policy: 'hardened',
     disable_security_policy_warning: true,
     headers: {
-      'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://icp0.io; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+      'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self' https://icp0.io; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
       'Referrer-Policy': 'no-referrer',
       'X-Content-Type-Options': 'nosniff',
       'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=()',
