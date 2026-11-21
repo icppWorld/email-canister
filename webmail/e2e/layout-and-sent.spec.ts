@@ -1172,7 +1172,7 @@ test('a refused delete in Sent shows at once, while the list reloads, and leaves
       ? route.abort()
       : route.fallback()
   )
-  const dialogs = answer(page, true)
+  const dialogs = answer(page, true, true)
   await page
     .getByRole('toolbar', { name: 'Selected messages' })
     .getByRole('button', { name: 'Delete', exact: true })
@@ -1186,6 +1186,18 @@ test('a refused delete in Sent shows at once, while the list reloads, and leaves
   await expect(sent.getByRole('listitem')).toHaveCount(2)
   for (const box of boxes) await expect(box).not.toBeChecked()
   await expect(sent.getByRole('alert')).toBeVisible()
+  // A delete from the reader that goes through clears the refusal
+  await messageRow(page, 'Sundew 1').click()
+  await page
+    .locator('article.reader')
+    .getByRole('button', { name: 'Delete', exact: true })
+    .click()
+  await expect(sent.getByRole('listitem')).toHaveCount(1)
+  await expect(sent.getByRole('alert')).toHaveCount(0)
+  expect(dialogs).toEqual([
+    'Delete 2 sent messages for good?',
+    'Delete this message permanently?',
+  ])
   await context.close()
 })
 
@@ -1216,7 +1228,13 @@ test('deleting mail waiting to be sent says it is then not sent', async ({
     await expect(messageRow(page, 'Waiting sumac')).toContainText(
       'Waiting to send'
     )
-    const dialogs = answer(page, false, true)
+    const dialogs = answer(page, false, false, true)
+    // The reader's own Delete warns too
+    await messageRow(page, 'Waiting sumac').click()
+    await page
+      .locator('article.reader')
+      .getByRole('button', { name: 'Delete', exact: true })
+      .click()
     for (const subject of ['Sumac 1', 'Waiting sumac']) {
       await messageRow(page, subject).hover()
       await page.getByRole('button', { name: `Delete: ${subject}` }).click()
@@ -1225,6 +1243,8 @@ test('deleting mail waiting to be sent says it is then not sent', async ({
       '1 sent message deleted'
     )
     expect(dialogs).toEqual([
+      'Delete this message permanently? Mail waiting to be sent is ' +
+        'deleted and not sent.',
       'Delete this sent message for good?',
       'Delete this sent message for good? Mail waiting to be sent is ' +
         'deleted and not sent.',

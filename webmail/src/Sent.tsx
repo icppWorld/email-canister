@@ -116,7 +116,11 @@ function Details({
   }
 
   const remove = async () => {
-    if (!window.confirm('Delete this message permanently?')) return
+    const waiting =
+      summary.state === OUTBOX_QUEUED
+        ? ' Mail waiting to be sent is deleted and not sent.'
+        : ''
+    if (!window.confirm(`Delete this message permanently?${waiting}`)) return
     try {
       await backend.mail_outbox_delete(summary.id)
       onUsage()
@@ -448,6 +452,9 @@ export function Sent({
               : null
           }
           onChanged={() => {
+            // A change made from the reader went through: a refusal shown
+            // over the list no longer applies
+            setActionError('')
             setSelectedId(null)
             load()
           }}

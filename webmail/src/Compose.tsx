@@ -36,6 +36,9 @@ function encodedSize(attachment: File): number {
   return Math.ceil(attachment.size / 3) * 4 + attachment.name.length
 }
 
+// Files are told apart by name and size: the browser gives no path
+const fileKey = (file: File) => `${file.name} ${file.size}`
+
 export function Compose({
   backend,
   mailboxes,
@@ -207,15 +210,20 @@ export function Compose({
               const picked = Array.from(e.target.files ?? [])
               // Cleared, so the same file can be picked again once removed
               e.target.value = ''
-              setFiles((before) => [
-                ...before,
-                ...picked.filter(
-                  (file) =>
-                    !before.some(
-                      (f) => f.name === file.name && f.size === file.size
-                    )
-                ),
-              ])
+              // A file with the name and size of one attached already, or
+              // of one earlier in this pick, is taken as the same file
+              setFiles((before) => {
+                const seen = new Set(before.map(fileKey))
+                return [
+                  ...before,
+                  ...picked.filter((file) => {
+                    const key = fileKey(file)
+                    if (seen.has(key)) return false
+                    seen.add(key)
+                    return true
+                  }),
+                ]
+              })
             }}
           />
           {/* Each pick adds to these, also in a restored draft, whose file
@@ -225,7 +233,7 @@ export function Compose({
               Attached:{' '}
               <ul aria-label="Attached files">
                 {files.map((file) => (
-                  <li key={`${file.name} ${file.size}`}>
+                  <li key={fileKey(file)}>
                     {file.name} ({Math.ceil(file.size / 1024)} KB)
                     <IconButton
                       variant="bare"
