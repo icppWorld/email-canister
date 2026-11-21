@@ -903,7 +903,8 @@ th {
   body:has(.dialog.compose.minimised) .app {
     padding-bottom: 48px;
   }
-  .full-toggle,
+  /* As specific as button.icon-button, which would show it */
+  button.full-toggle,
   .backdrop {
     display: none;
   }
