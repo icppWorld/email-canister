@@ -146,10 +146,10 @@ footer { color: var(--muted); font-size: 13.5px; border-top: 1px solid var(--lin
 
   <main>
     <header>
-      <span class="eyebrow">email-canister · v0.7.0</span>
+      <span class="eyebrow">email-canister · v0.7.1</span>
       <h1>How email-canister works</h1>
       <p class="lede">email-canister is a product: a repository whose versioned releases hold the code a domain needs to run its own mail on the Internet Computer. A deployment serves one domain with two canisters you control, a C++ backend that receives, stores, indexes and sends mail, and a webmail that users sign in to with Internet Identity, plus a small domain canister for a domain registered elsewhere. The domain also needs a Caffeine app, which is not part of a release: it serves the domain's website, and sends mail through the release's bridge code added to its backend. This page explains each part, where it lives, how mail moves through them, and what you take on by relying on it.</p>
-      <div class="meta"><span>Covers release v0.7.0</span><span>Source: docs/design.md, docs/setup-guide.md, bridge/README.md, webmail/brand/README.md, scripts/make-release-zip.sh</span></div>
+      <div class="meta"><span>Covers release v0.7.1</span><span>Source: docs/design.md, docs/setup-guide.md, bridge/README.md, webmail/brand/README.md, scripts/make-release-zip.sh</span></div>
     </header>
 
     <section id="overview">
@@ -542,7 +542,7 @@ footer { color: var(--muted); font-size: 13.5px; border-top: 1px solid var(--lin
           <li>Access is granted only by naming it. Creating a mailbox never adds anyone to an existing one, and Add member names the mailbox and asks for confirmation. A controller can add anyone, their own principal included, so choose controllers as carefully as whoever runs your mail server.</li>
           <li>Onboarding: the user signs in and sees a "not activated" screen with their principal; an admin creates a mailbox with them as its first member, or adds them to an existing one; the next load shows their mailboxes.</li>
           <li>The relay bridge accepts <code>relaySend</code> only from your backend's principal, set as one constant in the bridge code. Until it is set, every call is refused.</li>
-          <li>Mail HTML is shown in a <code>sandbox=""</code> iframe with its own strict content security policy, and remote content is blocked, because a script in a message could otherwise take over the session.</li>
+          <li>Mail HTML is shown in a <code>sandbox=""</code> iframe with its own strict content security policy, and remote content is blocked, because a script in a message could otherwise take over the session. Remote images load only after the reader's Show images, for that message.</li>
         </ul>
       </div>
       <div class="note"><p>What this model does not cover: a controller can install new code that reads everything, and the operators of the nodes running the canister can read its memory. Choose your controllers as carefully as you would choose who runs your mail server.</p></div>
@@ -778,7 +778,7 @@ footer { color: var(--muted); font-size: 13.5px; border-top: 1px solid var(--lin
     </section>
 
     <footer>
-      <p>Updated for release v0.7.0. The source of truth is the repository: <code>docs/design.md</code> for the design and its measurements, <code>docs/setup-guide.md</code> for deploying, and <code>ROADMAP.md</code> for what comes next, including aliases, mailbox states and per-mailbox rate limits.</p>
+      <p>Updated for release v0.7.1. The source of truth is the repository: <code>docs/design.md</code> for the design and its measurements, <code>docs/setup-guide.md</code> for deploying, and <code>ROADMAP.md</code> for what comes next, including aliases, mailbox states and per-mailbox rate limits.</p>
     </footer>
   </main>
 </div>
