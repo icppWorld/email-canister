@@ -1150,6 +1150,50 @@ test('Empty Sent deletes all but mail being sent, which the note says it could n
   }
 })
 
+const SAGE = '57'.repeat(32)
+
+test('mail ticked while waiting is unticked once it starts sending, and stays so once sent', async ({
+  browser,
+}) => {
+  const box = await sentMail('sage', SAGE, ['Sage 1'])
+  // The next one waits to be sent, and then is held as being sent, until
+  // the test lets it go
+  backend('dev_outbox_crash', '("before_call")')
+  stub('stub_set_mode', '("sending")')
+  let context: BrowserContext | undefined
+  try {
+    await box.mail_send('sage', {
+      client_id: crypto.randomUUID(),
+      to: ['friend@example.org'],
+      cc: [],
+      bcc: [],
+      subject: 'Waiting sage',
+      html_body: '<p>Waiting.</p>',
+      attachments: [],
+    })
+    const signed = await signedIn(browser, SAGE)
+    context = signed.context
+    const { page } = signed
+    await folder(page, 'Sent')
+    const row = page.locator('li.message-row', { hasText: 'Waiting sage' })
+    await expect(row).toContainText('Waiting to send')
+    await row.getByRole('checkbox').check()
+    backend('dev_outbox_crash', '("")')
+    await expect(row).toContainText('Sending', { timeout: 30_000 })
+    stub('stub_set_mode', '("sent")')
+    stub('stub_finish', '("sent")')
+    const pick = row.getByRole('checkbox')
+    await expect(pick).toBeEnabled({ timeout: 30_000 })
+    await expect(pick).not.toBeChecked()
+    await expect(page.getByText(/^\d+ selected$/)).toHaveCount(0)
+  } finally {
+    await context?.close()
+    backend('dev_outbox_crash', '("")')
+    stub('stub_set_mode', '("sent")')
+    stub('stub_finish', '("sent")')
+  }
+})
+
 const SUNDEW = '55'.repeat(32)
 
 test('a refused delete in Sent shows at once, while the list reloads, and leaves its mail unticked', async ({

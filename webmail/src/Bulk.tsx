@@ -3,7 +3,7 @@
 // can be done to them. With none ticked, the bar can offer to empty the
 // folder.
 
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 
 import { IconButton } from './Buttons'
 import type { IconName } from './Icon'
@@ -18,6 +18,14 @@ export type BulkAction = {
 // The messages ticked among `ids`, the ones listed that can be ticked
 export function useTicks(ids: bigint[]) {
   const [checked, setChecked] = useState<ReadonlySet<bigint>>(new Set())
+  // Mail that left the list leaves its tick, so it comes back unticked
+  const untick = useCallback(
+    (gone: ReadonlySet<bigint>) =>
+      setChecked(
+        (before) => new Set([...before].filter((id) => !gone.has(id)))
+      ),
+    []
+  )
   return {
     ticked: ids.filter((id) => checked.has(id)),
     total: ids.length,
@@ -30,11 +38,7 @@ export function useTicks(ids: bigint[]) {
         return next
       }),
     all: (on: boolean) => setChecked(new Set(on ? ids : [])),
-    // Mail that left the list leaves its tick, so it comes back unticked
-    untick: (gone: ReadonlySet<bigint>) =>
-      setChecked(
-        (before) => new Set([...before].filter((id) => !gone.has(id)))
-      ),
+    untick,
   }
 }
 

@@ -243,6 +243,13 @@ export function Sent({
   const ticks = useTicks(
     items.filter((m) => m.state !== OUTBOX_SENDING).map((m) => m.id)
   )
+  // Mail that started sending loses its tick, so it does not come back
+  // ticked once it is sent
+  const { untick } = ticks
+  useEffect(() => {
+    const sending = items.filter((m) => m.state === OUTBOX_SENDING)
+    if (sending.length > 0) untick(new Set(sending.map((m) => m.id)))
+  }, [items, untick])
   // The list's own error, which a reload clears, and an action's refusal
   const [error, setError] = useState('')
   const [actionError, setActionError] = useState('')
