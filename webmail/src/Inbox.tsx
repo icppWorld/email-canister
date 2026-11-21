@@ -54,7 +54,8 @@ type Action = {
   label: string
   icon: IconName
   danger?: true // it cannot be undone
-  run: (uids: bigint[]) => Promise<unknown>
+  // read: the reader's copy of the message, newer than the list's
+  run: (uids: bigint[], read?: Summary | null) => Promise<unknown>
 }
 
 // One in the reader's ⋮ menu. needs: what it waits for, the sender's address
@@ -154,12 +155,12 @@ function movedText(
 }
 
 // Brings messages back to the folder they left, then puts back the blocks that
-// went with them. A move refused before anything moved leaves all as it was,
-// so the same Undo can be tried again; after that, the note says what was
-// done and what was not. Mail moved back into Spam more than 30 days after it
-// arrived is deleted instead, which the note says. Without messages it
-// changes only the blocks, under a label that promises no mail. Made here, so
-// the toast holds only what it needs.
+// went with them, only once all are back. A move refused before anything
+// moved leaves all as it was, so the same Undo can be tried again; after
+// that, the note says what was done and what was not. Mail moved back into
+// Spam more than 30 days after it arrived is deleted instead, which the note
+// says. Without messages it changes only the blocks, under a label that
+// promises no mail. Made here, so the toast holds only what it needs.
 function undo(
   backend: Mailbox,
   uids: bigint[],
@@ -173,6 +174,16 @@ function undo(
     run: async () => {
       const { done, result, error } = await moveAll(backend, uids, from)
       if (error && done.length === 0) throw error
+      if (error) {
+        const blocks = block.length + unblock.length > 0
+        return {
+          text: [
+            movedText(result, FOLDERS[from].name, ''),
+            `Couldn't move ${uids.length - done.length} back: ${errorText(error)}`,
+            ...(blocks ? ["Senders' blocks unchanged"] : []),
+          ].join('. '),
+        }
+      }
       // Each apart, so a refused one leaves the others to go through
       const replies = await Promise.allSettled([
         ...unblock.map((address) => backend.mail_unblock(address)),
@@ -183,20 +194,19 @@ function undo(
       const unblocked = refused(unblock, 0)
       const blocked = refused(block, unblock.length)
       const them = (list: string[]) => (list.length === 1 ? 'it' : 'them')
+      // Each message back, to block from; not when one was deleted for good
+      const back = uids.length > 0 && result.moved.length === uids.length
       const parts = [
         result.deleted + result.gone > 0 ||
-        error ||
         unblocked.length + blocked.length > 0
           ? movedText(result, FOLDERS[from].name, '')
-          : '',
-        error
-          ? `Couldn't move ${uids.length - done.length} back: ${errorText(error)}`
           : '',
         unblocked.length > 0
           ? `Couldn't unblock ${unblocked.join(', ')}: unblock ${them(unblocked)} under Blocked senders`
           : '',
         blocked.length > 0
-          ? `Couldn't block ${blocked.join(', ')} again: block ${them(blocked)} from the message`
+          ? `Couldn't block ${blocked.join(', ')} again` +
+            (back ? `: block ${them(blocked)} from the message` : '')
           : '',
       ].filter((part) => part !== '')
       if (parts.length > 0) return { text: parts.join('. ') }
@@ -396,7 +406,7 @@ function Reader({
           <button
             key={action.label}
             className={action.danger ? 'danger' : undefined}
-            onClick={() => act(() => action.run([summary.uid]))}
+            onClick={() => act(() => action.run([summary.uid], read))}
           >
             {action.label}
           </button>
@@ -859,8 +869,8 @@ export function Inbox({
   const restore: Action = {
     label: folder === 'spam' ? 'Not spam' : 'Restore',
     icon: folder === 'spam' ? 'inbox' : 'undo',
-    run: (uids) =>
-      folder === 'spam' ? judge(uids, 'inbox') : move(uids, 'inbox'),
+    run: (uids, read) =>
+      folder === 'spam' ? judge(uids, 'inbox', read) : move(uids, 'inbox'),
   }
   const forever: Action = {
     label: 'Delete forever',

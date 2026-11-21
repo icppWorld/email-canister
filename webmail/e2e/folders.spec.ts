@@ -1478,7 +1478,8 @@ test('Undo of Not spam on mail that arrived more than 30 days ago says it was de
   await expect(note.locator('span')).toHaveText(
     'Message moved to the Inbox and scoter@sender.example unblocked'
   )
-  // The block again is refused: the note says that, and what was deleted
+  // The block again is refused: the note says that, and what was deleted,
+  // with no message left to block from
   await page.route('**/api/*/canister/*/*', (route) =>
     callsTo(route.request(), 'mail_block') &&
     !callsTo(route.request(), 'mail_blocked')
@@ -1488,7 +1489,7 @@ test('Undo of Not spam on mail that arrived more than 30 days ago says it was de
   await undo(page)
   await expect(note.locator('span')).toHaveText(
     'Message deleted for good: it arrived more than 30 days ago. ' +
-      "Couldn't block scoter@sender.example again: block it from the message",
+      "Couldn't block scoter@sender.example again",
     { timeout: 60_000 }
   )
   await expect(note.getByRole('button', { name: 'Undo' })).toHaveCount(0)
@@ -1717,5 +1718,93 @@ test('an Unblock that ends after a block made again leaves that block shown', as
   await page.waitForTimeout(2_000)
   await expect(row).toHaveCount(1)
   await alice.mail_unblock('alice', 'twice@sender.example')
+  await context.close()
+})
+
+test("Not spam from the reader unblocks the From address the reader read, when the list's copy has none", async ({
+  browser,
+}) => {
+  deliver({
+    subject: 'Blank turnstone',
+    body: '<p>A turnstone.</p>',
+    from: 'Turnstone <turnstone@sender.example>',
+  })
+  await waitDrained()
+  const alice = await asAlice()
+  const uid = await uidOf(alice, 'alice', 'Blank turnstone')
+  await alice.mail_move('alice', [uid], FOLDER_SPAM)
+  await alice.mail_block('alice', 'turnstone@sender.example')
+  const sql = (statement: string) =>
+    backend('dev_file_exec', `("alice", "${statement}")`)
+  // Listed as before its parse, with no From address
+  sql(`UPDATE messages SET sender = '', sender_address = '' WHERE uid = ${uid}`)
+  const { context, page } = await signedIn(browser, USER_A)
+  await folder(page, 'Spam')
+  await search(page, 'turnstone')
+  await expect(messageRow(page, 'Blank turnstone')).toHaveCount(1)
+  // Parsed since: the reader reads it with its address
+  sql(
+    "UPDATE messages SET sender = 'Turnstone <turnstone@sender.example>', " +
+      `sender_address = 'turnstone@sender.example' WHERE uid = ${uid}`
+  )
+  await messageRow(page, 'Blank turnstone').click()
+  await expect(
+    reader(page).getByRole('button', { name: 'Reply' })
+  ).toBeEnabled()
+  await reader(page)
+    .getByRole('button', { name: 'Not spam', exact: true })
+    .click()
+  await expect(page.getByTestId('toast').locator('span')).toHaveText(
+    'Message moved to the Inbox and turnstone@sender.example unblocked'
+  )
+  expect(await blockedAddresses(alice)).not.toContain(
+    'turnstone@sender.example'
+  )
+  await context.close()
+})
+
+// Vera has the mailbox stilt, filled with seeded mail from one sender
+const VERA = '52'.repeat(32)
+
+test('an Undo whose move back is refused part way says what moved back, and leaves the blocks', async ({
+  browser,
+}) => {
+  joinMailbox('stilt', VERA)
+  backend('dev_seed', '("stilt", 1 : nat64, 120 : nat64)')
+  backend(
+    'dev_file_exec',
+    `("stilt", "UPDATE messages SET sender_address = 'seed@sender.example'")`
+  )
+  const vera = await asUser(VERA, env.url, env.backend)
+  const { context, page } = await signedIn(browser, VERA)
+  await expect(page.getByTestId('address')).toHaveText(`stilt@${DOMAIN}`)
+  for (const shown of [100, 120]) {
+    await page.getByRole('button', { name: 'Older mail' }).click()
+    await expect(page.locator('button.message')).toHaveCount(shown)
+  }
+  const bulk = page.getByRole('toolbar', { name: 'Selected messages' })
+  await bulk.getByLabel('Select all').check()
+  await expect(bulk).toContainText('120 selected')
+  await bulk.getByRole('button', { name: 'Spam', exact: true }).click()
+  const note = page.getByTestId('toast')
+  await expect(note.locator('span')).toHaveText(
+    '120 messages moved to Spam and seed@sender.example blocked'
+  )
+  // The move back's first part goes, the second is refused
+  let moves = 0
+  await page.route('**/api/*/canister/*/*', (route) =>
+    callsTo(route.request(), 'mail_move') && ++moves > 1
+      ? route.abort('failed')
+      : route.fallback()
+  )
+  await undo(page)
+  await expect(note.locator('span')).toHaveText(
+    /^100 messages moved to the Inbox\. Couldn't move 20 back: .+\. Senders' blocks unchanged$/,
+    { timeout: 60_000 }
+  )
+  await expect(note.getByRole('button', { name: 'Undo' })).toHaveCount(0)
+  expect((await vera.mail_blocked('stilt')).map((b) => b.address)).toContain(
+    'seed@sender.example'
+  )
   await context.close()
 })
