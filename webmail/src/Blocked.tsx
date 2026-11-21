@@ -52,7 +52,10 @@ export function BlockedSenders({
     // No reload: a replica that has not seen the unblock yet would bring the
     // address back
     unblocked.current.add(blockOf(block))
-    setList((blocked) => blocked?.filter((b) => b.address !== address) ?? null)
+    // That block alone: one made again meanwhile stays
+    setList(
+      (blocked) => blocked?.filter((b) => blockOf(b) !== blockOf(block)) ?? null
+    )
     setError('')
   }
 

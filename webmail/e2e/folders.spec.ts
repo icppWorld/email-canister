@@ -830,7 +830,7 @@ test('a block whose reply is lost leaves the other senders blocked, and Undo lif
   await context.close()
 })
 
-test('an unblock refused in Undo still brings the message back, says why, and its retry only unblocks', async ({
+test('an unblock refused in Undo still brings the message back, and the note says what to do', async ({
   browser,
 }) => {
   deliver({
@@ -852,22 +852,20 @@ test('an unblock refused in Undo still brings the message back, says why, and it
       ? route.abort('failed')
       : route.fallback()
   )
-  const moves = watch(page, 'mail_move')
   await undo(page)
-  // The refusal, after the agent's own retries, and the message is back
-  await expect(note).toHaveText(/^(?!Message moved to Spam)\S/, {
-    timeout: 60_000,
-  })
-  await page.getByTestId('toast').hover()
+  // After the agent's own retries; the message is back, so no Undo again
+  await expect(note).toHaveText(
+    "Message moved to the Inbox. Couldn't unblock " +
+      'sanderling@sender.example: unblock it under Blocked senders',
+    { timeout: 60_000 }
+  )
+  await expect(
+    page.getByTestId('toast').getByRole('button', { name: 'Undo' })
+  ).toHaveCount(0)
   await expect(messageRow(page, 'Stuck sanderling')).toHaveCount(1)
-  // The retry only unblocks: the message is not moved again
   await page.unrouteAll({ behavior: 'wait' })
-  await undo(page)
   const alice = await asAlice()
-  await expect
-    .poll(() => blockedAddresses(alice))
-    .not.toContain('sanderling@sender.example')
-  expect(moves).toHaveLength(1)
+  await alice.mail_unblock('alice', 'sanderling@sender.example')
   await context.close()
 })
 
@@ -1480,7 +1478,7 @@ test('Undo of Not spam on mail that arrived more than 30 days ago says it was de
   await expect(note.locator('span')).toHaveText(
     'Message moved to the Inbox and scoter@sender.example unblocked'
   )
-  // The block again is refused: the refusal still says what was deleted
+  // The block again is refused: the note says that, and what was deleted
   await page.route('**/api/*/canister/*/*', (route) =>
     callsTo(route.request(), 'mail_block') &&
     !callsTo(route.request(), 'mail_blocked')
@@ -1489,18 +1487,13 @@ test('Undo of Not spam on mail that arrived more than 30 days ago says it was de
   )
   await undo(page)
   await expect(note.locator('span')).toHaveText(
-    /^Message deleted for good: it arrived more than 30 days ago\. \S/,
+    'Message deleted for good: it arrived more than 30 days ago. ' +
+      "Couldn't block scoter@sender.example again: block it from the message",
     { timeout: 60_000 }
   )
-  await note.hover()
+  await expect(note.getByRole('button', { name: 'Undo' })).toHaveCount(0)
   await page.unrouteAll({ behavior: 'wait' })
-  await undo(page)
-  await expect(note.locator('span')).toHaveText(
-    'Message deleted for good: it arrived more than 30 days ago'
-  )
-  await expect
-    .poll(() => blockedAddresses(alice))
-    .toContain('scoter@sender.example')
+  expect(await blockedAddresses(alice)).not.toContain('scoter@sender.example')
   for (const folder of [FOLDER_INBOX, FOLDER_SPAM]) {
     const { items } = await alice.mail_search('alice', {
       query: 'scoter',
@@ -1510,7 +1503,6 @@ test('Undo of Not spam on mail that arrived more than 30 days ago says it was de
     })
     expect(items).toHaveLength(0)
   }
-  await alice.mail_unblock('alice', 'scoter@sender.example')
   await context.close()
 })
 
@@ -1548,46 +1540,6 @@ test('a block made before stays after Undo when its block during Spam was refuse
   await context.close()
 })
 
-test('a retried Undo whose first move back lost its reply says nothing of mail no longer here', async ({
-  browser,
-}) => {
-  deliver({ subject: 'Lost wigeon', body: '<p>A wigeon.</p>' })
-  await waitDrained()
-  const { context, page } = await signedIn(browser, USER_A)
-  await search(page, 'wigeon')
-  await messageRow(page, 'Lost wigeon').hover()
-  await page.getByRole('button', { name: 'Delete: Lost wigeon' }).click()
-  const note = page.getByTestId('toast')
-  await expect(note).toHaveText(/moved to Trash/)
-  // The move back reaches the canister, and its reply is lost
-  await page.route('**/api/*/canister/*/*', async (route) => {
-    if (!callsTo(route.request(), 'mail_move')) return route.fallback()
-    await route.fetch()
-    await route.abort('failed')
-  })
-  await undo(page)
-  await expect(note.locator('span')).toHaveText(
-    /^(?!Message moved to Trash)\S/,
-    { timeout: 60_000 }
-  )
-  await note.hover()
-  // The lost reply's move went through: the retry finds it back already
-  const alice = await asAlice()
-  const { items } = await alice.mail_search('alice', {
-    query: 'wigeon',
-    folder: FOLDER_INBOX,
-    cursor: [],
-    limit: 1n,
-  })
-  expect(items).toHaveLength(1)
-  await page.unrouteAll({ behavior: 'wait' })
-  await undo(page)
-  // The reload follows the retry's note
-  await expect(messageRow(page, 'Lost wigeon')).toHaveCount(1)
-  expect(await note.textContent()).not.toContain('no longer here')
-  await context.close()
-})
-
 test('an address unblocked on Blocked senders shows once it is blocked again', async ({
   browser,
 }) => {
@@ -1620,59 +1572,150 @@ test('an address unblocked on Blocked senders shows once it is blocked again', a
   await context.close()
 })
 
-test("a slow Undo's own note gives way to a newer note, which keeps its Undo", async ({
+for (const [ending, bird] of [
+  ['answered', 'eider'],
+  ['refused', 'goldeneye'],
+] as const) {
+  test(`a slow Undo's own note gives way to a newer note, which keeps its Undo, ${ending}`, async ({
+    browser,
+  }) => {
+    for (const age of ['Aged', 'Young']) {
+      deliver({ subject: `${age} ${bird}`, body: `<p>A ${bird}.</p>` })
+    }
+    await waitDrained()
+    const alice = await asAlice()
+    const aged = await uidOf(alice, 'alice', `Aged ${bird}`)
+    const young = await uidOf(alice, 'alice', `Young ${bird}`)
+    await alice.mail_move('alice', [aged, young], FOLDER_SPAM)
+    // An Undo of its Not spam deletes it, which the Undo's own note would say
+    backdate('alice', aged, 'received_ns', 31)
+    const { context, page } = await signedIn(browser, USER_A)
+    await folder(page, 'Spam')
+    await search(page, bird)
+    await expect(messageRow(page, bird)).toHaveCount(2)
+    await messageRow(page, `Aged ${bird}`).hover()
+    await page.getByRole('button', { name: `Not spam: Aged ${bird}` }).click()
+    const note = page.getByTestId('toast')
+    await expect(note.locator('span')).toHaveText('Message moved to the Inbox')
+    // The Undo's move is held: answered at once with its reply held, or
+    // refused, its agent's retries too
+    let release = () => {}
+    const released = new Promise<void>((resolve) => (release = resolve))
+    let reached = () => {}
+    const seen = new Promise<void>((resolve) => (reached = resolve))
+    let first = true
+    let refusing = false
+    await page.route('**/api/*/canister/*/*', async (route) => {
+      if (!callsTo(route.request(), 'mail_move')) return route.fallback()
+      if (refusing) return route.abort('failed')
+      if (!first) return route.fallback()
+      first = false
+      if (ending === 'refused') {
+        reached()
+        await released
+        refusing = true
+        return route.abort('failed')
+      }
+      const url = new URL(route.request().url())
+      url.hostname = '127.0.0.1'
+      const response = await route.fetch({ url: url.toString() })
+      reached()
+      await released
+      await route.fulfill({ response })
+    })
+    await undo(page)
+    await seen
+    await messageRow(page, `Young ${bird}`).hover()
+    await page.getByRole('button', { name: `Not spam: Young ${bird}` }).click()
+    await expect(note.locator('span')).toHaveText('Message moved to the Inbox')
+    await note.hover()
+    // The Undo's reload comes after its note was decided on
+    const reloaded = page.waitForRequest(
+      (request) =>
+        callsTo(request, 'mail_search') || callsTo(request, 'mail_list'),
+      { timeout: 60_000 }
+    )
+    release()
+    await reloaded
+    await expect(note.locator('span')).toHaveText('Message moved to the Inbox')
+    await expect(note.getByRole('button', { name: 'Undo' })).toBeVisible()
+    await context.close()
+  })
+}
+
+test("Spam from the reader blocks the From address the reader read, when the list's copy has none", async ({
   browser,
 }) => {
-  for (const bird of ['Aged eider', 'Young eider']) {
-    deliver({ subject: bird, body: '<p>An eider.</p>' })
-  }
+  deliver({
+    subject: 'Blank shearwater',
+    body: '<p>A shearwater.</p>',
+    from: 'Shearwater <shearwater@sender.example>',
+  })
   await waitDrained()
   const alice = await asAlice()
-  const aged = await uidOf(alice, 'alice', 'Aged eider')
-  const young = await uidOf(alice, 'alice', 'Young eider')
-  await alice.mail_move('alice', [aged, young], FOLDER_SPAM)
-  // An Undo of its Not spam deletes it, which the Undo's own note would say
-  backdate('alice', aged, 'received_ns', 31)
+  const uid = await uidOf(alice, 'alice', 'Blank shearwater')
+  const sql = (statement: string) =>
+    backend('dev_file_exec', `("alice", "${statement}")`)
+  // Listed as before its parse, with no From address
+  sql(`UPDATE messages SET sender = '', sender_address = '' WHERE uid = ${uid}`)
   const { context, page } = await signedIn(browser, USER_A)
-  await folder(page, 'Spam')
-  await search(page, 'eider')
-  await expect(messageRow(page, 'eider')).toHaveCount(2)
-  await messageRow(page, 'Aged eider').hover()
-  await page.getByRole('button', { name: 'Not spam: Aged eider' }).click()
-  const note = page.getByTestId('toast')
-  await expect(note.locator('span')).toHaveText('Message moved to the Inbox')
-  // The Undo's move is answered at once, and its reply held
-  let release = () => {}
-  const released = new Promise<void>((resolve) => (release = resolve))
-  let reached = () => {}
-  const seen = new Promise<void>((resolve) => (reached = resolve))
-  let first = true
-  await page.route('**/api/*/canister/*/*', async (route) => {
-    if (!callsTo(route.request(), 'mail_move') || !first) {
-      return route.fallback()
-    }
-    first = false
-    const url = new URL(route.request().url())
-    url.hostname = '127.0.0.1'
-    const response = await route.fetch({ url: url.toString() })
-    reached()
-    await released
-    await route.fulfill({ response })
-  })
-  await undo(page)
-  await seen
-  await messageRow(page, 'Young eider').hover()
-  await page.getByRole('button', { name: 'Not spam: Young eider' }).click()
-  await expect(note.locator('span')).toHaveText('Message moved to the Inbox')
-  await note.hover()
-  // The Undo's reload comes after its note was decided on
-  const reloaded = page.waitForRequest(
-    (request) =>
-      callsTo(request, 'mail_search') || callsTo(request, 'mail_list')
+  await search(page, 'shearwater')
+  await expect(messageRow(page, 'Blank shearwater')).toHaveCount(1)
+  // Parsed since: the reader reads it with its address
+  sql(
+    "UPDATE messages SET sender = 'Shearwater <shearwater@sender.example>', " +
+      `sender_address = 'shearwater@sender.example' WHERE uid = ${uid}`
   )
-  release()
+  await messageRow(page, 'Blank shearwater').click()
+  await expect(page.getByTestId('subject')).toHaveText('Blank shearwater')
+  await spamFromReader(page)
+  await expect(page.getByTestId('toast').locator('span')).toHaveText(
+    'Message moved to Spam and shearwater@sender.example blocked'
+  )
+  expect(await blockedAddresses(alice)).toContain('shearwater@sender.example')
+  await alice.mail_unblock('alice', 'shearwater@sender.example')
+  await context.close()
+})
+
+test('an Unblock that ends after a block made again leaves that block shown', async ({
+  browser,
+}) => {
+  deliver({ subject: 'Twice phalarope', body: '<p>A phalarope.</p>' })
+  await waitDrained()
+  const alice = await asAlice()
+  await alice.mail_block('alice', 'twice@sender.example')
+  const { context, page } = await signedIn(browser, USER_A)
+  // A note whose Undo reloads the page later
+  await search(page, 'Twice phalarope')
+  await messageRow(page, 'Twice phalarope').hover()
+  await page.getByRole('button', { name: 'Delete: Twice phalarope' }).click()
+  const note = page.getByTestId('toast')
+  await expect(note).toHaveText(/moved to Trash/)
+  await menuItem(page, 'More', 'Blocked senders')
+  const blocked = page.getByRole('region', { name: 'Blocked senders' })
+  const row = blocked
+    .getByRole('listitem')
+    .filter({ hasText: 'twice@sender.example' })
+  await expect(row).toHaveCount(1)
+  // The unblock goes through; its reply comes after a block made again
+  const unblocking = await hold(page, 'mail_unblock', { late: true })
+  await note.getByRole('button', { name: 'Undo' }).focus()
+  await row.getByRole('button', { name: 'Unblock' }).click()
+  await unblocking.seen
+  await expect
+    .poll(() => blockedAddresses(alice))
+    .not.toContain('twice@sender.example')
+  await alice.mail_block('alice', 'twice@sender.example')
+  // The reload shows that new block before the unblock's reply lands
+  const reloaded = page.waitForResponse((response) =>
+    callsTo(response.request(), 'mail_blocked')
+  )
+  await note.hover()
+  await undo(page)
   await reloaded
-  await expect(note.locator('span')).toHaveText('Message moved to the Inbox')
-  await expect(note.getByRole('button', { name: 'Undo' })).toBeVisible()
+  unblocking.release()
+  await page.waitForTimeout(2_000)
+  await expect(row).toHaveCount(1)
+  await alice.mail_unblock('alice', 'twice@sender.example')
   await context.close()
 })
