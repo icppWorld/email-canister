@@ -315,6 +315,9 @@ for (const [word, from, envelopeUser, envelopeDomain, via] of [
 }
 
 // As the composer writes it (the provider only sends HTML), and as mail clients write text, links and quotes
+const PIXEL =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII='
+
 for (const [colorScheme, word, body] of [
   ['light', 'heron', '<div style="white-space:pre-wrap">heron</div>'],
   ['dark', 'egret', '<div style="white-space:pre-wrap">egret</div>'],
@@ -357,6 +360,18 @@ for (const [colorScheme, word, body] of [
     '<div style="white-space:pre-wrap">sanderling</div><img alt src="https://a1b2c3d4.r.us-east-1.awstrack.me/I0/' +
       '0100000000000000-00000000-0000-0000-0000-000000000000-000000/AAAAAAAAAAAAAAAAAAAAAAAAAAA=473" ' +
       'style="display: none; width: 1px; height: 1px;">',
+  ],
+  // The list of what a message may hold takes a data: image in src alone, and
+  // only as written: these two show nothing
+  [
+    'dark',
+    'petrel',
+    `<p>petrel</p><img srcset="data:image/png;base64,${PIXEL}">`,
+  ],
+  [
+    'dark',
+    'stint',
+    `<p>stint</p><img src="da&#9;ta:image/png;base64,${PIXEL}">`,
   ],
   // A drawing the frame leaves out paints nothing
   [
@@ -405,9 +420,6 @@ for (const [colorScheme, word, body] of [
   })
 }
 
-const PIXEL =
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII='
-
 // An inline image the message carries itself, which the frame shows
 const RELATED =
   `--related\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<p>dotterel</p><img src="cid:logo@sender.example">\r\n` +
@@ -423,7 +435,6 @@ for (const [word, body, contentType] of [
     '<div style="background-image:linear-gradient(#ffffff,#ffffff)"><p>skua</p></div>',
   ],
   ['tern', '<body link="#000080"><p>tern</p></body>'],
-  ['petrel', `<p>petrel</p><img srcset="data:image/png;base64,${PIXEL}">`],
   ['fulmar', '<p>fulmar</p><hr color="#000000">'],
   ['kestrel', '<p style="font-size:12px;/*x*/color:#000000">kestrel</p>'],
   ['plover', '<p style="border:1px solid #cccccc">plover</p>'],
@@ -432,8 +443,6 @@ for (const [word, body, contentType] of [
     'sandpiper',
     '<table style="background:#f4f4f4"><tr><td><p>sandpiper</p></td></tr></table>',
   ],
-  // URL parsing drops the tab, so the frame shows this data: image
-  ['stint', `<p>stint</p><img src="da&#9;ta:image/png;base64,${PIXEL}">`],
   // An image the frame cannot load may still paint something of its own
   [
     'dunlin',
