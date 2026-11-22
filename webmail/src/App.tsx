@@ -21,6 +21,7 @@ import {
   type Toast,
   type ToastAction,
 } from './Toast'
+import { VERSION } from './Update'
 
 // A mailbox's folders and pages, each with an address of its own
 const PAGES = {
@@ -445,34 +446,40 @@ export function App() {
         <span className="address" data-testid="address">
           {shown?.address ?? 'Administrator'}
         </span>
-        {(box || me.is_controller) && (
-          <Menu label="More">
-            {box && (
-              <>
-                <button
-                  aria-current={current === 'blocked'}
-                  onClick={() => setView('blocked')}
-                >
-                  <Icon name="block" />
-                  Blocked senders
-                </button>
-                <button onClick={download.start} disabled={download.busy}>
-                  <Icon name="download" />
-                  Download a copy
-                </button>
-              </>
-            )}
-            {me.is_controller && (
+        <Menu label="More">
+          {box && (
+            <>
               <button
-                aria-current={current === 'admin'}
-                onClick={() => setView('admin')}
+                aria-current={current === 'blocked'}
+                onClick={() => setView('blocked')}
               >
-                <Icon name="admin" />
-                Admin
+                <Icon name="block" />
+                Blocked senders
               </button>
-            )}
-          </Menu>
-        )}
+              <button onClick={download.start} disabled={download.busy}>
+                <Icon name="download" />
+                Download a copy
+              </button>
+            </>
+          )}
+          {me.is_controller && (
+            <button
+              aria-current={current === 'admin'}
+              onClick={() => setView('admin')}
+            >
+              <Icon name="admin" />
+              Admin
+            </button>
+          )}
+          {/* The page again from the server, as a phone can keep an old one */}
+          <button onClick={() => window.location.reload()}>
+            <Icon name="refresh" />
+            Reload
+          </button>
+          <p className="menu-note" data-testid="version">
+            Webmail v{VERSION}
+          </p>
+        </Menu>
         <IconButton label="Sign out" icon="signOut" onClick={signOut} />
       </header>
       <nav aria-label="Folders">

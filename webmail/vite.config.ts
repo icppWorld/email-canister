@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import path from 'node:path'
 
 import react from '@vitejs/plugin-react'
@@ -46,7 +47,11 @@ function devSettings(env: Record<string, string>): Plugin {
   }
 }
 
+const { version } = JSON.parse(readFileSync('package.json', 'utf8'))
+
 export default defineConfig(({ mode }) => ({
   plugins: [react(), devSettings(loadEnv(mode, process.cwd(), 'WEBMAIL_'))],
+  // The release, shown in the header's menu
+  define: { __WEBMAIL_VERSION__: JSON.stringify(version) },
   build: { chunkSizeWarningLimit: 1500 },
 }))

@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 
 import { App } from './App'
 import { settings } from './settings'
+import { UpdateBanner } from './Update'
 import './styles.css'
 
 // The generic build, deployed without brand/brand.mjs: say so, rather than
@@ -23,5 +24,8 @@ function NotConfigured() {
 }
 
 createRoot(document.getElementById('root')!).render(
-  <StrictMode>{settings ? <App /> : <NotConfigured />}</StrictMode>
+  <StrictMode>
+    {settings ? <App /> : <NotConfigured />}
+    <UpdateBanner />
+  </StrictMode>
 )

@@ -371,6 +371,31 @@ nav button.mailbox {
 .menu-items button[aria-current='true'] {
   font-weight: 600;
 }
+/* The release, below the menu's actions */
+.menu-note {
+  margin: 4px 0 0;
+  padding: 4px 8px 2px;
+  border-top: 1px solid var(--border);
+  color: var(--ink-muted);
+  font-size: 12px;
+}
+/* Says a newer webmail is deployed, above everything, until reloaded */
+.update {
+  position: fixed;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100vw - 32px);
+  padding: 6px 6px 6px 14px;
+  background: var(--ink);
+  color: var(--surface);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-dialog);
+}
 /* The reader's star sits among its buttons */
 .usage,
 .download-status {
@@ -576,11 +601,13 @@ button.star.on .icon {
   pointer-events: none;
 }
 /* A tint of the note's own text colour, as its background can be any */
-.toast button:hover:not(:disabled) {
+.toast button:hover:not(:disabled),
+.update button:hover:not(:disabled) {
   background: color-mix(in srgb, currentColor 20%, transparent);
 }
 /* In the note's own text colour: the focus ring's can be its background */
-.toast :focus-visible {
+.toast :focus-visible,
+.update :focus-visible {
   outline-color: currentColor;
 }
 .blocked {

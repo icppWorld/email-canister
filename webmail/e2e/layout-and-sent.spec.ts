@@ -9,6 +9,8 @@ import {
   type Route,
   test,
 } from '@playwright/test'
+import { readFileSync } from 'node:fs'
+
 import { asUser } from './as_user'
 import { env } from './local'
 import {
@@ -99,7 +101,8 @@ test('the header menu holds Blocked senders, Download a copy and, for a controll
   await openMenu(admin.page, 'More')
   const adminMenu = menu(admin.page, 'More')
   await expect(adminMenu.getByRole('button', { name: 'Admin' })).toBeVisible()
-  await expect(adminMenu.getByRole('button')).toHaveCount(1)
+  await expect(adminMenu.getByRole('button', { name: 'Reload' })).toBeVisible()
+  await expect(adminMenu.getByRole('button')).toHaveCount(2)
   await admin.context.close()
 })
 
@@ -119,7 +122,7 @@ test('a menu gives the focus back to its button, and closes when the focus leave
 
   // Tab past the last item leaves the menu, which closes behind it
   await openMenu(page, 'More')
-  const last = more.getByRole('button', { name: 'Download a copy' })
+  const last = more.getByRole('button', { name: 'Reload' })
   await last.focus()
   await page.keyboard.press('Tab')
   await expect(blockedItem).toBeHidden()
@@ -1437,5 +1440,80 @@ test('a reversing mark in an address shows as a replacement character wherever t
   await expect(
     sent.getByRole('list', { name: 'Attachments' }).getByRole('button')
   ).toHaveText(/^invoice\uFFFDfdp\.exe \(1 KB\)$/)
+  await context.close()
+})
+
+const VERSION = JSON.parse(readFileSync('package.json', 'utf8')).version
+
+// A mark on the page that a load of it again takes away
+const markPage = (page: Page) =>
+  page.evaluate(() => Object.assign(window, { notReloaded: true }))
+const reloaded = (page: Page) =>
+  page.waitForFunction(() => !('notReloaded' in window))
+
+test('the header menu shows the release, and its Reload loads the page again', async ({
+  browser,
+}) => {
+  const { context, page } = await signedIn(browser, USER_A)
+  await expect(page.getByTestId('address')).toHaveText(`alice@${DOMAIN}`)
+  await openMenu(page, 'More')
+  await expect(menu(page, 'More').getByTestId('version')).toHaveText(
+    `Webmail v${VERSION}`
+  )
+  await markPage(page)
+  await menuItem(page, 'More', 'Reload')
+  await reloaded(page)
+  await expect(page.getByTestId('address')).toHaveText(`alice@${DOMAIN}`)
+  await context.close()
+})
+
+// A phone shows an open tab again without loading it: the check runs when the
+// page comes back into view
+test('a newer webmail deployed shows a banner when the page comes back into view, whose Reload loads it', async ({
+  browser,
+}) => {
+  const { context, page } = await signedIn(browser, USER_A)
+  await expect(page.getByTestId('address')).toHaveText(`alice@${DOMAIN}`)
+  const banner = page.getByRole('status').filter({ hasText: 'newer version' })
+  const backInView = async () => {
+    const asked = page.waitForResponse(
+      (r) =>
+        new URL(r.url()).pathname === '/' &&
+        r.request().resourceType() === 'fetch'
+    )
+    await page.evaluate(() =>
+      document.dispatchEvent(new Event('visibilitychange'))
+    )
+    await asked
+  }
+  // The same build: no banner
+  await backInView()
+  await page.waitForTimeout(500)
+  await expect(banner).toHaveCount(0)
+
+  // The server's page names another script, as after a deploy
+  const newer = async (route: Route) => {
+    const response = await route.fetch()
+    const html = (await response.text()).replace(
+      /\/assets\/index-[^"]+\.js/,
+      '/assets/index-newer.js'
+    )
+    await route.fulfill({ response, body: html })
+  }
+  await page.route(
+    (url) => url.pathname === '/',
+    (route) =>
+      route.request().resourceType() === 'fetch'
+        ? newer(route)
+        : route.fallback()
+  )
+  await backInView()
+  await expect(banner).toBeVisible()
+  await page.unrouteAll()
+  await markPage(page)
+  await banner.getByRole('button', { name: 'Reload' }).click()
+  await reloaded(page)
+  await expect(page.getByTestId('address')).toHaveText(`alice@${DOMAIN}`)
+  await expect(banner).toHaveCount(0)
   await context.close()
 })
