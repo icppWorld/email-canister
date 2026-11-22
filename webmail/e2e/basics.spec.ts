@@ -610,6 +610,67 @@ test('remote images load only after Show images, and only that time', async ({
   await context.close()
 })
 
+// A message laid out for a 600px column with no layout for a narrow screen,
+// as many newsletters are, is shrunk to fit a narrow reader, as phone mail
+// apps do. It is measured without its remote images, and one that fits is
+// left as it is.
+test('a message wider than the reader is shrunk to fit it, measured without its images', async ({
+  browser,
+}) => {
+  const pic = 'https://images.example.test/wide.png'
+  deliver({
+    subject: 'Wide gannet',
+    body:
+      `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">` +
+      `<html><head><style>@media only screen and (max-width:600px) { }</style>` +
+      `<!--[if mso]><style>a{text-decoration:none}</style><![endif]--></head><body>` +
+      `<table width="100%"><tr><td align="center"><table style="width:600px"><tr>` +
+      `<td style="min-width:600px"><img src="${pic}" width="600" height="1" style="display:block;width:600px" alt="">` +
+      `<p>gannet</p></td></tr></table></td></tr></table></body></html>`,
+  })
+  deliver({
+    subject: 'Narrow shag',
+    body: `<table width="100%" style="max-width:600px"><tr><td><p>shag</p></td></tr></table>`,
+  })
+  await waitDrained()
+  const { context, page } = await signedIn(browser, USER_A)
+  const requested: string[] = []
+  await context.route('https://images.example.test/**', (route) => {
+    requested.push(route.request().url())
+    return route.abort()
+  })
+  const frame = page.locator('iframe.body')
+  const fits = () =>
+    bodyOf(page).evaluate(() => {
+      const root = document.documentElement
+      return root.scrollWidth <= root.clientWidth
+    })
+  const phone = { width: 390, height: 844 }
+  const desktop = { width: 1280, height: 800 }
+
+  // Wide enough on a desktop
+  await page.setViewportSize(desktop)
+  await openMail(page, 'gannet')
+  await expect(bodyOf(page).getByText('gannet')).toBeVisible()
+  await expect(frame).toHaveAttribute('data-fit', '1')
+  // Shrunk on a phone, and measured again at the new width
+  await page.setViewportSize(phone)
+  await expect(frame).toHaveAttribute('data-fit', /^0\.\d+$/)
+  expect(await fits()).toBe(true)
+  await expect(bodyOf(page).getByText('gannet')).toBeVisible()
+  await expect(page.locator('iframe.measure')).toHaveCount(0)
+  expect(requested).toEqual([])
+
+  // A message that fits by itself is left as it is
+  await page.setViewportSize(desktop)
+  await openMail(page, 'shag')
+  await expect(bodyOf(page).getByText('shag')).toBeVisible()
+  await page.setViewportSize(phone)
+  await expect(frame).toHaveAttribute('data-fit', '1')
+  expect(await fits()).toBe(true)
+  await context.close()
+})
+
 test('only what the list of HTML allows reaches the reader, and what it drops keeps its text', async ({
   browser,
 }) => {

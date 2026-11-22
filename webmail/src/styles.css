@@ -654,6 +654,16 @@ button.star.on .icon {
   background: var(--surface-raised);
 }
 /* The same scheme as the frame keeps its canvas transparent, so this shows */
+/* The hidden copy a message is measured on (MessageBody.tsx) */
+.measure {
+  position: fixed;
+  top: 0;
+  left: 0;
+  height: 100px;
+  border: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
 .body.paper {
   background: #fff;
   color-scheme: light;

@@ -489,16 +489,20 @@ export const SANDBOX = 'allow-popups allow-popups-to-escape-sandbox'
 // loaded then sends no Referer. Looking up the hosts of the message's links
 // ahead of a click is switched off, which no policy covers and one engine
 // does in a frame like this one. The page style comes before the message, so
-// the message's own styles win.
+// the message's own styles win. A zoom below 1 shrinks a message wider than
+// the frame to fit it; on the root element, where the message's own attributes
+// for it are not added.
 export function sandboxDocument(
   body: string,
   paper: boolean,
   page: PageStyle,
-  images = false
+  images = false,
+  zoom = 1
 ): string {
   const policy = `default-src 'none'; img-src data:${images ? ' https:' : ''}; style-src 'unsafe-inline'`
+  const root = zoom < 1 ? `<html style="zoom:${zoom}">` : '<html>'
   return (
-    `<!doctype html><html><head><meta charset="utf-8">` +
+    `<!doctype html>${root}<head><meta charset="utf-8">` +
     `<meta http-equiv="Content-Security-Policy" content="${policy}">` +
     `<meta name="referrer" content="no-referrer">` +
     `<meta http-equiv="x-dns-prefetch-control" content="off">` +
