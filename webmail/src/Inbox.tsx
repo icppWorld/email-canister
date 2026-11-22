@@ -202,13 +202,13 @@ const kept = (address: string) =>
   address.replace(/[A-Z]/g, (c) => c.toLowerCase())
 
 function senderOf(summary: Summary): string {
-  return summary.sender || summary.envelope_from
+  return shown(summary.sender || summary.envelope_from)
 }
 
-// A summary as the list shows it: see `shown`
+// A summary as the list shows it: see `shown`. The sender is shown through
+// senderOf, which may take it from the envelope.
 const shownSummary = (summary: Summary): Summary => ({
   ...summary,
-  sender: shown(summary.sender),
   subject: shown(summary.subject),
   preview: shown(summary.preview),
 })
