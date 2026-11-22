@@ -610,6 +610,39 @@ test('remote images load only after Show images, and only that time', async ({
   await context.close()
 })
 
+test('only what the list of HTML allows reaches the reader, and what it drops keeps its text', async ({
+  browser,
+}) => {
+  deliver({
+    subject: 'Listed bittern',
+    body:
+      // A style sheet wrapped as older mail wraps it still applies
+      `<html><head><title>A title</title><style><!-- p.wrapped{color:rgb(1,2,3)} --></style></head>` +
+      `<body topmargin="0"><p class="wrapped">bittern</p>` +
+      // An element and attributes no rule of the reader's own names
+      `<newthing src="https://ahead.example.test/n">kept words</newthing>` +
+      `<p id="odd" attributionsrc="https://ahead.example.test/a" onclick="top.__xss=1">para</p>` +
+      `<o:p>office</o:p></body></html>`,
+  })
+  await waitDrained()
+  const { context, page } = await signedIn(browser, USER_A)
+  await openMail(page, 'bittern')
+  const frame = page.frameLocator('iframe.body')
+  const body = bodyOf(page)
+  await expect(body.locator('p.wrapped')).toHaveCSS('color', 'rgb(1, 2, 3)')
+  await expect(frame.locator('newthing')).toHaveCount(0)
+  await expect(body).toContainText('kept words')
+  await expect(body).toContainText('office')
+  await expect(body).not.toContainText('A title')
+  await expect(frame.locator('#odd')).toHaveText('para')
+  expect(
+    await frame
+      .locator('#odd')
+      .evaluate((element) => element.getAttributeNames().sort())
+  ).toEqual(['id'])
+  await context.close()
+})
+
 test('a link in a message opens in a new tab, and only a full web address', async ({
   browser,
 }) => {

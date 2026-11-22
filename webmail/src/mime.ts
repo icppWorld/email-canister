@@ -1,6 +1,7 @@
 // Turns a stored message into what the reader shows. The message is hostile
 // input: its HTML only ever goes into the sandboxed frame built here.
 
+import DOMPurify from 'dompurify'
 import PostalMime from 'postal-mime'
 import { shown } from './format'
 
@@ -376,31 +377,79 @@ function parsedInFrame(body: string): Document {
   )
 }
 
-// The message without the elements and the attribute the frame leaves out,
-// and with its links made safe, checked on the parse the frame makes of it:
-// markup written out and parsed again can grow elements the first parse did
-// not have, so it is repeated until a parse finds nothing to change. A
-// message that keeps growing them is shown as its text.
+// Only what a maintained list of HTML's elements and attributes allows goes
+// on to the frame, so an element no rule here knows of, a new one in some
+// browser among them, is left out too. What the list drops keeps its text.
+// - The whole document, as mail sets colours on its body and styles in its head.
+// - Added: the target the links get, and the colours and margins older mail
+//   sets on its body.
+// - A message runs no script, so an id or a name can stand in for nothing of
+//   the page's: they stay as written, for the message's own styles.
+const ALLOW_LIST = {
+  USE_PROFILES: { html: true },
+  WHOLE_DOCUMENT: true,
+  FORBID_TAGS: ['template'],
+  ADD_ATTR: [
+    'target',
+    'text',
+    'link',
+    'vlink',
+    'alink',
+    'leftmargin',
+    'topmargin',
+    'marginwidth',
+    'marginheight',
+  ],
+  SANITIZE_DOM: false,
+}
+
+// The marks older mail wraps a style sheet in, which mean nothing in a style
+// sheet and for which the list would drop it whole
+const WRAPPING = /<!--|-->/g
+const wrapped = (style: Element) =>
+  style instanceof HTMLStyleElement &&
+  (style.textContent ?? '').search(WRAPPING) >= 0
+
+// The parse the frame makes of `body`, and `body` again when it had something
+// the frame leaves out, a link to make safe or a wrapped style sheet
+function tidied(body: string): { doc: Document; tidy?: string } {
+  const doc = parsedInFrame(body)
+  const found = doc.querySelectorAll(
+    `${LEFT_OUT}, ${AS_TEXT}, [${LEFT_OUT_ATTRIBUTE}]`
+  )
+  const links = Array.from(doc.querySelectorAll('a, area')).filter(
+    (link) => !safeLink(link)
+  )
+  const styles = Array.from(doc.querySelectorAll('style')).filter(wrapped)
+  if (found.length + links.length + styles.length === 0) return { doc }
+  // In the document's order: what was inside one already taken out is taken
+  // out of nothing
+  found.forEach((element) => {
+    if (element.matches(AS_TEXT)) element.replaceWith(textOf(element))
+    else if (element.matches(LEFT_OUT)) element.remove()
+    else element.removeAttribute(LEFT_OUT_ATTRIBUTE)
+  })
+  links.forEach(makeSafe)
+  styles.forEach((style) => {
+    style.textContent = (style.textContent ?? '').replace(WRAPPING, '')
+  })
+  return { doc, tidy: doc.documentElement.outerHTML }
+}
+
+// The message as the frame may hold it.
+// - Tidied once first, which keeps the text of a drawing that the list would
+//   drop whole, and a style sheet it would drop for its wrapping.
+// - Then through the list.
+// - Then checked on the parse the frame makes of it: markup written out and
+//   parsed again can grow elements the first parse did not have, so it is
+//   tidied until a parse finds nothing to change. A message that keeps growing
+//   them is shown as its text.
 function withoutLeftOut(html: string): { body: string; doc: Document } {
-  let body = html
+  let body = DOMPurify.sanitize(tidied(html).tidy ?? html, ALLOW_LIST)
   for (let pass = 0; pass < 4; pass += 1) {
-    const doc = parsedInFrame(body)
-    const found = doc.querySelectorAll(
-      `${LEFT_OUT}, ${AS_TEXT}, [${LEFT_OUT_ATTRIBUTE}]`
-    )
-    const links = Array.from(doc.querySelectorAll('a, area')).filter(
-      (link) => !safeLink(link)
-    )
-    if (found.length === 0 && links.length === 0) return { body, doc }
-    // In the document's order: what was inside one already taken out is
-    // taken out of nothing
-    found.forEach((element) => {
-      if (element.matches(AS_TEXT)) element.replaceWith(textOf(element))
-      else if (element.matches(LEFT_OUT)) element.remove()
-      else element.removeAttribute(LEFT_OUT_ATTRIBUTE)
-    })
-    links.forEach(makeSafe)
-    body = doc.documentElement.outerHTML
+    const { doc, tidy } = tidied(body)
+    if (tidy === undefined) return { body, doc }
+    body = tidy
   }
   const text = escapeHtml(parsedInFrame(body).body.textContent ?? '')
   body = `<div style="white-space:pre-wrap">${text}</div>`
