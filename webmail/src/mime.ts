@@ -311,23 +311,26 @@ export type FramedBody = { body: string; paper: boolean; remote: boolean }
 // was read; a meta could loosen the frame's referrer policy; a template can
 // become a shadow root, and a frame holds a document of its own, which a check
 // here does not see into; a base would make a relative address a remote one;
-// one engine loads a model outside the policy. A <frame> needs no entry: a
+// one engine loads a model outside the policy; an SVG animation can give a
+// link another address after it was checked. A <frame> needs no entry: a
 // body cannot hold one.
-const LEFT_OUT = 'link, meta, template, iframe, base, model'
+const LEFT_OUT = 'link, meta, template, iframe, base, model, set, animate'
 // An element's own referrer policy, which would win over the frame's
 const LEFT_OUT_ATTRIBUTE = 'referrerpolicy'
 
 // A link opens in a new tab, on the reader's click, which is all the frame's
 // sandbox lets a message open. Only an address written out in full, over http
-// or https: any other, a script or one relative to the webmail's own address
-// among them, loses its href. The new page gets no referrer and no handle on
-// the webmail, and the link cannot report the click with `ping`.
+// or https, on an HTML link: any other, a script or one relative to the
+// webmail's own address among them, and a link drawn in SVG, loses its href.
+// The new page gets no referrer and no handle on the webmail, and the link
+// cannot report the click with `ping`.
 // eslint-disable-next-line no-control-regex
 const LINK_URL = /^[\x00-\x20]*https?:\/\//i
 const LINK_REL = 'noopener noreferrer'
 const LINK_EXTRAS = ['xlink:href', 'ping']
 
-const opens = (link: Element) => LINK_URL.test(attributeUrl(link, 'href'))
+const opens = (link: Element) =>
+  link instanceof HTMLElement && LINK_URL.test(attributeUrl(link, 'href'))
 
 // Whether the link is as the frame may hold it
 const safeLink = (link: Element) =>

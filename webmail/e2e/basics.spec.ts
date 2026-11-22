@@ -631,7 +631,11 @@ test('a link in a message opens in a new tab, and only a full web address', asyn
       `<a href="${landing}" target="_top" ping="https://images.example.test/ping">a web link</a> ` +
       `<a href="javascript:top.__xss=1">a script link</a> ` +
       `<a href="/#bob/trash">a relative link</a> ` +
-      `<a href="mailto:x@sender.example">a mail link</a>`,
+      `<a href="mailto:x@sender.example">a mail link</a>` +
+      // An animation would give this one another address after the check
+      `<svg width="90" height="20"><a href="${landing}"><set attributeName="href" ` +
+      `to="https://images.example.test/animated" begin="0s" dur="indefinite"/>` +
+      `<text y="15">an svg link</text></a></svg>`,
   })
   await waitDrained()
   const { context, page } = await signedIn(browser, USER_A)
@@ -646,6 +650,8 @@ test('a link in a message opens in a new tab, and only a full web address', asyn
   await expect(body.getByText('avocet')).toBeVisible()
   for (const inert of ['a script link', 'a relative link', 'a mail link'])
     await expect(body.getByText(inert)).not.toHaveAttribute('href')
+  await expect(body.locator('svg a')).not.toHaveAttribute('href')
+  await expect(body.locator('set')).toHaveCount(0)
   const [landed] = await Promise.all([
     context.waitForEvent('page'),
     body.getByText('a web link').click(),
