@@ -24,6 +24,7 @@ email-canister grows in small releases, driven by running it for real mailboxes.
 - A compact mailbox (v0.7.0): every webmail button an icon with a tooltip, so the list's toolbar fits on one line; a divider between the message list and the reader that can be dragged, kept per browser; Sent with checkboxes, a hover Delete, a bulk Delete and Empty Sent, through `mail_outbox_delete_many`, keeping mail being sent; and Attach adding files, listed in the compose window, each with Remove.
 - A quieter reader (v0.8.0): remote images load only after the reader's Show images, for that message; a message's `<link>`, `<meta>`, `<template>` and frame elements are left out of the reader, which closes ways an opened message could signal its sender; a reload after a deploy shows the new webmail.
 - A stricter reader (v0.9.0): links in a message open in a new tab, for a full web address only; names, addresses, subjects, previews and file names shown with a visible character in place of a control character or a mark that reverses text; a message goes through an allow-list of HTML before it is shown; fixes from an audit of what an opened message, its sender or another site can learn about the reader.
+- A reader for the phone (v0.10.0): the webmail names its release and offers a Reload in the header menu, and shows a banner when a newer one is deployed, as a phone can keep an old webmail; Reload asks first while a message is being written or a copy downloading; a message laid out wider than the reader shrunk to fit it, as phone mail apps do.
 
 ## Next
 
@@ -32,7 +33,6 @@ email-canister grows in small releases, driven by running it for real mailboxes.
 - The user's mailbox experience, further:
   - plain mail from more mail services in the brand's colours;
   - keyboard shortcuts, and the focus kept inside the compose window in full screen;
-  - a note when a new webmail version is deployed, with a button to reload, so a tab left open never calls a backend whose interface changed under it;
   - at phone width, the device's back gesture returning from a message to the list;
   - an `Unopened` folder: Inbox mail that stays unopened for a week moves there, and mail in it moves to Trash 30 days after it arrived in the Inbox, as Spam is cleaned up, with a setting of its own;
   - the smaller webmail and Admin panel items noted during v0.2.0 and v0.3.0, among them every row action checking that the Admin panel's list is current, and errors shown without the agent's call details.
