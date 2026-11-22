@@ -30,6 +30,7 @@ import {
   messages,
   noLongerHere,
   noteOf,
+  shown,
 } from './format'
 import { Icon, type IconName } from './Icon'
 import { MessageBody } from './MessageBody'
@@ -203,6 +204,14 @@ const kept = (address: string) =>
 function senderOf(summary: Summary): string {
   return summary.sender || summary.envelope_from
 }
+
+// A summary as the list shows it: see `shown`
+const shownSummary = (summary: Summary): Summary => ({
+  ...summary,
+  sender: shown(summary.sender),
+  subject: shown(summary.subject),
+  preview: shown(summary.preview),
+})
 
 function quote(mail: ParsedMail): string {
   return (
@@ -608,8 +617,9 @@ export function Inbox({
         }
         if (request !== latestLoad.current) return
         olderShown.current = append
+        const summaries = page.items.map(shownSummary)
         setItems((previous) =>
-          append ? [...previous, ...page.items] : page.items
+          append ? [...previous, ...summaries] : summaries
         )
         setMore({ search, cursor: page.cursor })
         setError('')

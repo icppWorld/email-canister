@@ -59,7 +59,9 @@ test('serves a strict content security policy, caching that shows a new deploy, 
   expect(policy).toContain("img-src 'self' data: https:;")
   expect(policy).toContain("font-src 'self';")
   expect(policy).toContain("connect-src 'self' https://icp0.io;")
+  expect(policy).toContain("frame-src 'none';")
   expect(policy).toContain("frame-ancestors 'none'")
+  expect(headers['cross-origin-opener-policy']).toBe('same-origin-allow-popups')
   const handoff = await page.evaluate(async () => {
     const reply = await fetch('/.well-known/ic-smtp-canister-id')
     return reply.text()
@@ -90,6 +92,36 @@ test('serves a strict content security policy, caching that shows a new deploy, 
     )
     expect(reply.policy, url).toContain("default-src 'none'")
   }
+})
+
+test('a page that opens the webmail keeps no handle on it', async ({
+  context,
+}) => {
+  await context.route('https://opener.example.test/', (route) =>
+    route.fulfill({ contentType: 'text/html', body: '<p>opener</p>' })
+  )
+  const opener = await context.newPage()
+  await opener.goto('https://opener.example.test/')
+  const [webmail] = await Promise.all([
+    context.waitForEvent('page'),
+    opener.evaluate((url) => {
+      ;(window as unknown as { opened: Window | null }).opened =
+        window.open(url)
+    }, env.url),
+  ])
+  await webmail.waitForLoadState()
+  await expect(
+    webmail.getByRole('heading', { name: 'Test Mail' })
+  ).toBeVisible()
+  // Cut off, the handle reads as a closed window: it cannot count the
+  // webmail's frames or change its address
+  await expect
+    .poll(() =>
+      opener.evaluate(
+        () => (window as unknown as { opened: Window | null }).opened?.closed
+      )
+    )
+    .toBe(true)
 })
 
 test("shows the deployment's brand, from e2e/brand", async ({ page }) => {
@@ -491,6 +523,7 @@ test('remote images load only after Show images, and only that time', async ({
       // with a referrer policy of its own, and a template
       `<p>razorbill</p><img src="${pic}" alt="Remote pic" referrerpolicy="unsafe-url">` +
       `<template><p>kept aside</p></template>` +
+      `<model src="https://ahead.example.test/m.usdz"></model>` +
       `<div style="background:url(${bg})">x</div>` +
       // Loaded once the frame has reached past the remote image
       `<img src="data:image/png;base64,${PIXEL}" alt="Local pic">` +
@@ -513,9 +546,22 @@ test('remote images load only after Show images, and only that time', async ({
   // On the context, which sees the sandboxed frame's requests too
   const requested: string[] = []
   const referrers: (string | undefined)[] = []
-  await context.route('https://images.example.test/**', (route) => {
+  const cookies: (string | undefined)[] = []
+  // A cookie the reader's browser holds for the images' host
+  await context.addCookies([
+    {
+      name: 'known',
+      value: 'reader',
+      domain: 'images.example.test',
+      path: '/',
+      secure: true,
+      sameSite: 'None',
+    },
+  ])
+  await context.route('https://images.example.test/**', async (route) => {
     requested.push(route.request().url())
     referrers.push(route.request().headers()['referer'])
+    cookies.push((await route.request().allHeaders())['cookie'])
     return route.fulfill({
       contentType: 'image/png',
       headers: { 'Cache-Control': 'no-store' },
@@ -538,6 +584,11 @@ test('remote images load only after Show images, and only that time', async ({
   await expect(frame.locator('iframe')).toHaveCount(0)
   await expect(frame.locator('template')).toHaveCount(0)
   await expect(frame.locator('base')).toHaveCount(0)
+  await expect(frame.locator('model')).toHaveCount(0)
+  // The hosts of the message's links are not looked up ahead of a click
+  await expect(
+    frame.locator('meta[http-equiv="x-dns-prefetch-control"][content="off"]')
+  ).toHaveCount(1)
   await expect(frame.locator('[referrerpolicy]')).toHaveCount(0)
   await expect(frame.locator('meta[content="unsafe-url"]')).toHaveCount(0)
 
@@ -545,6 +596,7 @@ test('remote images load only after Show images, and only that time', async ({
   await expect(picture).toHaveJSProperty('naturalWidth', 1)
   await expect.poll(() => requested).toEqual(expect.arrayContaining([pic, bg]))
   expect(referrers.filter(Boolean)).toEqual([])
+  expect(cookies.filter(Boolean)).toEqual([])
   await expect(showImages).toHaveCount(0)
 
   // A message without remote images has nothing to show
@@ -803,6 +855,17 @@ test('hostile headers and file names stay text', async ({ browser }) => {
     from: `"${payload}" <a@sender.example>`,
     body: '<p>x</p>',
   })
+  // A mark that reverses what follows, U+202E: the file would read as
+  // "invoiceexe.pdf", and the sender as a bank's address
+  deliver({
+    to: 'bob',
+    subject: '=?UTF-8?Q?Turned_=E2=80=AEnibor?=',
+    from: '=?UTF-8?Q?Bank_=E2=80=AE=3Eelpmaxe.knab=40ofni=3C?= <a@sender.example>',
+    contentType: 'multipart/mixed; boundary=b',
+    body:
+      `--b\r\nContent-Type: text/plain\r\n\r\nhello\r\n` +
+      `--b\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename*=UTF-8''invoice%E2%80%AEfdp.exe\r\n\r\nx\r\n--b--\r\n`,
+  })
   const attachment =
     `--b\r\nContent-Type: text/plain\r\n\r\nhello\r\n` +
     `--b\r\nContent-Type: text/html; name="x.html"\r\nContent-Disposition: attachment; filename="<img src=x onerror=top.__xss=1>.html"\r\n\r\n<script>top.__xss=1</script>\r\n--b--\r\n`
@@ -815,6 +878,17 @@ test('hostile headers and file names stay text', async ({ browser }) => {
   await waitDrained()
 
   const { context, page } = await signedIn(browser, USER_B)
+  // The reversing mark is gone from the list, the reader and the file's name
+  await page.getByLabel('Search mail').fill('Turned')
+  await page.getByLabel('Search mail').press('Enter')
+  const turned = page.locator('button.message', { hasText: 'Turned' })
+  await expect(turned).toHaveText(/Turned nibor/)
+  await expect(turned).toHaveText(/Bank >elpmaxe\.knab@ofni</)
+  await turned.click()
+  await expect(page.getByTestId('subject')).toHaveText('Turned nibor')
+  await expect(
+    reader(page).getByRole('button', { name: /^invoicefdp\.exe/ })
+  ).toBeVisible()
   for (const word of ['pelican', 'toucan', 'heron']) {
     await page.getByLabel('Search mail').fill(word)
     await page.getByLabel('Search mail').press('Enter')

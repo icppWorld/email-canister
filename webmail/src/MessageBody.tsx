@@ -51,6 +51,9 @@ export function MessageBody({
       className={paper ? 'body paper' : 'body'}
       title="Message body"
       sandbox=""
+      // An image shown carries none of the reader's cookies for its host.
+      // Spread, as React's types do not know the attribute yet.
+      {...{ credentialless: '' }}
       srcDoc={srcdoc}
     />
   )

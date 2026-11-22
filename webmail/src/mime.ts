@@ -2,6 +2,7 @@
 // input: its HTML only ever goes into the sandboxed frame built here.
 
 import PostalMime from 'postal-mime'
+import { shown } from './format'
 
 export type ParsedAttachment = {
   filename: string
@@ -36,17 +37,19 @@ export async function parseMail(raw: Uint8Array): Promise<ParsedMail> {
     attachmentEncoding: 'arraybuffer',
   })
   const from = mail.from as Address | undefined
+  const addresses = (list?: unknown) =>
+    shown(((list ?? []) as Address[]).map(formatAddress).join(', '))
   return {
-    from: formatAddress(from),
+    from: shown(formatAddress(from)),
     fromAddress: from?.address ?? '',
-    to: ((mail.to ?? []) as Address[]).map(formatAddress).join(', '),
-    cc: ((mail.cc ?? []) as Address[]).map(formatAddress).join(', '),
-    subject: mail.subject ?? '',
+    to: addresses(mail.to),
+    cc: addresses(mail.cc),
+    subject: shown(mail.subject ?? ''),
     date: mail.date ?? '',
     html: mail.html,
     text: mail.text ?? '',
     attachments: mail.attachments.map((a) => ({
-      filename: a.filename ?? 'attachment',
+      filename: shown(a.filename ?? '') || 'attachment',
       mimeType: a.mimeType,
       content: new Uint8Array(a.content as ArrayBuffer),
       contentId: a.contentId?.replace(/^<|>$/g, ''),
@@ -307,9 +310,10 @@ export type FramedBody = { body: string; paper: boolean; remote: boolean }
 // connects ahead, such as preconnect, which would tell the sender the message
 // was read; a meta could loosen the frame's referrer policy; a template can
 // become a shadow root, and a frame holds a document of its own, which a check
-// here does not see into; a base would make a relative address a remote one.
-// A <frame> needs no entry: a body cannot hold one.
-const LEFT_OUT = 'link, meta, template, iframe, base'
+// here does not see into; a base would make a relative address a remote one;
+// one engine loads a model outside the policy. A <frame> needs no entry: a
+// body cannot hold one.
+const LEFT_OUT = 'link, meta, template, iframe, base, model'
 // An element's own referrer policy, which would win over the frame's
 const LEFT_OUT_ATTRIBUTE = 'referrerpolicy'
 
@@ -358,7 +362,9 @@ export function frameBody(
 // The document for <iframe sandbox="">. The policy comes first, so it applies
 // to everything the message contains, and allows nothing from the network but
 // https: images, and those only with `images`, after Show images. An image
-// loaded then sends no Referer. The page style comes before the message, so
+// loaded then sends no Referer. Looking up the hosts of the message's links
+// ahead of a click is switched off, which no policy covers and one engine
+// does in a frame like this one. The page style comes before the message, so
 // the message's own styles win.
 export function sandboxDocument(
   body: string,
@@ -371,6 +377,7 @@ export function sandboxDocument(
     `<!doctype html><html><head><meta charset="utf-8">` +
     `<meta http-equiv="Content-Security-Policy" content="${policy}">` +
     `<meta name="referrer" content="no-referrer">` +
+    `<meta http-equiv="x-dns-prefetch-control" content="off">` +
     `<style>${pageStyleSheet(paper, page)}</style>` +
     `</head><body>${body}</body></html>`
   )
