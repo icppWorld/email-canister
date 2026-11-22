@@ -665,7 +665,9 @@ test('a link in a message opens in a new tab, and only a full web address', asyn
       `<a href="javascript:top.__xss=1">a script link</a> ` +
       `<a href="/#bob/trash">a relative link</a> ` +
       `<a href="mailto:x@sender.example">a mail link</a> ` +
-      `<a href="https://">an unreadable link</a>` +
+      `<a href="https://">an unreadable link</a> ` +
+      // A link to a place in the message itself only moves the message
+      `<a href="#end" target="_top">a jump</a><p id="end">the end</p>` +
       `<img src="data:image/png;base64,${PIXEL}" usemap="#m" alt="A map"><map name="m">` +
       `<area shape="rect" coords="0,0,1,1" href="${landing}" target="_top" alt="An area"></map>`,
   })
@@ -687,6 +689,12 @@ test('a link in a message opens in a new tab, and only a full web address', asyn
     'an unreadable link',
   ])
     await expect(body.getByText(inert)).not.toHaveAttribute('href')
+  const jump = body.getByText('a jump')
+  await expect(jump).toHaveAttribute('href', '#end')
+  await expect(jump).not.toHaveAttribute('target')
+  await jump.click()
+  await expect(body.getByText('avocet')).toBeVisible()
+  expect(context.pages()).toHaveLength(1)
   for (const link of [body.getByText('a web link'), body.locator('area')]) {
     await expect(link).toHaveAttribute('target', '_blank')
     await expect(link).toHaveAttribute('rel', 'noopener noreferrer')
