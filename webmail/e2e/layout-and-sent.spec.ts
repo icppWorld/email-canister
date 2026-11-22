@@ -1468,15 +1468,12 @@ test('the header menu shows the release, and its Reload loads the page again', a
   await reloaded(page)
   await expect(page.getByTestId('address')).toHaveText(`alice@${DOMAIN}`)
 
-  // With a message being written, the browser asks first, and staying keeps it
+  // With a message being written, the webmail asks first, and staying keeps it
   await compose(page, 'Unsent loon')
   await markPage(page)
-  const asked = page.waitForEvent('dialog')
-  const clicked = menuItem(page, 'More', 'Reload')
-  const dialog = await asked
-  expect(dialog.type()).toBe('beforeunload')
-  await dialog.dismiss()
-  await clicked
+  const asked = answer(page, false)
+  await menuItem(page, 'More', 'Reload')
+  expect(asked).toEqual([expect.stringContaining('message being written')])
   await page.waitForTimeout(1_000)
   expect(await page.evaluate(() => 'notReloaded' in window)).toBe(true)
   await expect(page.getByLabel('Subject', { exact: true })).toHaveValue(

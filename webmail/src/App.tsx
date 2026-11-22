@@ -21,7 +21,7 @@ import {
   type Toast,
   type ToastAction,
 } from './Toast'
-import { VERSION } from './Update'
+import { reload, setUnsaved, VERSION } from './Update'
 
 // A mailbox's folders and pages, each with an address of its own
 const PAGES = {
@@ -192,15 +192,12 @@ export function App() {
   const current = box !== null ? view : 'admin'
   const download = useDownload(box, shown?.address ?? '', backend)
 
-  // A reload, such as for a newer webmail, or a closed tab asks first while a
-  // message is open in Compose, which is kept in memory only, or a copy is
-  // downloading
+  // A reload or a closed tab asks first while a message is being written or a
+  // copy downloading
   const unsaved = draft !== null || download.busy
   useEffect(() => {
-    if (!unsaved) return
-    const ask = (e: BeforeUnloadEvent) => e.preventDefault()
-    window.addEventListener('beforeunload', ask)
-    return () => window.removeEventListener('beforeunload', ask)
+    setUnsaved(unsaved)
+    return () => setUnsaved(false)
   }, [unsaved])
 
   // The draft open now, for a send that ends later
@@ -483,7 +480,7 @@ export function App() {
             </button>
           )}
           {/* The page again from the server, as a phone can keep an old one */}
-          <button onClick={() => window.location.reload()}>
+          <button onClick={reload}>
             <Icon name="refresh" />
             Reload
           </button>

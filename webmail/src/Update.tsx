@@ -9,6 +9,35 @@ export const VERSION = __WEBMAIL_VERSION__
 // each time it comes back into view
 const CHECK_MS = 10 * 60_000
 
+// Work a reload would lose: a message open in Compose, which is kept in memory
+// only, or a copy downloading. Set by the app.
+let unsaved = false
+let leaving = false
+export const setUnsaved = (value: boolean) => {
+  unsaved = value
+}
+
+// The browser asks before a tab with such work closes. Not every browser asks
+// at a reload, so the webmail's own Reload asks itself.
+window.addEventListener('beforeunload', (e) => {
+  if (!unsaved || leaving) return
+  e.preventDefault()
+  e.returnValue = ''
+})
+
+export function reload(): void {
+  if (
+    unsaved &&
+    !window.confirm(
+      'Reload the webmail? The message being written, or the copy downloading, is lost.'
+    )
+  ) {
+    return
+  }
+  leaving = true
+  window.location.reload()
+}
+
 // What a deploy changes in a page: the script it names, which each build names
 // by a hash of its content, and the settings brand/brand.mjs writes into it
 const deployOf = (doc: Document) => {
@@ -56,15 +85,19 @@ export function UpdateBanner() {
           asking = false
         })
     }
+    // A page the browser restores from its cache starts again without a mount
+    const restored = (e: PageTransitionEvent) => {
+      if (e.persisted) check()
+    }
     check()
     const timer = window.setInterval(check, CHECK_MS)
     document.addEventListener('visibilitychange', check)
-    window.addEventListener('pageshow', check)
+    window.addEventListener('pageshow', restored)
     return () => {
       gone = true
       window.clearInterval(timer)
       document.removeEventListener('visibilitychange', check)
-      window.removeEventListener('pageshow', check)
+      window.removeEventListener('pageshow', restored)
     }
   }, [newer])
 
@@ -78,7 +111,7 @@ export function UpdateBanner() {
             className="bare"
             label="Reload"
             icon="refresh"
-            onClick={() => window.location.reload()}
+            onClick={reload}
           />
           <IconButton
             className="bare"
