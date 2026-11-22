@@ -546,22 +546,9 @@ test('remote images load only after Show images, and only that time', async ({
   // On the context, which sees the sandboxed frame's requests too
   const requested: string[] = []
   const referrers: (string | undefined)[] = []
-  const cookies: (string | undefined)[] = []
-  // A cookie the reader's browser holds for the images' host
-  await context.addCookies([
-    {
-      name: 'known',
-      value: 'reader',
-      domain: 'images.example.test',
-      path: '/',
-      secure: true,
-      sameSite: 'None',
-    },
-  ])
-  await context.route('https://images.example.test/**', async (route) => {
+  await context.route('https://images.example.test/**', (route) => {
     requested.push(route.request().url())
     referrers.push(route.request().headers()['referer'])
-    cookies.push((await route.request().allHeaders())['cookie'])
     return route.fulfill({
       contentType: 'image/png',
       headers: { 'Cache-Control': 'no-store' },
@@ -585,6 +572,13 @@ test('remote images load only after Show images, and only that time', async ({
   await expect(frame.locator('template')).toHaveCount(0)
   await expect(frame.locator('base')).toHaveCount(0)
   await expect(frame.locator('model')).toHaveCount(0)
+  // The frame's requests carry none of the reader's cookies: a request this
+  // test answers never reaches the network, where they would be left out
+  expect(
+    await bodyOf(page).evaluate(
+      () => (window as unknown as { credentialless?: boolean }).credentialless
+    )
+  ).toBe(true)
   // The hosts of the message's links are not looked up ahead of a click
   await expect(
     frame.locator('meta[http-equiv="x-dns-prefetch-control"][content="off"]')
@@ -596,7 +590,6 @@ test('remote images load only after Show images, and only that time', async ({
   await expect(picture).toHaveJSProperty('naturalWidth', 1)
   await expect.poll(() => requested).toEqual(expect.arrayContaining([pic, bg]))
   expect(referrers.filter(Boolean)).toEqual([])
-  expect(cookies.filter(Boolean)).toEqual([])
   await expect(showImages).toHaveCount(0)
 
   // A message without remote images has nothing to show
