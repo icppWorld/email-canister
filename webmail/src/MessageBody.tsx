@@ -137,6 +137,7 @@ export function MessageBody({
         <iframe
           key={`${copy.key}:${size.width}`}
           className="measure"
+          name="measure"
           aria-hidden="true"
           tabIndex={-1}
           inert
