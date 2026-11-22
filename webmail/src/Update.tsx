@@ -12,19 +12,11 @@ const CHECK_MS = 10 * 60_000
 // Work a reload would lose: a message open in Compose, which is kept in memory
 // only, or a copy downloading. Set by the app.
 let unsaved = false
-let leaving = false
 export const setUnsaved = (value: boolean) => {
   unsaved = value
 }
 
-// The browser asks before a tab with such work closes. Not every browser asks
-// at a reload, so the webmail's own Reload asks itself.
-window.addEventListener('beforeunload', (e) => {
-  if (!unsaved || leaving) return
-  e.preventDefault()
-  e.returnValue = ''
-})
-
+// The page again from the server, after asking when that loses work
 export function reload(): void {
   if (
     unsaved &&
@@ -34,17 +26,21 @@ export function reload(): void {
   ) {
     return
   }
-  leaving = true
   window.location.reload()
 }
 
-// What a deploy changes in a page: the script it names, which each build names
-// by a hash of its content, and the settings brand/brand.mjs writes into it
+// What a deploy changes in a page: the script and style sheets it names, which
+// each build names by a hash of their content, and the settings
+// brand/brand.mjs writes into it
 const deployOf = (doc: Document) => {
   const script = doc.querySelector('script[type="module"][src]')
   if (!script) return null
+  const sheets = Array.from(
+    doc.querySelectorAll('link[rel="stylesheet"][href]'),
+    (link) => link.getAttribute('href')
+  )
   const settings = doc.getElementById('settings')?.textContent ?? ''
-  return `${script.getAttribute('src')}\n${settings}`
+  return [script.getAttribute('src'), ...sheets, settings].join('\n')
 }
 
 // Whether the server now has another deploy than this page runs. The page is

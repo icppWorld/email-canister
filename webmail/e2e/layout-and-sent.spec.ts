@@ -1471,7 +1471,8 @@ test('the header menu shows the release, and its Reload loads the page again', a
   // With a message being written, the webmail asks first, and staying keeps it
   await compose(page, 'Unsent loon')
   await markPage(page)
-  const asked = answer(page, false)
+  // No, then yes
+  const asked = answer(page, false, true)
   await menuItem(page, 'More', 'Reload')
   expect(asked).toEqual([expect.stringContaining('message being written')])
   await page.waitForTimeout(1_000)
@@ -1479,6 +1480,10 @@ test('the header menu shows the release, and its Reload loads the page again', a
   await expect(page.getByLabel('Subject', { exact: true })).toHaveValue(
     'Unsent loon'
   )
+  // and a yes reloads, losing it
+  await menuItem(page, 'More', 'Reload')
+  await reloaded(page)
+  await expect(page.getByRole('dialog', { name: 'New message' })).toHaveCount(0)
   await context.close()
 })
 

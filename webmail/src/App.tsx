@@ -192,8 +192,8 @@ export function App() {
   const current = box !== null ? view : 'admin'
   const download = useDownload(box, shown?.address ?? '', backend)
 
-  // A reload or a closed tab asks first while a message is being written or a
-  // copy downloading
+  // The webmail's Reload asks first while a message is being written or a copy
+  // downloading
   const unsaved = draft !== null || download.busy
   useEffect(() => {
     setUnsaved(unsaved)
