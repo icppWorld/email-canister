@@ -859,6 +859,14 @@ test('hostile headers and file names stay text', async ({ browser }) => {
       `--b\r\nContent-Type: text/plain\r\n\r\nhello\r\n` +
       `--b\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename*=UTF-8''invoice%E2%80%AEfdp.exe\r\n\r\nx\r\n--b--\r\n`,
   })
+  // No From, so the list shows the envelope's sender, with the mark in it
+  deliver({
+    to: 'bob',
+    subject: 'Enveloped swan',
+    from: '',
+    envelopeUser: 'in\u202Evoice',
+    body: '<p>x</p>',
+  })
   const attachment =
     `--b\r\nContent-Type: text/plain\r\n\r\nhello\r\n` +
     `--b\r\nContent-Type: text/html; name="x.html"\r\nContent-Disposition: attachment; filename="<img src=x onerror=top.__xss=1>.html"\r\n\r\n<script>top.__xss=1</script>\r\n--b--\r\n`
@@ -882,6 +890,11 @@ test('hostile headers and file names stay text', async ({ browser }) => {
   await expect(
     reader(page).getByRole('button', { name: /^invoicefdp\.exe/ })
   ).toBeVisible()
+  await page.getByLabel('Search mail').fill('swan')
+  await page.getByLabel('Search mail').press('Enter')
+  await expect(
+    page.locator('button.message', { hasText: 'swan' }).locator('.who')
+  ).toHaveText('invoice@sender.example')
   for (const word of ['pelican', 'toucan', 'heron']) {
     await page.getByLabel('Search mail').fill(word)
     await page.getByLabel('Search mail').press('Enter')
