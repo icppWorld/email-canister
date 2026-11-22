@@ -14,7 +14,7 @@ import {
 import { attempt, BATCH, inBatches, MAX_BATCH } from './batch'
 import { BackButton, IconButton } from './Buttons'
 import { Bulk, RowPick, useTicks } from './Bulk'
-import { memberName, messages, noteOf, was } from './format'
+import { memberName, messages, noteOf, shown, was } from './format'
 import { Icon } from './Icon'
 import { MessageBody } from './MessageBody'
 import { frameBody, saveFile } from './mime'
@@ -163,7 +163,7 @@ function Details({
           {error}
         </p>
       )}
-      <h2>{summary.subject || '(no subject)'}</h2>
+      <h2>{shown(summary.subject) || '(no subject)'}</h2>
       <p className="status" data-testid="outbox-state">
         {stateLabel(summary.state)}
       </p>
@@ -180,7 +180,7 @@ function Details({
         </p>
       )}
       {summary.last_error && summary.state === OUTBOX_REJECTED && (
-        <p className="error">{summary.last_error}</p>
+        <p className="error">{shown(summary.last_error)}</p>
       )}
       <dl className="headers">
         {sentBy !== null && (
@@ -190,33 +190,34 @@ function Details({
           </>
         )}
         <dt>To</dt>
-        <dd>{summary.to.join(', ')}</dd>
+        <dd>{shown(summary.to.join(', '))}</dd>
         {summary.cc.length > 0 && (
           <>
             <dt>Cc</dt>
-            <dd>{summary.cc.join(', ')}</dd>
+            <dd>{shown(summary.cc.join(', '))}</dd>
           </>
         )}
         {summary.bcc.length > 0 && (
           <>
             <dt>Bcc</dt>
-            <dd>{summary.bcc.join(', ')}</dd>
+            <dd>{shown(summary.bcc.join(', '))}</dd>
           </>
         )}
       </dl>
       {message && message.attachments.length > 0 && (
         <ul className="attachments" aria-label="Attachments">
-          {message.attachments.map((file, index) => (
-            <li key={index}>
-              <button
-                onClick={() =>
-                  saveFile(file.filename, Uint8Array.from(file.content))
-                }
-              >
-                {file.filename} ({Math.ceil(file.content.length / 1024)} KB)
-              </button>
-            </li>
-          ))}
+          {message.attachments.map((file, index) => {
+            const name = shown(file.filename) || 'attachment'
+            return (
+              <li key={index}>
+                <button
+                  onClick={() => saveFile(name, Uint8Array.from(file.content))}
+                >
+                  {name} ({Math.ceil(file.content.length / 1024)} KB)
+                </button>
+              </li>
+            )
+          })}
         </ul>
       )}
       {framed && <MessageBody framed={framed} />}
@@ -391,7 +392,7 @@ export function Sent({
         )}
         <ul>
           {items.map((m) => {
-            const title = m.subject || '(no subject)'
+            const title = shown(m.subject) || '(no subject)'
             const sending = m.state === OUTBOX_SENDING
             return (
               <li key={m.id.toString()} className="message-row">
@@ -407,7 +408,7 @@ export function Sent({
                   onClick={() => setSelectedId(m.id)}
                 >
                   <span className="who">
-                    {m.to.concat(m.cc, m.bcc).join(', ')}
+                    {shown(m.to.concat(m.cc, m.bcc).join(', '))}
                   </span>
                   <span className="subject">
                     {title}

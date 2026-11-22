@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { errorText, type Blocked, type Mailbox } from './api'
 import { IconButton } from './Buttons'
-import { formatNs, memberName } from './format'
+import { formatNs, memberName, shown } from './format'
 
 // One block: its address, and when it was made
 const blockOf = (b: Blocked) => `${b.address} ${b.at_ns}`
@@ -76,7 +76,7 @@ export function BlockedSenders({
       <ul className="members">
         {list?.map((b) => (
           <li key={b.address}>
-            <span className="blocked-address">{b.address}</span>
+            <span className="blocked-address">{shown(b.address)}</span>
             <span className="hint">
               by {memberName(b.blocked_by.toText(), b.name, principal)},{' '}
               {formatNs(b.at_ns)}

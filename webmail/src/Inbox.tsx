@@ -381,7 +381,11 @@ function Reader({
     const subject = /^re:/i.test(mail.subject)
       ? mail.subject
       : `Re: ${mail.subject}`
-    onReply({ to: mail.fromAddress, subject, body: quote(mail) })
+    // An address with a mark in it is left out: as it came it shows as
+    // something else, and cleaned it is another address
+    const to =
+      shown(mail.fromAddress) === mail.fromAddress ? mail.fromAddress : ''
+    onReply({ to, subject, body: quote(mail) })
   }
 
   const via = mail
@@ -497,7 +501,7 @@ function Reader({
               {via && (
                 <span className="via" data-testid="via">
                   {' '}
-                  via {via}
+                  via {shown(via)}
                 </span>
               )}
             </dd>

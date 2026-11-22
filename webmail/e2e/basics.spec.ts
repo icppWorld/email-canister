@@ -983,22 +983,22 @@ test('hostile headers and file names stay text', async ({ browser }) => {
   await waitDrained()
 
   const { context, page } = await signedIn(browser, USER_B)
-  // The reversing mark is gone from the list, the reader and the file's name
+  // The reversing mark shows as U+FFFD in the list, the reader and the file's name
   await page.getByLabel('Search mail').fill('Turned')
   await page.getByLabel('Search mail').press('Enter')
   const turned = page.locator('button.message', { hasText: 'Turned' })
-  await expect(turned).toHaveText(/Turned nibor/)
-  await expect(turned).toHaveText(/Bank >elpmaxe\.knab@ofni</)
+  await expect(turned).toHaveText(/Turned \uFFFDnibor/)
+  await expect(turned).toHaveText(/Bank \uFFFD>elpmaxe\.knab@ofni</)
   await turned.click()
-  await expect(page.getByTestId('subject')).toHaveText('Turned nibor')
+  await expect(page.getByTestId('subject')).toHaveText('Turned \uFFFDnibor')
   await expect(
-    reader(page).getByRole('button', { name: /^invoicefdp\.exe/ })
+    reader(page).getByRole('button', { name: /^invoice\uFFFDfdp\.exe/ })
   ).toBeVisible()
   await page.getByLabel('Search mail').fill('swan')
   await page.getByLabel('Search mail').press('Enter')
   await expect(
     page.locator('button.message', { hasText: 'swan' }).locator('.who')
-  ).toHaveText('invoice@sender.example')
+  ).toHaveText('in\uFFFDvoice@sender.example')
   for (const word of ['pelican', 'toucan', 'heron']) {
     await page.getByLabel('Search mail').fill(word)
     await page.getByLabel('Search mail').press('Enter')
