@@ -45,10 +45,13 @@ const deployOf = (doc: Document) => {
   return [script.getAttribute('src'), ...sheets, settings].join('\n')
 }
 
+// The deploy this page runs, read as it loads, before anything else on the
+// page, such as a browser extension, can add a style sheet of its own
+const running = deployOf(document)
+
 // Whether the server now has another deploy than this page runs. The page is
 // served with no-cache, so this asks the server itself.
 async function newerDeployed(): Promise<boolean> {
-  const running = deployOf(document)
   if (!running) return false
   const response = await fetch('/', {
     cache: 'no-store',

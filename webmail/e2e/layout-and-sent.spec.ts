@@ -1504,7 +1504,14 @@ test('a newer webmail deployed shows a banner when the page comes back into view
     )
     await asked
   }
-  // The same build: no banner
+  // The same build: no banner, also once something on the page, such as a
+  // browser extension, has added a style sheet of its own
+  await page.evaluate(() => {
+    const link = document.createElement('link')
+    link.rel = 'stylesheet'
+    link.href = 'data:text/css,'
+    document.head.append(link)
+  })
   await backInView()
   await page.waitForTimeout(500)
   await expect(banner).toHaveCount(0)
