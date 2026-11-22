@@ -325,7 +325,8 @@ const LEFT_OUT_ATTRIBUTE = 'referrerpolicy'
 // or https, that the browser can read: any other, a script or one relative to
 // the webmail's own address among them, loses its href. The new page gets no
 // referrer and no handle on the webmail, and the link cannot report the click
-// with `ping`.
+// with `ping`. A link to a place in the message itself stays as it is: it
+// only moves the message in its frame, so it gets no target.
 // eslint-disable-next-line no-control-regex
 const LINK_URL = /^[\x00-\x20]*https?:\/\//i
 const LINK_REL = 'noopener noreferrer'
@@ -344,16 +345,21 @@ function opens(link: Element): boolean {
   return link instanceof HTMLElement && LINK_URL.test(url) && readable(url)
 }
 
+const jumps = (link: Element) =>
+  link instanceof HTMLElement && attributeUrl(link, 'href').startsWith('#')
+
 // Whether the link is as the frame may hold it
 const safeLink = (link: Element) =>
   !LINK_EXTRAS.some((name) => link.hasAttribute(name)) &&
   (!link.hasAttribute('href') ||
+    (jumps(link) && !link.hasAttribute('target')) ||
     (opens(link) &&
       link.getAttribute('target') === '_blank' &&
       link.getAttribute('rel') === LINK_REL))
 
 function makeSafe(link: Element): void {
   LINK_EXTRAS.forEach((name) => link.removeAttribute(name))
+  if (jumps(link)) return link.removeAttribute('target')
   if (!opens(link)) return link.removeAttribute('href')
   link.setAttribute('target', '_blank')
   link.setAttribute('rel', LINK_REL)
