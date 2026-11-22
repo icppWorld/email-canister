@@ -610,6 +610,76 @@ test('remote images load only after Show images, and only that time', async ({
   await context.close()
 })
 
+// A message laid out for a 600px column with no layout for a narrow screen,
+// as many newsletters are, is shrunk to fit a narrow reader, as phone mail
+// apps do. It is measured without its remote images, and one that fits is
+// left as it is.
+test('a message wider than the reader is shrunk to fit it, measured without its images', async ({
+  browser,
+}) => {
+  const pic = 'https://images.example.test/wide.png'
+  deliver({
+    subject: 'Wide gannet',
+    body:
+      `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">` +
+      // with a style of its own on its root, which shrinking keeps
+      `<html style="outline-color:rgb(1, 2, 3)"><head><style>@media only screen and (max-width:600px) { }</style>` +
+      `<!--[if mso]><style>a{text-decoration:none}</style><![endif]--></head><body>` +
+      `<table width="100%"><tr><td align="center"><table style="width:600px"><tr>` +
+      `<td style="min-width:600px"><img src="${pic}" width="600" height="1" style="display:block;width:600px" alt="">` +
+      `<p>gannet</p></td></tr></table></td></tr></table></body></html>`,
+  })
+  deliver({
+    subject: 'Narrow shag',
+    body: `<table width="100%" style="max-width:600px"><tr><td><p>shag</p></td></tr></table>`,
+  })
+  await waitDrained()
+  const { context, page } = await signedIn(browser, USER_A)
+  const requested: string[] = []
+  await context.route('https://images.example.test/**', (route) => {
+    requested.push(route.request().url())
+    return route.abort()
+  })
+  const frame = page.locator('iframe.body')
+  const fits = () =>
+    bodyOf(page).evaluate(() => {
+      const root = document.documentElement
+      return root.scrollWidth <= root.clientWidth
+    })
+  const phone = { width: 390, height: 844 }
+  const desktop = { width: 1280, height: 800 }
+
+  // Wide enough on a desktop
+  await page.setViewportSize(desktop)
+  await openMail(page, 'gannet')
+  await expect(bodyOf(page).getByText('gannet')).toBeVisible()
+  await expect(frame).toHaveAttribute('data-fit', '1')
+  // Shrunk on a phone, and measured again at the new width
+  await page.setViewportSize(phone)
+  await expect(frame).toHaveAttribute('data-fit', /^0\.\d+$/)
+  await expect.poll(fits).toBe(true)
+  expect(
+    await bodyOf(page).evaluate(
+      () => getComputedStyle(document.documentElement).outlineColor
+    )
+  ).toBe('rgb(1, 2, 3)')
+  await expect(bodyOf(page).getByText('gannet')).toBeVisible()
+  await expect(page.locator('iframe.measure')).toHaveCount(0)
+  expect(requested).toEqual([])
+
+  // A message that fits by itself is left as it is
+  await page.setViewportSize(desktop)
+  await openMail(page, 'shag')
+  await expect(bodyOf(page).getByText('shag')).toBeVisible()
+  await page.setViewportSize(phone)
+  // Measured again at the phone's width
+  const width = await frame.evaluate((e) => String(e.clientWidth))
+  await expect(frame).toHaveAttribute('data-measured', width)
+  await expect(frame).toHaveAttribute('data-fit', '1')
+  await expect.poll(fits).toBe(true)
+  await context.close()
+})
+
 test('only what the list of HTML allows reaches the reader, and what it drops keeps its text', async ({
   browser,
 }) => {
@@ -877,6 +947,11 @@ for (const bypassCSP of [false, true]) {
       await d.dismiss()
     })
     page.on('request', (r) => {
+      // The hidden copy a message is measured on is of the page's origin, and
+      // with the page's policy bypassed, its own is bypassed too: it relies on
+      // that policy as the shown frame does in engines that keep a sandboxed
+      // frame in the page's process. With the policy, it loads nothing.
+      if (bypassCSP && r.frame().name() === 'measure') return
       if (/^https?:/.test(r.url()) && !r.url().startsWith(env.url))
         external.push(r.url())
     })
