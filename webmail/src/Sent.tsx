@@ -14,7 +14,7 @@ import {
 import { attempt, BATCH, inBatches, MAX_BATCH } from './batch'
 import { BackButton, IconButton } from './Buttons'
 import { Bulk, RowPick, useTicks } from './Bulk'
-import { memberName, messages, noteOf, was } from './format'
+import { memberName, messages, noteOf, shown, was } from './format'
 import { Icon } from './Icon'
 import { MessageBody } from './MessageBody'
 import { frameBody, saveFile } from './mime'
@@ -163,7 +163,7 @@ function Details({
           {error}
         </p>
       )}
-      <h2>{summary.subject || '(no subject)'}</h2>
+      <h2>{shown(summary.subject) || '(no subject)'}</h2>
       <p className="status" data-testid="outbox-state">
         {stateLabel(summary.state)}
       </p>
@@ -190,17 +190,17 @@ function Details({
           </>
         )}
         <dt>To</dt>
-        <dd>{summary.to.join(', ')}</dd>
+        <dd>{shown(summary.to.join(', '))}</dd>
         {summary.cc.length > 0 && (
           <>
             <dt>Cc</dt>
-            <dd>{summary.cc.join(', ')}</dd>
+            <dd>{shown(summary.cc.join(', '))}</dd>
           </>
         )}
         {summary.bcc.length > 0 && (
           <>
             <dt>Bcc</dt>
-            <dd>{summary.bcc.join(', ')}</dd>
+            <dd>{shown(summary.bcc.join(', '))}</dd>
           </>
         )}
       </dl>
@@ -391,7 +391,7 @@ export function Sent({
         )}
         <ul>
           {items.map((m) => {
-            const title = m.subject || '(no subject)'
+            const title = shown(m.subject) || '(no subject)'
             const sending = m.state === OUTBOX_SENDING
             return (
               <li key={m.id.toString()} className="message-row">
@@ -407,7 +407,7 @@ export function Sent({
                   onClick={() => setSelectedId(m.id)}
                 >
                   <span className="who">
-                    {m.to.concat(m.cc, m.bcc).join(', ')}
+                    {shown(m.to.concat(m.cc, m.bcc).join(', '))}
                   </span>
                   <span className="subject">
                     {title}

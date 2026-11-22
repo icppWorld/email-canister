@@ -497,7 +497,7 @@ function Reader({
               {via && (
                 <span className="via" data-testid="via">
                   {' '}
-                  via {via}
+                  via {shown(via)}
                 </span>
               )}
             </dd>

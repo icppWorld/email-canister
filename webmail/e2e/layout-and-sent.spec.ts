@@ -1370,3 +1370,53 @@ test('a file picked again after an edit is sent as it is now', async ({
     .toEqual(['n'.repeat(100)])
   await context.close()
 })
+
+// A mark that reverses what follows, U+202E, in a sender's address and the
+// domain that delivered it: gone from the "via" line, the Spam note, Blocked
+// senders, and Sent, where a reply to that address shows it
+test('a reversing mark in an address is gone wherever the webmail shows it', async ({
+  browser,
+}) => {
+  const marked = 'in‮voice@sender.example'
+  deliver({
+    subject: 'Marked grebe',
+    body: '<p>x</p>',
+    from: `Grebe <${marked}>`,
+    envelopeDomain: 'in‮voice.example',
+  })
+  await waitDrained()
+  const { context, page } = await signedIn(browser, USER_A)
+  await openMail(page, 'grebe')
+  await expect(page.getByTestId('via')).toHaveText('via invoice.example')
+  await spamFromReader(page)
+  await expect(page.getByTestId('toast')).toHaveText(
+    /invoice@sender\.example blocked/
+  )
+  await menuItem(page, 'More', 'Blocked senders')
+  const blocked = page.getByRole('region', { name: 'Blocked senders' })
+  const entry = blocked.locator('.blocked-address', { hasText: 'voice' })
+  await expect(entry).toHaveText('invoice@sender.example')
+  await blocked
+    .getByRole('listitem')
+    .filter({ has: entry })
+    .getByRole('button', { name: 'Unblock' })
+    .click()
+  await expect(entry).toHaveCount(0)
+  await compose(page, 'Marked ‮grebe')
+  await page.getByLabel('To', { exact: true }).fill(marked)
+  await send(page)
+  await expect(page.getByRole('dialog', { name: 'New message' })).toHaveCount(0)
+  await folder(page, 'Sent')
+  const row = messageRow(page, 'grebe')
+  await expect(row.locator('.who')).toHaveText('invoice@sender.example')
+  await expect(row.locator('.subject')).toHaveText('Marked grebe')
+  await row.click()
+  const sent = reader(page)
+  await expect(sent.getByRole('heading', { level: 2 })).toHaveText(
+    'Marked grebe'
+  )
+  await expect(sent.locator('dd', { hasText: 'voice' })).toHaveText(
+    'invoice@sender.example'
+  )
+  await context.close()
+})
