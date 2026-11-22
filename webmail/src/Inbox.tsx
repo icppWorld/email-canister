@@ -381,7 +381,9 @@ function Reader({
     const subject = /^re:/i.test(mail.subject)
       ? mail.subject
       : `Re: ${mail.subject}`
-    onReply({ to: mail.fromAddress, subject, body: quote(mail) })
+    // The address as the From line shows it, so the reply goes where it is
+    // seen to go: one with a mark in it shows the mark, and goes nowhere
+    onReply({ to: shown(mail.fromAddress), subject, body: quote(mail) })
   }
 
   const via = mail

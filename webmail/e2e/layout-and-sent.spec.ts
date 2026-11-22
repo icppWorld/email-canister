@@ -1372,51 +1372,69 @@ test('a file picked again after an edit is sent as it is now', async ({
 })
 
 // A mark that reverses what follows, U+202E, in a sender's address and the
-// domain that delivered it: gone from the "via" line, the Spam note, Blocked
-// senders, and Sent, where a reply to that address shows it
-test('a reversing mark in an address is gone wherever the webmail shows it', async ({
+// domain that delivered it shows as U+FFFD wherever the webmail shows it: the
+// "via" line, a reply's To, the Spam note, Blocked senders, and Sent, with a
+// file named with the mark. The block is of the address as it came.
+test('a reversing mark in an address shows as a replacement character wherever the webmail shows it', async ({
   browser,
 }) => {
-  const marked = 'in‮voice@sender.example'
+  const marked = 'in\u202Evoice@sender.example'
+  const seen = 'in\uFFFDvoice@sender.example'
   deliver({
-    subject: 'Marked grebe',
+    subject: 'Marked scoter',
     body: '<p>x</p>',
-    from: `Grebe <${marked}>`,
-    envelopeDomain: 'in‮voice.example',
+    from: `Scoter <${marked}>`,
+    envelopeDomain: 'in\u202Evoice.example',
   })
   await waitDrained()
   const { context, page } = await signedIn(browser, USER_A)
-  await openMail(page, 'grebe')
-  await expect(page.getByTestId('via')).toHaveText('via invoice.example')
+  await openMail(page, 'scoter')
+  await expect(page.getByTestId('via')).toHaveText('via in\uFFFDvoice.example')
+  await reader(page).getByRole('button', { name: 'Reply' }).click()
+  const reply = page.getByRole('dialog', { name: 'New message' })
+  await expect(reply.getByLabel('To', { exact: true })).toHaveValue(seen)
+  await reply.getByRole('button', { name: 'Close' }).click()
+  await expect(reply).toHaveCount(0)
   await spamFromReader(page)
-  await expect(page.getByTestId('toast')).toHaveText(
-    /invoice@sender\.example blocked/
+  await expect(page.getByTestId('toast')).toContainText(`${seen} blocked`)
+  const alice = await asAlice()
+  expect((await alice.mail_blocked('alice')).map((b) => b.address)).toContain(
+    marked
   )
   await menuItem(page, 'More', 'Blocked senders')
   const blocked = page.getByRole('region', { name: 'Blocked senders' })
   const entry = blocked.locator('.blocked-address', { hasText: 'voice' })
-  await expect(entry).toHaveText('invoice@sender.example')
+  await expect(entry).toHaveText(seen)
   await blocked
     .getByRole('listitem')
     .filter({ has: entry })
     .getByRole('button', { name: 'Unblock' })
     .click()
   await expect(entry).toHaveCount(0)
-  await compose(page, 'Marked ‮grebe')
+  await compose(page, 'Marked \u202Escoter')
   await page.getByLabel('To', { exact: true }).fill(marked)
+  await page
+    .getByRole('dialog', { name: 'New message' })
+    .getByLabel('Attachments')
+    .setInputFiles({
+      name: 'invoice\u202Efdp.exe',
+      mimeType: 'application/octet-stream',
+      buffer: Buffer.from('x'),
+    })
   await send(page)
   await expect(page.getByRole('dialog', { name: 'New message' })).toHaveCount(0)
   await folder(page, 'Sent')
-  const row = messageRow(page, 'grebe')
-  await expect(row.locator('.who')).toHaveText('invoice@sender.example')
-  await expect(row.locator('.subject')).toHaveText('Marked grebe')
+  const row = messageRow(page, 'scoter')
+  await expect(row.locator('.who')).toHaveText(seen)
+  await expect(row.locator('.subject')).toHaveText('Marked \uFFFDscoter')
   await row.click()
   const sent = reader(page)
   await expect(sent.getByRole('heading', { level: 2 })).toHaveText(
-    'Marked grebe'
+    'Marked \uFFFDscoter'
   )
-  await expect(sent.locator('dd', { hasText: 'voice' })).toHaveText(
-    'invoice@sender.example'
-  )
+  await expect(sent.locator('dd', { hasText: 'voice' })).toHaveText(seen)
+  await expect(
+    sent.getByRole('list', { name: 'Attachments' }).getByRole('button')
+  ).toHaveText(/^invoice\uFFFDfdp\.exe \(1 KB\)$/)
   await context.close()
 })

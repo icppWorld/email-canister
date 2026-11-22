@@ -180,7 +180,7 @@ function Details({
         </p>
       )}
       {summary.last_error && summary.state === OUTBOX_REJECTED && (
-        <p className="error">{summary.last_error}</p>
+        <p className="error">{shown(summary.last_error)}</p>
       )}
       <dl className="headers">
         {sentBy !== null && (
@@ -206,17 +206,18 @@ function Details({
       </dl>
       {message && message.attachments.length > 0 && (
         <ul className="attachments" aria-label="Attachments">
-          {message.attachments.map((file, index) => (
-            <li key={index}>
-              <button
-                onClick={() =>
-                  saveFile(file.filename, Uint8Array.from(file.content))
-                }
-              >
-                {file.filename} ({Math.ceil(file.content.length / 1024)} KB)
-              </button>
-            </li>
-          ))}
+          {message.attachments.map((file, index) => {
+            const name = shown(file.filename) || 'attachment'
+            return (
+              <li key={index}>
+                <button
+                  onClick={() => saveFile(name, Uint8Array.from(file.content))}
+                >
+                  {name} ({Math.ceil(file.content.length / 1024)} KB)
+                </button>
+              </li>
+            )
+          })}
         </ul>
       )}
       {framed && <MessageBody framed={framed} />}
