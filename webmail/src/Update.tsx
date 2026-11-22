@@ -8,6 +8,8 @@ export const VERSION = __WEBMAIL_VERSION__
 // How often an open webmail asks whether a newer one is deployed, besides
 // each time it comes back into view
 const CHECK_MS = 10 * 60_000
+// A check the server does not answer ends after this, so the next one can ask
+const ANSWER_MS = 15_000
 
 // Work a reload would lose: a message open in Compose, which is kept in memory
 // only, or a copy downloading. Set by the app.
@@ -48,7 +50,10 @@ const deployOf = (doc: Document) => {
 async function newerDeployed(): Promise<boolean> {
   const running = deployOf(document)
   if (!running) return false
-  const response = await fetch('/', { cache: 'no-store' })
+  const response = await fetch('/', {
+    cache: 'no-store',
+    signal: AbortSignal.timeout(ANSWER_MS),
+  })
   if (!response.ok) return false
   const served = deployOf(
     new DOMParser().parseFromString(await response.text(), 'text/html')
