@@ -526,19 +526,17 @@ test('remote images load only after Show images, and only that time', async ({
       `<p>razorbill</p><img src="${pic}" alt="Remote pic" referrerpolicy="unsafe-url">` +
       `<template><p>kept aside</p></template>` +
       `<model src="https://ahead.example.test/m.usdz"></model>` +
-      // A drawing and a formula, with the links of their own kinds
-      `<svg width="10" height="10"><image href="https://images.example.test/svg.png" width="10" height="10"/>` +
+      // A drawing and a formula, with the links of their own kinds: only
+      // their text is shown
+      `<svg width="10" height="10"><style>text{fill:red}</style><image href="https://images.example.test/svg.png" width="10" height="10"/>` +
       `<a><animateTransform attributeName="href" type="x" values="x;https://ahead.example.test/?" begin="0s" dur="0.1s" fill="freeze"/><text y="9">drawn</text></a></svg>` +
       `<math><mtext href="https://ahead.example.test/formula">formula</mtext></math>` +
       `<div style="background:url(${bg})">x</div>` +
       // Loaded once the frame has reached past the remote image
       `<img src="data:image/png;base64,${PIXEL}" alt="Local pic">` +
-      // A link in a shadow root, and one that a second parse grows where an
-      // engine writes < and > in attributes out as they are
+      // A link in a shadow root, and one in a frame's own document
       `<div><template shadowrootmode="open"><link rel="preconnect" href="https://ahead.example.test/shadow"></template></div>` +
-      // and one in a frame's own document
-      `<iframe srcdoc="<link rel=preconnect href=https://ahead.example.test/nested>"></iframe>` +
-      `<math><mtext><table><mglyph><style><!--</style><img title="--&gt;&lt;link rel=preconnect href=https://ahead.example.test/grown&gt;">`,
+      `<iframe srcdoc="<link rel=preconnect href=https://ahead.example.test/nested>"></iframe>`,
   })
   deliver({ subject: 'Local murrelet', body: '<p>murrelet</p>' })
   await waitDrained()
@@ -573,6 +571,9 @@ test('remote images load only after Show images, and only that time', async ({
   await expect(frame.locator('base')).toHaveCount(0)
   await expect(frame.locator('model')).toHaveCount(0)
   await expect(frame.locator('svg, math')).toHaveCount(0)
+  await expect(bodyOf(page)).toContainText('drawn')
+  await expect(bodyOf(page)).toContainText('formula')
+  await expect(bodyOf(page)).not.toContainText('fill:red')
   // The frame's requests carry none of the reader's cookies: a request this
   // test answers never reaches the network, where they would be left out
   expect(

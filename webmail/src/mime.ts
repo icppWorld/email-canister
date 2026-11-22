@@ -309,11 +309,13 @@ export type FramedBody = { body: string; paper: boolean; remote: boolean }
 // was read; a meta could loosen the frame's referrer policy; a template can
 // become a shadow root, and a frame holds a document of its own, which a check
 // here does not see into; a base would make a relative address a remote one;
-// one engine loads a model outside the policy. Drawings and formulas, SVG and
-// MathML, are left out whole: they bring links of their own kinds, which an
-// animation can give another address after a check, and mail services do not
-// show them either. A <frame> needs no entry: a body cannot hold one.
-const LEFT_OUT = 'link, meta, template, iframe, base, model, svg, math'
+// one engine loads a model outside the policy. A <frame> needs no entry: a
+// body cannot hold one.
+const LEFT_OUT = 'link, meta, template, iframe, base, model'
+// Drawings and formulas, SVG and MathML, are shown as their text alone: they
+// bring links of their own kinds, which an animation can give another address
+// after a check, and mail services do not draw them either.
+const AS_TEXT = 'svg, math'
 // An element's own referrer policy, which would win over the frame's
 const LEFT_OUT_ATTRIBUTE = 'referrerpolicy'
 
@@ -356,6 +358,16 @@ function makeSafe(link: Element): void {
   link.setAttribute('rel', LINK_REL)
 }
 
+// What a drawing or a formula says, without its style sheets and its
+// descriptions for tools
+function textOf(element: Element): string {
+  const copy = element.cloneNode(true) as Element
+  copy
+    .querySelectorAll('style, script, title, desc')
+    .forEach((hidden) => hidden.remove())
+  return copy.textContent ?? ''
+}
+
 // The message as the frame parses it: inside the body of the frame's document
 function parsedInFrame(body: string): Document {
   return new DOMParser().parseFromString(
@@ -373,13 +385,18 @@ function withoutLeftOut(html: string): { body: string; doc: Document } {
   let body = html
   for (let pass = 0; pass < 4; pass += 1) {
     const doc = parsedInFrame(body)
-    const found = doc.querySelectorAll(`${LEFT_OUT}, [${LEFT_OUT_ATTRIBUTE}]`)
+    const found = doc.querySelectorAll(
+      `${LEFT_OUT}, ${AS_TEXT}, [${LEFT_OUT_ATTRIBUTE}]`
+    )
     const links = Array.from(doc.querySelectorAll('a, area')).filter(
       (link) => !safeLink(link)
     )
     if (found.length === 0 && links.length === 0) return { body, doc }
+    // In the document's order: what was inside one already taken out is
+    // taken out of nothing
     found.forEach((element) => {
-      if (element.matches(LEFT_OUT)) element.remove()
+      if (element.matches(AS_TEXT)) element.replaceWith(textOf(element))
+      else if (element.matches(LEFT_OUT)) element.remove()
       else element.removeAttribute(LEFT_OUT_ATTRIBUTE)
     })
     links.forEach(makeSafe)
