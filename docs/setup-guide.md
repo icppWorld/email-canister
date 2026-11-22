@@ -147,7 +147,7 @@ vendor/email-canister/scripts/configure.sh --backend <backend id> --domain examp
   --bridge <the Caffeine app's backend id> --identity <controller identity>
 ```
 
-Then sign in to the webmail as a controller, and in the Admin screen create each mailbox with its first member, the principal that person's "not activated" screen shows. Add more members to a mailbox to share it; "How people get their mail" in the Admin screen walks through both.
+Then sign in to the webmail as a controller, and in the Admin screen create each mailbox with its first member, the principal that person's "not activated" screen shows. Keep the controller's identity for administration: make it a member of no mailbox, and read mail with another identity: sign in to the webmail with that one, and its "not activated" screen shows the principal to add. A controller can reinstall or delete the canister, so its sign-in should not be the one that opens mail from anyone. Add more members to a mailbox to share it; "How people get their mail" in the Admin screen walks through both.
 
 ## 8. Point the domain's mail at the gateway
 
