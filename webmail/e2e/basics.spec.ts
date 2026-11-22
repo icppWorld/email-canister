@@ -628,6 +628,7 @@ test('only what the list of HTML allows reaches the reader, and what it drops ke
       `<p id="odd" attributionsrc="https://ahead.example.test/a" onclick="top.__xss=1">para</p>` +
       // Names that would stand in for what the reader asks of the document
       `<img name="querySelectorAll" alt="named"><img name="documentElement" alt="named too">` +
+      `<form><input name="matches"></form>` +
       `<o:p>office</o:p></body></html>`,
   })
   await waitDrained()

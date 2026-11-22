@@ -380,15 +380,24 @@ function parsedInFrame(body: string): Document {
 // Only what a maintained list of HTML's elements and attributes allows goes
 // on to the frame (DOMPurify), so an element no rule here knows of, a new one
 // in some browser among them, is left out too. Text in an element the list
-// drops stays, but where it is not for reading, as in a title or a script.
+// drops stays, but for a few the list drops whole: a title, a noscript, a
+// form whose fields are named to stand in for the form's own.
 // - The whole document, as mail sets colours on its body and styles in its head.
 // - Added: presentation that older mail sets with attributes of its own.
 // - An address: http or https, an inline image by its cid, the data: address
-//   such an image has become by now, or one relative to the frame's own.
+//   such an image has become by now, or one relative to the frame's own. The
+//   list itself also takes any data: address as an image's src: an image runs
+//   no script and loads nothing, whatever its kind.
+// - An id or a name that would stand in for something of a document's or a
+//   form's own is dropped (SANITIZE_DOM, on unless turned off), so the checks
+//   below read what they ask for. A style sheet's rule for such an id finds
+//   nothing.
 // - SAFE_FOR_XML guards markup that is read again as XML, or inside a drawing
 //   or a formula, and would drop a style sheet for a "<" in it, as in the
-//   wrapping older mail gives one. The frame reads its document as HTML, and
-//   a drawing or a formula is text by then.
+//   wrapping older mail gives one. It can be off as long as these hold: the
+//   frame reads its document as HTML; a drawing or a formula is text by then;
+//   a style sheet is the only element kept whose text is not escaped when
+//   written out; the list drops every comment; no template is kept.
 const ALLOW_LIST = {
   USE_PROFILES: { html: true },
   WHOLE_DOCUMENT: true,
@@ -415,21 +424,27 @@ const ALLOW_LIST = {
     /^(?:(?:https?|cid):|data:image\/(?:png|jpe?g|gif|webp);base64,|[^a-z]|[a-z+.-]+(?:[^a-z+.\-:]|$))/i,
 }
 
+// Asked of the element's kind and not of the element: a form's field named
+// "matches" would stand in for the form's own, and the list has not been over
+// the names yet when its hooks run
+const is = (element: Element, selector: string): boolean =>
+  Element.prototype.matches.call(element, selector)
+
 // The webmail's own rules run inside the list, as its hooks, so that nothing
 // changes a message once the list has passed it: a drawing or a formula
 // becomes its text before the list would drop it whole, and a link is made
 // safe once the list has been over its attributes
 const list = DOMPurify(window)
 list.addHook('uponSanitizeElement', (node) => {
-  if (node instanceof Element && node.matches(AS_TEXT))
+  if (node instanceof Element && is(node, AS_TEXT))
     node.replaceWith(textOf(node))
 })
 list.addHook('afterSanitizeAttributes', (node) => {
-  if (node.matches('a, area') && !safeLink(node)) makeSafe(node)
+  if (is(node, 'a, area') && !safeLink(node)) makeSafe(node)
 })
 
-// What the frame may not hold, in the parse it makes of `body`: an element or
-// attribute it leaves out, a drawing or a formula, a link that is not safe
+// What the frame may not hold, in the parse it makes of a message: an element
+// or attribute it leaves out, a drawing or a formula, a link that is not safe
 function refused(doc: Document): Element[] {
   const found = doc.querySelectorAll(
     `${LEFT_OUT}, ${AS_TEXT}, [${LEFT_OUT_ATTRIBUTE}]`
@@ -439,20 +454,16 @@ function refused(doc: Document): Element[] {
 }
 
 // The message as the frame may hold it: what came out of the list, as the
-// list wrote it, once the parse the frame makes of that holds nothing the
-// frame refuses. Markup written out and parsed again can grow elements the
-// first parse did not have: such a message goes through the list again, and
-// one that keeps growing them is shown as its text.
-function withoutLeftOut(html: string): { body: string; doc: Document } {
-  let body = html
-  for (let pass = 0; pass < 4; pass += 1) {
-    body = list.sanitize(body, ALLOW_LIST)
-    const doc = parsedInFrame(body)
-    if (refused(doc).length === 0) return { body, doc }
-  }
-  const text = escapeHtml(parsedInFrame(body).body.textContent ?? '')
-  body = `<div style="white-space:pre-wrap">${text}</div>`
-  return { body, doc: parsedInFrame(body) }
+// list wrote it, checked on the parse the frame makes of that. Markup written
+// out and parsed again can grow elements the first parse did not have: a
+// message that does, or one in a browser the list cannot work in, is shown as
+// its text. White space before the document would end up in its body.
+function listed(html: string): { body: string; doc: Document } {
+  const body = list.sanitize(html.trimStart(), ALLOW_LIST)
+  const doc = parsedInFrame(body)
+  if (list.isSupported && refused(doc).length === 0) return { body, doc }
+  const text = `<div style="white-space:pre-wrap">${escapeHtml(doc.body.textContent ?? '')}</div>`
+  return { body: text, doc: parsedInFrame(text) }
 }
 
 // The message as the frame shows it, whether it wants a white page, and
@@ -463,7 +474,7 @@ export function frameBody(
   html: string,
   attachments: ParsedAttachment[]
 ): FramedBody {
-  const { body, doc } = withoutLeftOut(embedInlineImages(html, attachments))
+  const { body, doc } = listed(embedInlineImages(html, attachments))
   return { body, paper: wantsWhitePage(doc), remote: hasRemoteImages(doc) }
 }
 
