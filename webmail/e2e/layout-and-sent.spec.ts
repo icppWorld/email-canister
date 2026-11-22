@@ -6,9 +6,12 @@ import {
   expect,
   type Locator,
   type Page,
+  type Response,
   type Route,
   test,
 } from '@playwright/test'
+import { readFileSync } from 'node:fs'
+
 import { asUser } from './as_user'
 import { env } from './local'
 import {
@@ -54,7 +57,7 @@ test.describe.configure({ mode: 'serial' })
 
 test.beforeAll(() => freshBackend())
 
-test('the header menu holds Blocked senders, Download a copy and, for a controller, Admin', async ({
+test('the header menu holds Blocked senders, Download a copy, Admin for a controller, and Reload', async ({
   browser,
 }) => {
   const { context, page } = await signedIn(browser, USER_A)
@@ -88,7 +91,7 @@ test('the header menu holds Blocked senders, Download a copy and, for a controll
   await expect(blockedItem).toBeHidden()
   await context.close()
 
-  // A controller with no mailbox has only Admin there
+  // A controller with no mailbox has only Admin and Reload there
   const admin = await signedIn(browser, ADMIN)
   await expect(
     admin.page.getByRole('heading', { name: 'Administration' })
@@ -99,7 +102,8 @@ test('the header menu holds Blocked senders, Download a copy and, for a controll
   await openMenu(admin.page, 'More')
   const adminMenu = menu(admin.page, 'More')
   await expect(adminMenu.getByRole('button', { name: 'Admin' })).toBeVisible()
-  await expect(adminMenu.getByRole('button')).toHaveCount(1)
+  await expect(adminMenu.getByRole('button', { name: 'Reload' })).toBeVisible()
+  await expect(adminMenu.getByRole('button')).toHaveCount(2)
   await admin.context.close()
 })
 
@@ -119,7 +123,7 @@ test('a menu gives the focus back to its button, and closes when the focus leave
 
   // Tab past the last item leaves the menu, which closes behind it
   await openMenu(page, 'More')
-  const last = more.getByRole('button', { name: 'Download a copy' })
+  const last = more.getByRole('button', { name: 'Reload' })
   await last.focus()
   await page.keyboard.press('Tab')
   await expect(blockedItem).toBeHidden()
@@ -1437,5 +1441,132 @@ test('a reversing mark in an address shows as a replacement character wherever t
   await expect(
     sent.getByRole('list', { name: 'Attachments' }).getByRole('button')
   ).toHaveText(/^invoice\uFFFDfdp\.exe \(1 KB\)$/)
+  await context.close()
+})
+
+const VERSION = JSON.parse(
+  readFileSync(new URL('../package.json', import.meta.url), 'utf8')
+).version
+
+// A mark on the page that a load of it again takes away
+const markPage = (page: Page) =>
+  page.evaluate(() => Object.assign(window, { notReloaded: true }))
+const reloaded = (page: Page) =>
+  page.waitForFunction(() => !('notReloaded' in window))
+
+test('the header menu shows the release, and its Reload loads the page again', async ({
+  browser,
+}) => {
+  const { context, page } = await signedIn(browser, USER_A)
+  await expect(page.getByTestId('address')).toHaveText(`alice@${DOMAIN}`)
+  await openMenu(page, 'More')
+  await expect(menu(page, 'More').getByTestId('version')).toHaveText(
+    `Webmail v${VERSION}`
+  )
+  await markPage(page)
+  await menu(page, 'More').getByRole('button', { name: 'Reload' }).click()
+  await reloaded(page)
+  await expect(page.getByTestId('address')).toHaveText(`alice@${DOMAIN}`)
+
+  // With a message being written, the webmail asks first, and staying keeps it
+  await compose(page, 'Unsent loon')
+  await markPage(page)
+  // No, then yes
+  const asked = answer(page, false, true)
+  await menuItem(page, 'More', 'Reload')
+  expect(asked).toEqual([expect.stringContaining('message being written')])
+  await page.waitForTimeout(1_000)
+  expect(await page.evaluate(() => 'notReloaded' in window)).toBe(true)
+  await expect(page.getByLabel('Subject', { exact: true })).toHaveValue(
+    'Unsent loon'
+  )
+  // and a yes reloads, losing it
+  await menuItem(page, 'More', 'Reload')
+  await reloaded(page)
+  await expect(page.getByRole('dialog', { name: 'New message' })).toHaveCount(0)
+  await context.close()
+})
+
+// A phone shows an open tab again without loading it: the check runs when the
+// page comes back into view
+test('a newer webmail deployed shows a banner when the page comes back into view, whose Reload loads it', async ({
+  browser,
+}) => {
+  const { context, page } = await signedIn(browser, USER_A)
+  await expect(page.getByTestId('address')).toHaveText(`alice@${DOMAIN}`)
+  const banner = page.getByRole('status').filter({ hasText: 'newer version' })
+  const asksServer = (r: Response) =>
+    new URL(r.url()).pathname === '/' && r.request().resourceType() === 'fetch'
+  const backInView = async () => {
+    const asked = page.waitForResponse(asksServer)
+    await page.evaluate(() =>
+      document.dispatchEvent(new Event('visibilitychange'))
+    )
+    await asked
+  }
+  // The same build: no banner
+  await backInView()
+  await page.waitForTimeout(500)
+  await expect(banner).toHaveCount(0)
+
+  // The server's page names another script, as after a deploy
+  const newer = async (route: Route) => {
+    const response = await route.fetch()
+    const html = (await response.text()).replace(
+      /\/assets\/index-[^"]+\.js/,
+      '/assets/index-newer.js'
+    )
+    await route.fulfill({ response, body: html })
+  }
+  const serveNewer = () =>
+    page.route(
+      (url) => url.pathname === '/',
+      (route) =>
+        route.request().resourceType() === 'fetch'
+          ? newer(route)
+          : route.fallback()
+    )
+  await serveNewer()
+  await backInView()
+  await expect(banner).toBeVisible()
+  await page.unrouteAll()
+  await markPage(page)
+  // The check a page makes as it starts, which finds the same build
+  const started = page.waitForResponse(asksServer)
+  await banner.getByRole('button', { name: 'Reload' }).click()
+  await reloaded(page)
+  await started
+  await page.waitForTimeout(500)
+  await expect(page.getByTestId('address')).toHaveText(`alice@${DOMAIN}`)
+  await expect(banner).toHaveCount(0)
+
+  // Closed, it leaves the page as it is
+  await serveNewer()
+  await backInView()
+  await banner.getByRole('button', { name: 'Close' }).click()
+  await expect(banner).toHaveCount(0)
+
+  // A check the server never answers ends, and a later one asks again: the
+  // first check of the page loaded again is left unanswered, the next ones
+  // name another script
+  await page.unrouteAll()
+  let answered = false
+  const hung = page.waitForRequest(
+    (r) => new URL(r.url()).pathname === '/' && r.resourceType() === 'fetch'
+  )
+  await page.route(
+    (url) => url.pathname === '/',
+    (route) => {
+      if (route.request().resourceType() !== 'fetch') return route.fallback()
+      if (answered) return newer(route)
+      answered = true
+      return new Promise<void>(() => {})
+    }
+  )
+  await page.reload()
+  await hung
+  await page.waitForTimeout(16_000)
+  await backInView()
+  await expect(banner).toBeVisible()
   await context.close()
 })
