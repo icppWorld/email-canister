@@ -35,17 +35,26 @@ function usePageStyle(): PageStyle {
   return page
 }
 
-// The inner width of the frame, once it has settled: a drag of the divider
+type Size = { width: number; height: number }
+
+// The inner size of the frame, once it has settled: a drag of the divider
 // would otherwise measure the message at every step
-function useWidth(frame: RefObject<HTMLIFrameElement | null>): number {
-  const [width, setWidth] = useState(0)
+function useSize(frame: RefObject<HTMLIFrameElement | null>): Size {
+  const [size, setSize] = useState<Size>({ width: 0, height: 0 })
   useEffect(() => {
     const element = frame.current
     if (!element) return
     let timer = 0
     const observer = new ResizeObserver(() => {
       window.clearTimeout(timer)
-      timer = window.setTimeout(() => setWidth(element.clientWidth), 150)
+      timer = window.setTimeout(() => {
+        const { clientWidth: width, clientHeight: height } = element
+        setSize((last) =>
+          last.width === width && last.height === height
+            ? last
+            : { width, height }
+        )
+      }, 150)
     })
     observer.observe(element)
     return () => {
@@ -53,15 +62,24 @@ function useWidth(frame: RefObject<HTMLIFrameElement | null>): number {
       window.clearTimeout(timer)
     }
   }, [frame])
-  return width
+  return size
 }
 
 // A message laid out wider than its frame, as one made for a 600px column
 // often is, is shrunk to fit, as phone mail apps do. The frame shows the
 // webmail nothing of its document, so the width is measured on a copy in a
 // frame of its own: hidden, without remote images, with no script and no
-// link that can open, and gone once measured.
-type Measured = { document: string; width: number; needs: number }
+// link that can open, and gone once measured. Shrunk to half at most: a
+// wider message scrolls the rest of the way, which keeps its text readable.
+const MIN_ZOOM = 0.5
+type Measured = { body: string; document: string; size: Size; zoom: number }
+
+const zoomOf = (frame: HTMLIFrameElement): number => {
+  const root = frame.contentDocument?.documentElement
+  if (!root || root.scrollWidth <= root.clientWidth) return 1
+  const fit = Math.floor((root.clientWidth / root.scrollWidth) * 1000) / 1000
+  return Math.max(fit, MIN_ZOOM)
+}
 
 // The sandbox allows a message only what SANDBOX in mime.ts says: no scripts,
 // forms or same-origin access. The message is framed by the caller, once per
@@ -77,44 +95,39 @@ export function MessageBody({
   // A remote image shown is no longer the nothing a plain page allows
   const paper = framed.paper || (images && framed.remote)
   const frame = useRef<HTMLIFrameElement>(null)
-  const width = useWidth(frame)
+  const size = useSize(frame)
   const copy = useMemo(
     () => sandboxDocument(framed.body, paper, page),
     [framed.body, paper, page]
   )
   const [measured, setMeasured] = useState<Measured | null>(null)
-  const settled =
-    measured !== null && measured.document === copy && measured.width === width
-  const zoom =
-    settled && measured.needs > width
-      ? Math.floor((width / measured.needs) * 1000) / 1000
-      : 1
+  const settled = measured?.document === copy && measured.size === size
+  // While the message is measured again, it keeps the zoom it has, rather
+  // than loading again at full width, and its images with it
+  const zoom = measured?.body === framed.body ? measured.zoom : 1
   const srcdoc = useMemo(
     () => sandboxDocument(framed.body, paper, page, images, zoom),
     [framed.body, paper, page, images, zoom]
   )
   return (
     <>
-      {width > 0 && !settled && (
+      {size.width > 0 && !settled && (
         <iframe
-          key={width}
+          key={`${size.width}x${size.height}`}
           className="measure"
           aria-hidden="true"
           tabIndex={-1}
           inert
           sandbox="allow-same-origin"
           {...{ credentialless: '' }}
-          style={{ width }}
+          style={size}
           srcDoc={copy}
-          onLoad={(e) =>
-            setMeasured({
-              document: copy,
-              width,
-              needs:
-                e.currentTarget.contentDocument?.documentElement.scrollWidth ??
-                0,
-            })
-          }
+          onLoad={(e) => {
+            // The load of a copy this one replaced is not this copy's
+            if (e.currentTarget.srcdoc !== copy) return
+            const fit = zoomOf(e.currentTarget)
+            setMeasured({ body: framed.body, document: copy, size, zoom: fit })
+          }}
         />
       )}
       <iframe
@@ -128,8 +141,9 @@ export function MessageBody({
         // not know it yet.
         {...{ credentialless: '' }}
         srcDoc={srcdoc}
-        // The zoom, once the message is measured at this width
+        // The zoom, and the width it was measured at, once it is
         data-fit={settled ? zoom : undefined}
+        data-measured={settled ? size.width : undefined}
       />
     </>
   )

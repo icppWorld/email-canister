@@ -656,7 +656,7 @@ test('a message wider than the reader is shrunk to fit it, measured without its 
   // Shrunk on a phone, and measured again at the new width
   await page.setViewportSize(phone)
   await expect(frame).toHaveAttribute('data-fit', /^0\.\d+$/)
-  expect(await fits()).toBe(true)
+  await expect.poll(fits).toBe(true)
   await expect(bodyOf(page).getByText('gannet')).toBeVisible()
   await expect(page.locator('iframe.measure')).toHaveCount(0)
   expect(requested).toEqual([])
@@ -666,8 +666,11 @@ test('a message wider than the reader is shrunk to fit it, measured without its 
   await openMail(page, 'shag')
   await expect(bodyOf(page).getByText('shag')).toBeVisible()
   await page.setViewportSize(phone)
+  // Measured again at the phone's width
+  const width = await frame.evaluate((e) => String(e.clientWidth))
+  await expect(frame).toHaveAttribute('data-measured', width)
   await expect(frame).toHaveAttribute('data-fit', '1')
-  expect(await fits()).toBe(true)
+  await expect.poll(fits).toBe(true)
   await context.close()
 })
 
