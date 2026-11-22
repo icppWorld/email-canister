@@ -6,6 +6,7 @@ import {
   expect,
   type Locator,
   type Page,
+  type Response,
   type Route,
   test,
 } from '@playwright/test'
@@ -56,7 +57,7 @@ test.describe.configure({ mode: 'serial' })
 
 test.beforeAll(() => freshBackend())
 
-test('the header menu holds Blocked senders, Download a copy and, for a controller, Admin', async ({
+test('the header menu holds Blocked senders, Download a copy, Admin for a controller, and Reload', async ({
   browser,
 }) => {
   const { context, page } = await signedIn(browser, USER_A)
@@ -90,7 +91,7 @@ test('the header menu holds Blocked senders, Download a copy and, for a controll
   await expect(blockedItem).toBeHidden()
   await context.close()
 
-  // A controller with no mailbox has only Admin there
+  // A controller with no mailbox has only Admin and Reload there
   const admin = await signedIn(browser, ADMIN)
   await expect(
     admin.page.getByRole('heading', { name: 'Administration' })
@@ -1443,7 +1444,9 @@ test('a reversing mark in an address shows as a replacement character wherever t
   await context.close()
 })
 
-const VERSION = JSON.parse(readFileSync('package.json', 'utf8')).version
+const VERSION = JSON.parse(
+  readFileSync(new URL('../package.json', import.meta.url), 'utf8')
+).version
 
 // A mark on the page that a load of it again takes away
 const markPage = (page: Page) =>
@@ -1461,9 +1464,24 @@ test('the header menu shows the release, and its Reload loads the page again', a
     `Webmail v${VERSION}`
   )
   await markPage(page)
-  await menuItem(page, 'More', 'Reload')
+  await menu(page, 'More').getByRole('button', { name: 'Reload' }).click()
   await reloaded(page)
   await expect(page.getByTestId('address')).toHaveText(`alice@${DOMAIN}`)
+
+  // With a message being written, the browser asks first, and staying keeps it
+  await compose(page, 'Unsent loon')
+  await markPage(page)
+  const asked = page.waitForEvent('dialog')
+  const clicked = menuItem(page, 'More', 'Reload')
+  const dialog = await asked
+  expect(dialog.type()).toBe('beforeunload')
+  await dialog.dismiss()
+  await clicked
+  await page.waitForTimeout(1_000)
+  expect(await page.evaluate(() => 'notReloaded' in window)).toBe(true)
+  await expect(page.getByLabel('Subject', { exact: true })).toHaveValue(
+    'Unsent loon'
+  )
   await context.close()
 })
 
@@ -1475,12 +1493,10 @@ test('a newer webmail deployed shows a banner when the page comes back into view
   const { context, page } = await signedIn(browser, USER_A)
   await expect(page.getByTestId('address')).toHaveText(`alice@${DOMAIN}`)
   const banner = page.getByRole('status').filter({ hasText: 'newer version' })
+  const asksServer = (r: Response) =>
+    new URL(r.url()).pathname === '/' && r.request().resourceType() === 'fetch'
   const backInView = async () => {
-    const asked = page.waitForResponse(
-      (r) =>
-        new URL(r.url()).pathname === '/' &&
-        r.request().resourceType() === 'fetch'
-    )
+    const asked = page.waitForResponse(asksServer)
     await page.evaluate(() =>
       document.dispatchEvent(new Event('visibilitychange'))
     )
@@ -1500,20 +1516,32 @@ test('a newer webmail deployed shows a banner when the page comes back into view
     )
     await route.fulfill({ response, body: html })
   }
-  await page.route(
-    (url) => url.pathname === '/',
-    (route) =>
-      route.request().resourceType() === 'fetch'
-        ? newer(route)
-        : route.fallback()
-  )
+  const serveNewer = () =>
+    page.route(
+      (url) => url.pathname === '/',
+      (route) =>
+        route.request().resourceType() === 'fetch'
+          ? newer(route)
+          : route.fallback()
+    )
+  await serveNewer()
   await backInView()
   await expect(banner).toBeVisible()
   await page.unrouteAll()
   await markPage(page)
+  // The check a page makes as it starts, which finds the same build
+  const started = page.waitForResponse(asksServer)
   await banner.getByRole('button', { name: 'Reload' }).click()
   await reloaded(page)
+  await started
+  await page.waitForTimeout(500)
   await expect(page.getByTestId('address')).toHaveText(`alice@${DOMAIN}`)
+  await expect(banner).toHaveCount(0)
+
+  // Closed, it leaves the page as it is
+  await serveNewer()
+  await backInView()
+  await banner.getByRole('button', { name: 'Close' }).click()
   await expect(banner).toHaveCount(0)
   await context.close()
 })

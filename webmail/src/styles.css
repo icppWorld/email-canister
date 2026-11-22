@@ -379,23 +379,6 @@ nav button.mailbox {
   color: var(--ink-muted);
   font-size: 12px;
 }
-/* Says a newer webmail is deployed, above everything, until reloaded */
-.update {
-  position: fixed;
-  top: 8px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 30;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  max-width: calc(100vw - 32px);
-  padding: 6px 6px 6px 14px;
-  background: var(--ink);
-  color: var(--surface);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-dialog);
-}
 /* The reader's star sits among its buttons */
 .usage,
 .download-status {
@@ -579,7 +562,8 @@ button.star.on .icon {
 .more {
   margin: 10px;
 }
-.toast {
+.toast,
+.update {
   position: fixed;
   left: 16px;
   bottom: 16px;
@@ -594,8 +578,17 @@ button.star.on .icon {
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-dialog);
 }
+/* Says a newer webmail is deployed, at the top, until reloaded or closed */
+.update {
+  top: 8px;
+  bottom: auto;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 30;
+}
 /* Empty, it stays in the accessibility tree, so a new note is announced */
-.toast:empty {
+.toast:empty,
+.update:empty {
   padding: 0;
   opacity: 0;
   pointer-events: none;

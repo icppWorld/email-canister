@@ -47,7 +47,9 @@ function devSettings(env: Record<string, string>): Plugin {
   }
 }
 
-const { version } = JSON.parse(readFileSync('package.json', 'utf8'))
+const { version } = JSON.parse(
+  readFileSync(new URL('package.json', import.meta.url), 'utf8')
+)
 
 export default defineConfig(({ mode }) => ({
   plugins: [react(), devSettings(loadEnv(mode, process.cwd(), 'WEBMAIL_'))],

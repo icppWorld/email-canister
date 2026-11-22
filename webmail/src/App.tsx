@@ -192,6 +192,17 @@ export function App() {
   const current = box !== null ? view : 'admin'
   const download = useDownload(box, shown?.address ?? '', backend)
 
+  // A reload, such as for a newer webmail, or a closed tab asks first while a
+  // message is open in Compose, which is kept in memory only, or a copy is
+  // downloading
+  const unsaved = draft !== null || download.busy
+  useEffect(() => {
+    if (!unsaved) return
+    const ask = (e: BeforeUnloadEvent) => e.preventDefault()
+    window.addEventListener('beforeunload', ask)
+    return () => window.removeEventListener('beforeunload', ask)
+  }, [unsaved])
+
   // The draft open now, for a send that ends later
   const sendingDraft = useRef(draft)
   useEffect(() => {
