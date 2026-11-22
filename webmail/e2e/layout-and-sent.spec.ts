@@ -1546,22 +1546,25 @@ test('a newer webmail deployed shows a banner when the page comes back into view
   await banner.getByRole('button', { name: 'Close' }).click()
   await expect(banner).toHaveCount(0)
 
-  // A check the server never answers ends, and a later one asks again
+  // A check the server never answers ends, and a later one asks again: the
+  // first check of the page loaded again is left unanswered, the next ones
+  // name another script
   await page.unrouteAll()
-  await page.route(
-    (url) => url.pathname === '/',
-    (route) =>
-      route.request().resourceType() === 'fetch'
-        ? new Promise<void>(() => {})
-        : route.fallback()
-  )
+  let answered = false
   const hung = page.waitForRequest(
     (r) => new URL(r.url()).pathname === '/' && r.resourceType() === 'fetch'
   )
+  await page.route(
+    (url) => url.pathname === '/',
+    (route) => {
+      if (route.request().resourceType() !== 'fetch') return route.fallback()
+      if (answered) return newer(route)
+      answered = true
+      return new Promise<void>(() => {})
+    }
+  )
   await page.reload()
   await hung
-  await page.unrouteAll({ behavior: 'ignoreErrors' })
-  await serveNewer()
   await page.waitForTimeout(16_000)
   await backInView()
   await expect(banner).toBeVisible()
