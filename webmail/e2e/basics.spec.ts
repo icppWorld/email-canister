@@ -622,7 +622,8 @@ test('a message wider than the reader is shrunk to fit it, measured without its 
     subject: 'Wide gannet',
     body:
       `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">` +
-      `<html><head><style>@media only screen and (max-width:600px) { }</style>` +
+      // with a style of its own on its root, which shrinking keeps
+      `<html style="outline-color:rgb(1, 2, 3)"><head><style>@media only screen and (max-width:600px) { }</style>` +
       `<!--[if mso]><style>a{text-decoration:none}</style><![endif]--></head><body>` +
       `<table width="100%"><tr><td align="center"><table style="width:600px"><tr>` +
       `<td style="min-width:600px"><img src="${pic}" width="600" height="1" style="display:block;width:600px" alt="">` +
@@ -657,6 +658,11 @@ test('a message wider than the reader is shrunk to fit it, measured without its 
   await page.setViewportSize(phone)
   await expect(frame).toHaveAttribute('data-fit', /^0\.\d+$/)
   await expect.poll(fits).toBe(true)
+  expect(
+    await bodyOf(page).evaluate(
+      () => getComputedStyle(document.documentElement).outlineColor
+    )
+  ).toBe('rgb(1, 2, 3)')
   await expect(bodyOf(page).getByText('gannet')).toBeVisible()
   await expect(page.locator('iframe.measure')).toHaveCount(0)
   expect(requested).toEqual([])
