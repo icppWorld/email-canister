@@ -241,7 +241,7 @@ test('reads, flags, searches and deletes mail, privately', async ({
   await expect(page.frameLocator('iframe.body').locator('b')).toHaveText(
     'walrus'
   )
-  await expect(page.locator('iframe.body')).toHaveAttribute('sandbox', '')
+  await expect(page.locator('iframe.body')).toHaveAttribute('sandbox', SANDBOX)
   await expect(page.locator('button.message').first()).not.toHaveClass(/unread/)
 
   const other = await signedIn(browser, USER_B)
@@ -620,6 +620,49 @@ test('remote images load only after Show images, and only that time', async ({
   await context.close()
 })
 
+test('a link in a message opens in a new tab, and only a full web address', async ({
+  browser,
+}) => {
+  const landing = 'https://images.example.test/landing'
+  deliver({
+    subject: 'Linked avocet',
+    body:
+      `<p>avocet</p>` +
+      `<a href="${landing}" target="_top" ping="https://images.example.test/ping">a web link</a> ` +
+      `<a href="javascript:top.__xss=1">a script link</a> ` +
+      `<a href="/#bob/trash">a relative link</a> ` +
+      `<a href="mailto:x@sender.example">a mail link</a>`,
+  })
+  await waitDrained()
+  const { context, page } = await signedIn(browser, USER_A)
+  const asked: { url: string; referer?: string }[] = []
+  await context.route('https://images.example.test/**', (route) => {
+    const request = route.request()
+    asked.push({ url: request.url(), referer: request.headers()['referer'] })
+    return route.fulfill({ contentType: 'text/html', body: '<p>landed</p>' })
+  })
+  await openMail(page, 'avocet')
+  const body = bodyOf(page)
+  await expect(body.getByText('avocet')).toBeVisible()
+  for (const inert of ['a script link', 'a relative link', 'a mail link'])
+    await expect(body.getByText(inert)).not.toHaveAttribute('href')
+  const [landed] = await Promise.all([
+    context.waitForEvent('page'),
+    body.getByText('a web link').click(),
+  ])
+  await landed.waitForLoadState()
+  expect(landed.url()).toBe(landing)
+  // No handle on the webmail, no referrer, and no report of the click
+  expect(await landed.evaluate(() => window.opener)).toBeNull()
+  expect(asked).toEqual([{ url: landing, referer: undefined }])
+  // The webmail stays as it was, with the message open
+  await expect(body.getByText('avocet')).toBeVisible()
+  expect(
+    await page.evaluate(() => (window as unknown as { __xss?: number }).__xss)
+  ).toBeUndefined()
+  await context.close()
+})
+
 test('a style with a long run of spaces does not hold the reader up', async ({
   browser,
 }) => {
@@ -747,6 +790,9 @@ test('an ended sign-in returns to the sign-in page, keeping the draft for the sa
   await context.close()
 })
 
+// All the frame's sandbox allows: a link to open in a new tab
+const SANDBOX = 'allow-popups allow-popups-to-escape-sandbox'
+
 const XSS: string[] = [
   `<script>top.__xss=1;parent.__xss=1</script>`,
   `<img src=x onerror="top.__xss=1">`,
@@ -815,7 +861,10 @@ for (const bypassCSP of [false, true]) {
       await expect(page.getByTestId('subject')).toHaveText(
         `Corpus ${tag}${index}`
       )
-      await expect(page.locator('iframe.body')).toHaveAttribute('sandbox', '')
+      await expect(page.locator('iframe.body')).toHaveAttribute(
+        'sandbox',
+        SANDBOX
+      )
       await page.waitForTimeout(300)
       expect(
         await page.evaluate(
@@ -827,6 +876,8 @@ for (const bypassCSP of [false, true]) {
     }
 
     expect(dialogs).toEqual([])
+    // Nothing in the corpus opened a tab by itself
+    expect(context.pages()).toHaveLength(1)
     if (bypassCSP) {
       // Proves the listener works: with the page's policy bypassed, this one goes out
       const control = 'http://evil.test/control.png'

@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
 
-import { sandboxDocument, type FramedBody, type PageStyle } from './mime'
+import {
+  SANDBOX,
+  sandboxDocument,
+  type FramedBody,
+  type PageStyle,
+} from './mime'
 
 function readPageStyle(): PageStyle {
   const root = getComputedStyle(document.documentElement)
@@ -50,7 +55,7 @@ export function MessageBody({
     <iframe
       className={paper ? 'body paper' : 'body'}
       title="Message body"
-      sandbox=""
+      sandbox={SANDBOX}
       // An image shown carries none of the reader's cookies for its host.
       // Spread, as React's types do not know the attribute yet.
       {...{ credentialless: '' }}

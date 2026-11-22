@@ -317,6 +317,33 @@ const LEFT_OUT = 'link, meta, template, iframe, base, model'
 // An element's own referrer policy, which would win over the frame's
 const LEFT_OUT_ATTRIBUTE = 'referrerpolicy'
 
+// A link opens in a new tab, on the reader's click, which is all the frame's
+// sandbox lets a message open. Only an address written out in full, over http
+// or https: any other, a script or one relative to the webmail's own address
+// among them, loses its href. The new page gets no referrer and no handle on
+// the webmail, and the link cannot report the click with `ping`.
+// eslint-disable-next-line no-control-regex
+const LINK_URL = /^[\x00-\x20]*https?:\/\//i
+const LINK_REL = 'noopener noreferrer'
+const LINK_EXTRAS = ['xlink:href', 'ping']
+
+const opens = (link: Element) => LINK_URL.test(attributeUrl(link, 'href'))
+
+// Whether the link is as the frame may hold it
+const safeLink = (link: Element) =>
+  !LINK_EXTRAS.some((name) => link.hasAttribute(name)) &&
+  (!link.hasAttribute('href') ||
+    (opens(link) &&
+      link.getAttribute('target') === '_blank' &&
+      link.getAttribute('rel') === LINK_REL))
+
+function makeSafe(link: Element): void {
+  LINK_EXTRAS.forEach((name) => link.removeAttribute(name))
+  if (!opens(link)) return link.removeAttribute('href')
+  link.setAttribute('target', '_blank')
+  link.setAttribute('rel', LINK_REL)
+}
+
 // The message as the frame parses it: inside the body of the frame's document
 function parsedInFrame(body: string): Document {
   return new DOMParser().parseFromString(
@@ -326,20 +353,24 @@ function parsedInFrame(body: string): Document {
 }
 
 // The message without the elements and the attribute the frame leaves out,
-// checked on the parse the frame makes of it: markup written out and parsed
-// again can grow elements the first parse did not have, so it is repeated
-// until a parse finds none. A message that keeps growing them is shown as its
-// text.
+// and with its links made safe, checked on the parse the frame makes of it:
+// markup written out and parsed again can grow elements the first parse did
+// not have, so it is repeated until a parse finds nothing to change. A
+// message that keeps growing them is shown as its text.
 function withoutLeftOut(html: string): { body: string; doc: Document } {
   let body = html
   for (let pass = 0; pass < 4; pass += 1) {
     const doc = parsedInFrame(body)
     const found = doc.querySelectorAll(`${LEFT_OUT}, [${LEFT_OUT_ATTRIBUTE}]`)
-    if (found.length === 0) return { body, doc }
+    const links = Array.from(doc.querySelectorAll('a, area')).filter(
+      (link) => !safeLink(link)
+    )
+    if (found.length === 0 && links.length === 0) return { body, doc }
     found.forEach((element) => {
       if (element.matches(LEFT_OUT)) element.remove()
       else element.removeAttribute(LEFT_OUT_ATTRIBUTE)
     })
+    links.forEach(makeSafe)
     body = doc.documentElement.outerHTML
   }
   const text = escapeHtml(parsedInFrame(body).body.textContent ?? '')
@@ -359,7 +390,12 @@ export function frameBody(
   return { body, paper: wantsWhitePage(doc), remote: hasRemoteImages(doc) }
 }
 
-// The document for <iframe sandbox="">. The policy comes first, so it applies
+// What the frame's sandbox allows a message: to open a link in a new tab,
+// which is then a page like any other. No script, no form, and no move of the
+// webmail's own tab.
+export const SANDBOX = 'allow-popups allow-popups-to-escape-sandbox'
+
+// The document for the sandboxed frame. The policy comes first, so it applies
 // to everything the message contains, and allows nothing from the network but
 // https: images, and those only with `images`, after Show images. An image
 // loaded then sends no Referer. Looking up the hosts of the message's links
