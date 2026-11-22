@@ -79,12 +79,16 @@ function useSize(box: RefObject<HTMLDivElement | null>): Size {
 // Shrunk to half at most: a wider message scrolls the rest of the way, which
 // keeps its text readable.
 const MIN_ZOOM = 0.5
-type Measured = { document: string; width: number; zoom: number }
+// Room for a scrollbar the shown frame may get where the copy had none, and
+// for the rounding of the frame to whole pixels
+const SPARE = 16
+type Measured = { key: number; width: number; zoom: number }
 
 const zoomOf = (frame: HTMLIFrameElement): number => {
   const root = frame.contentDocument?.documentElement
   if (!root || root.scrollWidth <= root.clientWidth) return 1
-  const fit = Math.floor((root.clientWidth / root.scrollWidth) * 1000) / 1000
+  const room = root.clientWidth - SPARE
+  const fit = Math.floor((room / root.scrollWidth) * 1000) / 1000
   return Math.max(fit, MIN_ZOOM)
 }
 
@@ -116,8 +120,7 @@ export function MessageBody({
     return { document: sandboxDocument(framed.body, paper, page), key: copies }
   }, [framed.body, paper, page])
   const [measured, setMeasured] = useState<Measured | null>(null)
-  const settled =
-    measured?.document === copy.document && measured.width === size.width
+  const settled = measured?.key === copy.key && measured.width === size.width
   // While the message is measured again, it keeps the zoom it has
   const zoom = measured?.zoom ?? 1
   const scaled =
@@ -143,7 +146,7 @@ export function MessageBody({
           srcDoc={copy.document}
           onLoad={(e) =>
             setMeasured({
-              document: copy.document,
+              key: copy.key,
               width: size.width,
               zoom: zoomOf(e.currentTarget),
             })
