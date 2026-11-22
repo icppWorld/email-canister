@@ -616,12 +616,18 @@ test('only what the list of HTML allows reaches the reader, and what it drops ke
   deliver({
     subject: 'Listed bittern',
     body:
-      // A style sheet wrapped as older mail wraps it still applies
-      `<html><head><title>A title</title><style><!-- p.wrapped{color:rgb(1,2,3)} --></style></head>` +
-      `<body topmargin="0"><p class="wrapped">bittern</p>` +
+      `<html><head><title>A title</title>` +
+      // Style sheets wrapped as older mail wraps them still apply
+      `<style><!-- p.wrapped{color:rgb(1,2,3)} --></style>` +
+      `<style>/*<![CDATA[*/ p.cdata{color:rgb(4,5,6)} /*]]>*/</style>` +
+      // One made to come apart into markup, were it taken out of its wrapping
+      `<style>a<--->->/style><--->->newthing onclick="top.__xss=1" attributionsrc="https://ahead.example.test/s">grown</style>` +
+      `</head><body topmargin="0"><p class="wrapped">bittern</p><p class="cdata">cdata</p>` +
       // An element and attributes no rule of the reader's own names
       `<newthing src="https://ahead.example.test/n">kept words</newthing>` +
       `<p id="odd" attributionsrc="https://ahead.example.test/a" onclick="top.__xss=1">para</p>` +
+      // Names that would stand in for what the reader asks of the document
+      `<img name="querySelectorAll" alt="named"><img name="documentElement" alt="named too">` +
       `<o:p>office</o:p></body></html>`,
   })
   await waitDrained()
@@ -630,11 +636,14 @@ test('only what the list of HTML allows reaches the reader, and what it drops ke
   const frame = page.frameLocator('iframe.body')
   const body = bodyOf(page)
   await expect(body.locator('p.wrapped')).toHaveCSS('color', 'rgb(1, 2, 3)')
+  await expect(body.locator('p.cdata')).toHaveCSS('color', 'rgb(4, 5, 6)')
+  await expect(body).toHaveAttribute('topmargin', '0')
   await expect(frame.locator('newthing')).toHaveCount(0)
+  await expect(frame.locator('[attributionsrc], [onclick]')).toHaveCount(0)
+  await expect(frame.locator('img[name]')).toHaveCount(0)
   await expect(body).toContainText('kept words')
   await expect(body).toContainText('office')
   await expect(body).not.toContainText('A title')
-  await expect(frame.locator('#odd')).toHaveText('para')
   expect(
     await frame
       .locator('#odd')

@@ -378,78 +378,77 @@ function parsedInFrame(body: string): Document {
 }
 
 // Only what a maintained list of HTML's elements and attributes allows goes
-// on to the frame, so an element no rule here knows of, a new one in some
-// browser among them, is left out too. What the list drops keeps its text.
+// on to the frame (DOMPurify), so an element no rule here knows of, a new one
+// in some browser among them, is left out too. Text in an element the list
+// drops stays, but where it is not for reading, as in a title or a script.
 // - The whole document, as mail sets colours on its body and styles in its head.
-// - Added: the target the links get, and the colours and margins older mail
-//   sets on its body.
-// - A message runs no script, so an id or a name can stand in for nothing of
-//   the page's: they stay as written, for the message's own styles.
+// - Added: presentation that older mail sets with attributes of its own.
+// - An address: http or https, an inline image by its cid, the data: address
+//   such an image has become by now, or one relative to the frame's own.
+// - SAFE_FOR_XML guards markup that is read again as XML, or inside a drawing
+//   or a formula, and would drop a style sheet for a "<" in it, as in the
+//   wrapping older mail gives one. The frame reads its document as HTML, and
+//   a drawing or a formula is text by then.
 const ALLOW_LIST = {
   USE_PROFILES: { html: true },
   WHOLE_DOCUMENT: true,
+  SAFE_FOR_XML: false,
   FORBID_TAGS: ['template'],
   ADD_ATTR: [
-    'target',
     'text',
     'link',
     'vlink',
     'alink',
     'leftmargin',
     'topmargin',
+    'rightmargin',
+    'bottommargin',
     'marginwidth',
     'marginheight',
+    'hspace',
+    'vspace',
+    'bordercolor',
+    'frame',
+    'rules',
   ],
-  SANITIZE_DOM: false,
+  ALLOWED_URI_REGEXP:
+    /^(?:(?:https?|cid):|data:image\/(?:png|jpe?g|gif|webp);base64,|[^a-z]|[a-z+.-]+(?:[^a-z+.\-:]|$))/i,
 }
 
-// The marks older mail wraps a style sheet in, which mean nothing in a style
-// sheet and for which the list would drop it whole
-const WRAPPING = /<!--|-->/g
-const wrapped = (style: Element) =>
-  style instanceof HTMLStyleElement &&
-  (style.textContent ?? '').search(WRAPPING) >= 0
+// The webmail's own rules run inside the list, as its hooks, so that nothing
+// changes a message once the list has passed it: a drawing or a formula
+// becomes its text before the list would drop it whole, and a link is made
+// safe once the list has been over its attributes
+const list = DOMPurify(window)
+list.addHook('uponSanitizeElement', (node) => {
+  if (node instanceof Element && node.matches(AS_TEXT))
+    node.replaceWith(textOf(node))
+})
+list.addHook('afterSanitizeAttributes', (node) => {
+  if (node.matches('a, area') && !safeLink(node)) makeSafe(node)
+})
 
-// The parse the frame makes of `body`, and `body` again when it had something
-// the frame leaves out, a link to make safe or a wrapped style sheet
-function tidied(body: string): { doc: Document; tidy?: string } {
-  const doc = parsedInFrame(body)
+// What the frame may not hold, in the parse it makes of `body`: an element or
+// attribute it leaves out, a drawing or a formula, a link that is not safe
+function refused(doc: Document): Element[] {
   const found = doc.querySelectorAll(
     `${LEFT_OUT}, ${AS_TEXT}, [${LEFT_OUT_ATTRIBUTE}]`
   )
-  const links = Array.from(doc.querySelectorAll('a, area')).filter(
-    (link) => !safeLink(link)
-  )
-  const styles = Array.from(doc.querySelectorAll('style')).filter(wrapped)
-  if (found.length + links.length + styles.length === 0) return { doc }
-  // In the document's order: what was inside one already taken out is taken
-  // out of nothing
-  found.forEach((element) => {
-    if (element.matches(AS_TEXT)) element.replaceWith(textOf(element))
-    else if (element.matches(LEFT_OUT)) element.remove()
-    else element.removeAttribute(LEFT_OUT_ATTRIBUTE)
-  })
-  links.forEach(makeSafe)
-  styles.forEach((style) => {
-    style.textContent = (style.textContent ?? '').replace(WRAPPING, '')
-  })
-  return { doc, tidy: doc.documentElement.outerHTML }
+  const links = doc.querySelectorAll('a, area')
+  return [...found, ...Array.from(links).filter((link) => !safeLink(link))]
 }
 
-// The message as the frame may hold it.
-// - Tidied once first, which keeps the text of a drawing that the list would
-//   drop whole, and a style sheet it would drop for its wrapping.
-// - Then through the list.
-// - Then checked on the parse the frame makes of it: markup written out and
-//   parsed again can grow elements the first parse did not have, so it is
-//   tidied until a parse finds nothing to change. A message that keeps growing
-//   them is shown as its text.
+// The message as the frame may hold it: what came out of the list, as the
+// list wrote it, once the parse the frame makes of that holds nothing the
+// frame refuses. Markup written out and parsed again can grow elements the
+// first parse did not have: such a message goes through the list again, and
+// one that keeps growing them is shown as its text.
 function withoutLeftOut(html: string): { body: string; doc: Document } {
-  let body = DOMPurify.sanitize(tidied(html).tidy ?? html, ALLOW_LIST)
+  let body = html
   for (let pass = 0; pass < 4; pass += 1) {
-    const { doc, tidy } = tidied(body)
-    if (tidy === undefined) return { body, doc }
-    body = tidy
+    body = list.sanitize(body, ALLOW_LIST)
+    const doc = parsedInFrame(body)
+    if (refused(doc).length === 0) return { body, doc }
   }
   const text = escapeHtml(parsedInFrame(body).body.textContent ?? '')
   body = `<div style="white-space:pre-wrap">${text}</div>`
