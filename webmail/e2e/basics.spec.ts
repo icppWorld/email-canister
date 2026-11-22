@@ -241,7 +241,7 @@ test('reads, flags, searches and deletes mail, privately', async ({
   await expect(page.frameLocator('iframe.body').locator('b')).toHaveText(
     'walrus'
   )
-  await expect(page.locator('iframe.body')).toHaveAttribute('sandbox', '')
+  await expect(page.locator('iframe.body')).toHaveAttribute('sandbox', SANDBOX)
   await expect(page.locator('button.message').first()).not.toHaveClass(/unread/)
 
   const other = await signedIn(browser, USER_B)
@@ -358,6 +358,12 @@ for (const [colorScheme, word, body] of [
       '0100000000000000-00000000-0000-0000-0000-000000000000-000000/AAAAAAAAAAAAAAAAAAAAAAAAAAA=473" ' +
       'style="display: none; width: 1px; height: 1px;">',
   ],
+  // A drawing the frame leaves out paints nothing
+  [
+    'dark',
+    'guillemot',
+    '<p>guillemot</p><svg width="8" height="8"><rect width="8" height="8" fill="#000000"/></svg>',
+  ],
   // A link or meta the frame leaves out paints nothing
   [
     'dark',
@@ -415,10 +421,6 @@ for (const [word, body, contentType] of [
   [
     'skua',
     '<div style="background-image:linear-gradient(#ffffff,#ffffff)"><p>skua</p></div>',
-  ],
-  [
-    'guillemot',
-    '<p>guillemot</p><svg width="8" height="8"><rect width="8" height="8" fill="#000000"/></svg>',
   ],
   ['tern', '<body link="#000080"><p>tern</p></body>'],
   ['petrel', `<p>petrel</p><img srcset="data:image/png;base64,${PIXEL}">`],
@@ -524,23 +526,19 @@ test('remote images load only after Show images, and only that time', async ({
       `<p>razorbill</p><img src="${pic}" alt="Remote pic" referrerpolicy="unsafe-url">` +
       `<template><p>kept aside</p></template>` +
       `<model src="https://ahead.example.test/m.usdz"></model>` +
+      // A drawing and a formula, with the links of their own kinds: only
+      // their text is shown
+      `<svg width="10" height="10"><style>text{fill:red}</style><image href="https://images.example.test/svg.png" width="10" height="10"/>` +
+      `<a><animateTransform attributeName="href" type="x" values="x;https://ahead.example.test/?" begin="0s" dur="0.1s" fill="freeze"/><text y="9">drawn</text></a></svg>` +
+      `<math><mtext href="https://ahead.example.test/formula">formula</mtext></math>` +
       `<div style="background:url(${bg})">x</div>` +
       // Loaded once the frame has reached past the remote image
       `<img src="data:image/png;base64,${PIXEL}" alt="Local pic">` +
-      // A link in a shadow root, and one that a second parse grows where an
-      // engine writes < and > in attributes out as they are
+      // A link in a shadow root, and one in a frame's own document
       `<div><template shadowrootmode="open"><link rel="preconnect" href="https://ahead.example.test/shadow"></template></div>` +
-      // and one in a frame's own document
-      `<iframe srcdoc="<link rel=preconnect href=https://ahead.example.test/nested>"></iframe>` +
-      `<math><mtext><table><mglyph><style><!--</style><img title="--&gt;&lt;link rel=preconnect href=https://ahead.example.test/grown&gt;">`,
+      `<iframe srcdoc="<link rel=preconnect href=https://ahead.example.test/nested>"></iframe>`,
   })
   deliver({ subject: 'Local murrelet', body: '<p>murrelet</p>' })
-  deliver({
-    subject: 'Remote auklet',
-    body:
-      '<p>auklet</p><svg width="10" height="10">' +
-      '<image href="https://images.example.test/svg.png" width="10" height="10"/></svg>',
-  })
   await waitDrained()
   const { context, page } = await signedIn(browser, USER_A)
   // On the context, which sees the sandboxed frame's requests too
@@ -572,6 +570,10 @@ test('remote images load only after Show images, and only that time', async ({
   await expect(frame.locator('template')).toHaveCount(0)
   await expect(frame.locator('base')).toHaveCount(0)
   await expect(frame.locator('model')).toHaveCount(0)
+  await expect(frame.locator('svg, math')).toHaveCount(0)
+  await expect(bodyOf(page)).toContainText('drawn')
+  await expect(bodyOf(page)).toContainText('formula')
+  await expect(bodyOf(page)).not.toContainText('fill:red')
   // The frame's requests carry none of the reader's cookies: a request this
   // test answers never reaches the network, where they would be left out
   expect(
@@ -597,11 +599,6 @@ test('remote images load only after Show images, and only that time', async ({
   await expect(bodyOf(page).getByText('murrelet')).toBeVisible()
   await expect(showImages).toHaveCount(0)
 
-  // An SVG image is a remote image too
-  await openMail(page, 'auklet')
-  await expect(bodyOf(page).getByText('auklet')).toBeVisible()
-  await expect(showImages).toBeVisible()
-
   // Opened again, its images are blocked again
   const before = requested.length
   await openMail(page, 'razorbill')
@@ -610,6 +607,62 @@ test('remote images load only after Show images, and only that time', async ({
   await expect(local).toHaveJSProperty('naturalWidth', 1)
   expect(requested).toHaveLength(before)
   await expect(picture).toHaveJSProperty('naturalWidth', 0)
+  await context.close()
+})
+
+test('a link in a message opens in a new tab, and only a full web address', async ({
+  browser,
+}) => {
+  const landing = 'https://images.example.test/landing'
+  deliver({
+    subject: 'Linked avocet',
+    body:
+      `<p>avocet</p>` +
+      `<a href="${landing}" target="_top" ping="https://images.example.test/ping">a web link</a> ` +
+      `<a href="javascript:top.__xss=1">a script link</a> ` +
+      `<a href="/#bob/trash">a relative link</a> ` +
+      `<a href="mailto:x@sender.example">a mail link</a> ` +
+      `<a href="https://">an unreadable link</a>` +
+      `<img src="data:image/png;base64,${PIXEL}" usemap="#m" alt="A map"><map name="m">` +
+      `<area shape="rect" coords="0,0,1,1" href="${landing}" target="_top" alt="An area"></map>`,
+  })
+  await waitDrained()
+  const { context, page } = await signedIn(browser, USER_A)
+  const asked: { url: string; referer?: string }[] = []
+  await context.route('https://images.example.test/**', (route) => {
+    const request = route.request()
+    asked.push({ url: request.url(), referer: request.headers()['referer'] })
+    return route.fulfill({ contentType: 'text/html', body: '<p>landed</p>' })
+  })
+  await openMail(page, 'avocet')
+  const body = bodyOf(page)
+  await expect(body.getByText('avocet')).toBeVisible()
+  for (const inert of [
+    'a script link',
+    'a relative link',
+    'a mail link',
+    'an unreadable link',
+  ])
+    await expect(body.getByText(inert)).not.toHaveAttribute('href')
+  for (const link of [body.getByText('a web link'), body.locator('area')]) {
+    await expect(link).toHaveAttribute('target', '_blank')
+    await expect(link).toHaveAttribute('rel', 'noopener noreferrer')
+    await expect(link).not.toHaveAttribute('ping')
+  }
+  const [landed] = await Promise.all([
+    context.waitForEvent('page'),
+    body.getByText('a web link').click(),
+  ])
+  await landed.waitForLoadState()
+  expect(landed.url()).toBe(landing)
+  // No handle on the webmail, no referrer, and no report of the click
+  expect(await landed.evaluate(() => window.opener)).toBeNull()
+  expect(asked).toEqual([{ url: landing, referer: undefined }])
+  // The webmail stays as it was, with the message open
+  await expect(body.getByText('avocet')).toBeVisible()
+  expect(
+    await page.evaluate(() => (window as unknown as { __xss?: number }).__xss)
+  ).toBeUndefined()
   await context.close()
 })
 
@@ -740,6 +793,9 @@ test('an ended sign-in returns to the sign-in page, keeping the draft for the sa
   await context.close()
 })
 
+// All the frame's sandbox allows: a link to open in a new tab
+const SANDBOX = 'allow-popups allow-popups-to-escape-sandbox'
+
 const XSS: string[] = [
   `<script>top.__xss=1;parent.__xss=1</script>`,
   `<img src=x onerror="top.__xss=1">`,
@@ -808,7 +864,10 @@ for (const bypassCSP of [false, true]) {
       await expect(page.getByTestId('subject')).toHaveText(
         `Corpus ${tag}${index}`
       )
-      await expect(page.locator('iframe.body')).toHaveAttribute('sandbox', '')
+      await expect(page.locator('iframe.body')).toHaveAttribute(
+        'sandbox',
+        SANDBOX
+      )
       await page.waitForTimeout(300)
       expect(
         await page.evaluate(
@@ -820,6 +879,8 @@ for (const bypassCSP of [false, true]) {
     }
 
     expect(dialogs).toEqual([])
+    // Nothing in the corpus opened a tab by itself
+    expect(context.pages()).toHaveLength(1)
     if (bypassCSP) {
       // Proves the listener works: with the page's policy bypassed, this one goes out
       const control = 'http://evil.test/control.png'

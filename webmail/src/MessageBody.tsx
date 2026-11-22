@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
 
-import { sandboxDocument, type FramedBody, type PageStyle } from './mime'
+import {
+  SANDBOX,
+  sandboxDocument,
+  type FramedBody,
+  type PageStyle,
+} from './mime'
 
 function readPageStyle(): PageStyle {
   const root = getComputedStyle(document.documentElement)
@@ -30,8 +35,9 @@ function usePageStyle(): PageStyle {
   return page
 }
 
-// No allow-* tokens at all: no scripts, forms, popups or same-origin access.
-// The message is framed by the caller, once per message (frameBody in mime.ts).
+// The sandbox allows a message only what SANDBOX in mime.ts says: no scripts,
+// forms or same-origin access. The message is framed by the caller, once per
+// message (frameBody in mime.ts).
 export function MessageBody({
   framed,
   images = false,
@@ -50,7 +56,7 @@ export function MessageBody({
     <iframe
       className={paper ? 'body paper' : 'body'}
       title="Message body"
-      sandbox=""
+      sandbox={SANDBOX}
       // An image shown carries none of the reader's cookies for its host, in
       // the browsers that know the attribute; the others leave such cookies
       // out, or keep them apart, by themselves. Spread, as React's types do
