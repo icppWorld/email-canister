@@ -358,6 +358,12 @@ for (const [colorScheme, word, body] of [
       '0100000000000000-00000000-0000-0000-0000-000000000000-000000/AAAAAAAAAAAAAAAAAAAAAAAAAAA=473" ' +
       'style="display: none; width: 1px; height: 1px;">',
   ],
+  // A drawing the frame leaves out paints nothing
+  [
+    'dark',
+    'guillemot',
+    '<p>guillemot</p><svg width="8" height="8"><rect width="8" height="8" fill="#000000"/></svg>',
+  ],
   // A link or meta the frame leaves out paints nothing
   [
     'dark',
@@ -415,10 +421,6 @@ for (const [word, body, contentType] of [
   [
     'skua',
     '<div style="background-image:linear-gradient(#ffffff,#ffffff)"><p>skua</p></div>',
-  ],
-  [
-    'guillemot',
-    '<p>guillemot</p><svg width="8" height="8"><rect width="8" height="8" fill="#000000"/></svg>',
   ],
   ['tern', '<body link="#000080"><p>tern</p></body>'],
   ['petrel', `<p>petrel</p><img srcset="data:image/png;base64,${PIXEL}">`],
@@ -524,6 +526,10 @@ test('remote images load only after Show images, and only that time', async ({
       `<p>razorbill</p><img src="${pic}" alt="Remote pic" referrerpolicy="unsafe-url">` +
       `<template><p>kept aside</p></template>` +
       `<model src="https://ahead.example.test/m.usdz"></model>` +
+      // A drawing and a formula, with the links of their own kinds
+      `<svg width="10" height="10"><image href="https://images.example.test/svg.png" width="10" height="10"/>` +
+      `<a><animateTransform attributeName="href" type="x" values="x;https://ahead.example.test/?" begin="0s" dur="0.1s" fill="freeze"/><text y="9">drawn</text></a></svg>` +
+      `<math><mtext href="https://ahead.example.test/formula">formula</mtext></math>` +
       `<div style="background:url(${bg})">x</div>` +
       // Loaded once the frame has reached past the remote image
       `<img src="data:image/png;base64,${PIXEL}" alt="Local pic">` +
@@ -535,33 +541,14 @@ test('remote images load only after Show images, and only that time', async ({
       `<math><mtext><table><mglyph><style><!--</style><img title="--&gt;&lt;link rel=preconnect href=https://ahead.example.test/grown&gt;">`,
   })
   deliver({ subject: 'Local murrelet', body: '<p>murrelet</p>' })
-  deliver({
-    subject: 'Remote auklet',
-    body:
-      '<p>auklet</p><svg width="10" height="10">' +
-      '<image href="https://images.example.test/svg.png" width="10" height="10"/></svg>',
-  })
   await waitDrained()
   const { context, page } = await signedIn(browser, USER_A)
   // On the context, which sees the sandboxed frame's requests too
   const requested: string[] = []
   const referrers: (string | undefined)[] = []
-  const cookies: (string | undefined)[] = []
-  // A cookie the reader's browser holds for the images' host
-  await context.addCookies([
-    {
-      name: 'known',
-      value: 'reader',
-      domain: 'images.example.test',
-      path: '/',
-      secure: true,
-      sameSite: 'None',
-    },
-  ])
-  await context.route('https://images.example.test/**', async (route) => {
+  await context.route('https://images.example.test/**', (route) => {
     requested.push(route.request().url())
     referrers.push(route.request().headers()['referer'])
-    cookies.push((await route.request().allHeaders())['cookie'])
     return route.fulfill({
       contentType: 'image/png',
       headers: { 'Cache-Control': 'no-store' },
@@ -585,6 +572,14 @@ test('remote images load only after Show images, and only that time', async ({
   await expect(frame.locator('template')).toHaveCount(0)
   await expect(frame.locator('base')).toHaveCount(0)
   await expect(frame.locator('model')).toHaveCount(0)
+  await expect(frame.locator('svg, math')).toHaveCount(0)
+  // The frame's requests carry none of the reader's cookies: a request this
+  // test answers never reaches the network, where they would be left out
+  expect(
+    await bodyOf(page).evaluate(
+      () => (window as unknown as { credentialless?: boolean }).credentialless
+    )
+  ).toBe(true)
   // The hosts of the message's links are not looked up ahead of a click
   await expect(
     frame.locator('meta[http-equiv="x-dns-prefetch-control"][content="off"]')
@@ -596,18 +591,12 @@ test('remote images load only after Show images, and only that time', async ({
   await expect(picture).toHaveJSProperty('naturalWidth', 1)
   await expect.poll(() => requested).toEqual(expect.arrayContaining([pic, bg]))
   expect(referrers.filter(Boolean)).toEqual([])
-  expect(cookies.filter(Boolean)).toEqual([])
   await expect(showImages).toHaveCount(0)
 
   // A message without remote images has nothing to show
   await openMail(page, 'murrelet')
   await expect(bodyOf(page).getByText('murrelet')).toBeVisible()
   await expect(showImages).toHaveCount(0)
-
-  // An SVG image is a remote image too
-  await openMail(page, 'auklet')
-  await expect(bodyOf(page).getByText('auklet')).toBeVisible()
-  await expect(showImages).toBeVisible()
 
   // Opened again, its images are blocked again
   const before = requested.length
@@ -631,11 +620,10 @@ test('a link in a message opens in a new tab, and only a full web address', asyn
       `<a href="${landing}" target="_top" ping="https://images.example.test/ping">a web link</a> ` +
       `<a href="javascript:top.__xss=1">a script link</a> ` +
       `<a href="/#bob/trash">a relative link</a> ` +
-      `<a href="mailto:x@sender.example">a mail link</a>` +
-      // An animation would give this one another address after the check
-      `<svg width="90" height="20"><a href="${landing}"><set attributeName="href" ` +
-      `to="https://images.example.test/animated" begin="0s" dur="indefinite"/>` +
-      `<text y="15">an svg link</text></a></svg>`,
+      `<a href="mailto:x@sender.example">a mail link</a> ` +
+      `<a href="https://">an unreadable link</a>` +
+      `<img src="data:image/png;base64,${PIXEL}" usemap="#m" alt="A map"><map name="m">` +
+      `<area shape="rect" coords="0,0,1,1" href="${landing}" target="_top" alt="An area"></map>`,
   })
   await waitDrained()
   const { context, page } = await signedIn(browser, USER_A)
@@ -648,10 +636,18 @@ test('a link in a message opens in a new tab, and only a full web address', asyn
   await openMail(page, 'avocet')
   const body = bodyOf(page)
   await expect(body.getByText('avocet')).toBeVisible()
-  for (const inert of ['a script link', 'a relative link', 'a mail link'])
+  for (const inert of [
+    'a script link',
+    'a relative link',
+    'a mail link',
+    'an unreadable link',
+  ])
     await expect(body.getByText(inert)).not.toHaveAttribute('href')
-  await expect(body.locator('svg a')).not.toHaveAttribute('href')
-  await expect(body.locator('set')).toHaveCount(0)
+  for (const link of [body.getByText('a web link'), body.locator('area')]) {
+    await expect(link).toHaveAttribute('target', '_blank')
+    await expect(link).toHaveAttribute('rel', 'noopener noreferrer')
+    await expect(link).not.toHaveAttribute('ping')
+  }
   const [landed] = await Promise.all([
     context.waitForEvent('page'),
     body.getByText('a web link').click(),

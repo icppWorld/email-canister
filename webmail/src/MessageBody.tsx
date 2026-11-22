@@ -35,8 +35,9 @@ function usePageStyle(): PageStyle {
   return page
 }
 
-// No allow-* tokens at all: no scripts, forms, popups or same-origin access.
-// The message is framed by the caller, once per message (frameBody in mime.ts).
+// The sandbox allows a message only what SANDBOX in mime.ts says: no scripts,
+// forms or same-origin access. The message is framed by the caller, once per
+// message (frameBody in mime.ts).
 export function MessageBody({
   framed,
   images = false,
@@ -56,8 +57,10 @@ export function MessageBody({
       className={paper ? 'body paper' : 'body'}
       title="Message body"
       sandbox={SANDBOX}
-      // An image shown carries none of the reader's cookies for its host.
-      // Spread, as React's types do not know the attribute yet.
+      // An image shown carries none of the reader's cookies for its host, in
+      // the browsers that know the attribute; the others leave such cookies
+      // out, or keep them apart, by themselves. Spread, as React's types do
+      // not know it yet.
       {...{ credentialless: '' }}
       srcDoc={srcdoc}
     />

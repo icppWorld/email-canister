@@ -267,9 +267,9 @@ function pageStyleSheet(paper: boolean, page: PageStyle): string {
 
 // Images the message would load from the network, which the frame blocks until
 // Show images: loading them tells the sender when the message was read, and
-// from where. An <img>, <picture> or <input type=image> source, an SVG
-// <image>, a video's poster, a background attribute, or a CSS url() or
-// image-set() in a style attribute or a <style> element. A URL without a scheme
+// from where. An <img>, <picture> or <input type=image> source, a video's
+// poster, a background attribute, or a CSS url() or image-set() in a style
+// attribute or a <style> element. A URL without a scheme
 // takes the page's. Styles in an attribute are read as the browser parsed
 // them, a <style> element as written: an escape there can hide a URL, which
 // only leaves the button out, as the frame's policy is what blocks it.
@@ -283,8 +283,6 @@ const REMOTE_CSS = /(url|image-set)\(\s*(['"]\s*)?(https?:)?\/\//i
 const SOURCES: [selector: string, attribute: string][] = [
   ['img', 'src'],
   ['input[type=image i]', 'src'],
-  ['image', 'href'],
-  ['image', 'xlink:href'],
   ['video', 'poster'],
 ]
 
@@ -311,26 +309,37 @@ export type FramedBody = { body: string; paper: boolean; remote: boolean }
 // was read; a meta could loosen the frame's referrer policy; a template can
 // become a shadow root, and a frame holds a document of its own, which a check
 // here does not see into; a base would make a relative address a remote one;
-// one engine loads a model outside the policy; an SVG animation can give a
-// link another address after it was checked. A <frame> needs no entry: a
-// body cannot hold one.
-const LEFT_OUT = 'link, meta, template, iframe, base, model, set, animate'
+// one engine loads a model outside the policy. Drawings and formulas, SVG and
+// MathML, are left out whole: they bring links of their own kinds, which an
+// animation can give another address after a check, and mail services do not
+// show them either. A <frame> needs no entry: a body cannot hold one.
+const LEFT_OUT = 'link, meta, template, iframe, base, model, svg, math'
 // An element's own referrer policy, which would win over the frame's
 const LEFT_OUT_ATTRIBUTE = 'referrerpolicy'
 
 // A link opens in a new tab, on the reader's click, which is all the frame's
 // sandbox lets a message open. Only an address written out in full, over http
-// or https, on an HTML link: any other, a script or one relative to the
-// webmail's own address among them, and a link drawn in SVG, loses its href.
-// The new page gets no referrer and no handle on the webmail, and the link
-// cannot report the click with `ping`.
+// or https, that the browser can read: any other, a script or one relative to
+// the webmail's own address among them, loses its href. The new page gets no
+// referrer and no handle on the webmail, and the link cannot report the click
+// with `ping`.
 // eslint-disable-next-line no-control-regex
 const LINK_URL = /^[\x00-\x20]*https?:\/\//i
 const LINK_REL = 'noopener noreferrer'
 const LINK_EXTRAS = ['xlink:href', 'ping']
 
-const opens = (link: Element) =>
-  link instanceof HTMLElement && LINK_URL.test(attributeUrl(link, 'href'))
+function readable(url: string): boolean {
+  try {
+    return Boolean(new URL(url))
+  } catch {
+    return false
+  }
+}
+
+function opens(link: Element): boolean {
+  const url = attributeUrl(link, 'href')
+  return link instanceof HTMLElement && LINK_URL.test(url) && readable(url)
+}
 
 // Whether the link is as the frame may hold it
 const safeLink = (link: Element) =>
