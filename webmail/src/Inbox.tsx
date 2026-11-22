@@ -382,7 +382,7 @@ function Reader({
       ? mail.subject
       : `Re: ${mail.subject}`
     // The address as the From line shows it, so the reply goes where it is
-    // seen to go: one with a mark in it shows the mark, and goes nowhere
+    // seen to go: one with a mark in it shows, and goes to, U+FFFD in its place
     onReply({ to: shown(mail.fromAddress), subject, body: quote(mail) })
   }
 
