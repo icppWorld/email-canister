@@ -4,6 +4,7 @@
 import { Fragment, useEffect, useRef } from 'react'
 
 import { IconButton } from './Buttons'
+import { shown } from './format'
 import type { IconName } from './Icon'
 
 export type ToastAction = {
@@ -67,7 +68,8 @@ export function ToastBar({
         // By the note, so one that takes another's place has buttons of its
         // own: a focused one would run the new note's action
         <Fragment key={toast.id}>
-          <span>{toast.text}</span>
+          {/* A note can name a sender's address, as the sender wrote it */}
+          <span>{shown(toast.text)}</span>
           {toast.actions?.map((action) => (
             <IconButton
               key={action.label}
