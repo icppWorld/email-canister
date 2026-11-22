@@ -22,12 +22,18 @@
     // img-src allows https: for the same frames: their own policy blocks remote
     // images until the reader's Show images, for that message only.
     // font-src serves the brand's own font files.
+    // frame-src: a link clicked in a message may not load its page in the
+    // message's frame, which the sandbox alone would allow.
+    // Cross-Origin-Opener-Policy: a page that opens the webmail keeps no
+    // handle on it, to count its frames or steer its address; the sign-in
+    // window the webmail opens itself keeps working.
     match: '**/*',
     security_policy: 'hardened',
     disable_security_policy_warning: true,
     headers: {
-      'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self' https://icp0.io; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+      'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self' https://icp0.io; frame-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
       'Referrer-Policy': 'no-referrer',
+      'Cross-Origin-Opener-Policy': 'same-origin-allow-popups',
       'X-Content-Type-Options': 'nosniff',
       'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=()',
     },
