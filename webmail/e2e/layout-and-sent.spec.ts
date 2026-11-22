@@ -1504,7 +1504,38 @@ test('a newer webmail deployed shows a banner when the page comes back into view
     )
     await asked
   }
-  // The same build: no banner
+  // The same build: no banner, also with a style sheet of something else on
+  // the page, such as a browser extension, added before the webmail's script
+  // runs, and one of the webmail's own origin added after
+  await page.addInitScript(() => {
+    if (!window.sessionStorage.getItem('extension-sheet')) return
+    window.sessionStorage.removeItem('extension-sheet')
+    new MutationObserver((_, observer) => {
+      if (!document.head) return
+      observer.disconnect()
+      const link = document.createElement('link')
+      link.rel = 'stylesheet'
+      link.href = 'chrome-extension://abcdefghijklmnop/content.css'
+      // Still parsing: the webmail's module script runs only after that
+      link.dataset.early = String(document.readyState === 'loading')
+      document.head.append(link)
+    }).observe(document, { childList: true, subtree: true })
+  })
+  await page.evaluate(() =>
+    window.sessionStorage.setItem('extension-sheet', '1')
+  )
+  await page.reload()
+  await expect(page.getByTestId('address')).toHaveText(`alice@${DOMAIN}`)
+  await expect(page.locator('link[href^="chrome-extension:"]')).toHaveAttribute(
+    'data-early',
+    'true'
+  )
+  await page.evaluate(() => {
+    const link = document.createElement('link')
+    link.rel = 'stylesheet'
+    link.href = '/late.css'
+    document.head.append(link)
+  })
   await backInView()
   await page.waitForTimeout(500)
   await expect(banner).toHaveCount(0)

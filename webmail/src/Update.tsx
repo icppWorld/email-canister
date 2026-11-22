@@ -31,24 +31,41 @@ export function reload(): void {
   window.location.reload()
 }
 
+// The webmail's own files, on its own origin; anything else on the page, such
+// as a browser extension's style sheet, is not part of a deploy
+const own = (url: string | null): url is string => {
+  if (url === null) return false
+  try {
+    return new URL(url, window.location.href).origin === window.location.origin
+  } catch {
+    return false
+  }
+}
+
 // What a deploy changes in a page: the script and style sheets it names, which
 // each build names by a hash of their content, and the settings
 // brand/brand.mjs writes into it
 const deployOf = (doc: Document) => {
-  const script = doc.querySelector('script[type="module"][src]')
+  const script = Array.from(
+    doc.querySelectorAll('script[type="module"][src]'),
+    (element) => element.getAttribute('src')
+  ).find(own)
   if (!script) return null
   const sheets = Array.from(
     doc.querySelectorAll('link[rel="stylesheet"][href]'),
     (link) => link.getAttribute('href')
-  )
+  ).filter(own)
   const settings = doc.getElementById('settings')?.textContent ?? ''
-  return [script.getAttribute('src'), ...sheets, settings].join('\n')
+  return [script, ...sheets, settings].join('\n')
 }
+
+// The deploy this page runs, read as it loads: a style sheet added to the page
+// later is not part of it
+const running = deployOf(document)
 
 // Whether the server now has another deploy than this page runs. The page is
 // served with no-cache, so this asks the server itself.
 async function newerDeployed(): Promise<boolean> {
-  const running = deployOf(document)
   if (!running) return false
   const response = await fetch('/', {
     cache: 'no-store',
