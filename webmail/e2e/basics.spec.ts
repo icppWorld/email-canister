@@ -610,6 +610,49 @@ test('remote images load only after Show images, and only that time', async ({
   await context.close()
 })
 
+test('only what the list of HTML allows reaches the reader, and what it drops keeps its text', async ({
+  browser,
+}) => {
+  deliver({
+    subject: 'Listed bittern',
+    body:
+      `<html><head><title>A title</title>` +
+      // Style sheets wrapped as older mail wraps them still apply
+      `<style><!-- p.wrapped{color:rgb(1,2,3)} --></style>` +
+      `<style>/*<![CDATA[*/ p.cdata{color:rgb(4,5,6)} /*]]>*/</style>` +
+      // One made to come apart into markup, were it taken out of its wrapping
+      `<style>a<--->->/style><--->->newthing onclick="top.__xss=1" attributionsrc="https://ahead.example.test/s">grown</style>` +
+      `</head><body topmargin="0"><p class="wrapped">bittern</p><p class="cdata">cdata</p>` +
+      // An element and attributes no rule of the reader's own names
+      `<newthing src="https://ahead.example.test/n">kept words</newthing>` +
+      `<p id="odd" attributionsrc="https://ahead.example.test/a" onclick="top.__xss=1">para</p>` +
+      // Names that would stand in for what the reader asks of the document
+      `<img name="querySelectorAll" alt="named"><img name="documentElement" alt="named too">` +
+      `<form><input name="matches"></form>` +
+      `<o:p>office</o:p></body></html>`,
+  })
+  await waitDrained()
+  const { context, page } = await signedIn(browser, USER_A)
+  await openMail(page, 'bittern')
+  const frame = page.frameLocator('iframe.body')
+  const body = bodyOf(page)
+  await expect(body.locator('p.wrapped')).toHaveCSS('color', 'rgb(1, 2, 3)')
+  await expect(body.locator('p.cdata')).toHaveCSS('color', 'rgb(4, 5, 6)')
+  await expect(body).toHaveAttribute('topmargin', '0')
+  await expect(frame.locator('newthing')).toHaveCount(0)
+  await expect(frame.locator('[attributionsrc], [onclick]')).toHaveCount(0)
+  await expect(frame.locator('img[name]')).toHaveCount(0)
+  await expect(body).toContainText('kept words')
+  await expect(body).toContainText('office')
+  await expect(body).not.toContainText('A title')
+  expect(
+    await frame
+      .locator('#odd')
+      .evaluate((element) => element.getAttributeNames().sort())
+  ).toEqual(['id'])
+  await context.close()
+})
+
 test('a link in a message opens in a new tab, and only a full web address', async ({
   browser,
 }) => {
