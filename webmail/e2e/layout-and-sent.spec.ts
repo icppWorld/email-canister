@@ -1373,8 +1373,8 @@ test('a file picked again after an edit is sent as it is now', async ({
 
 // A mark that reverses what follows, U+202E, in a sender's address and the
 // domain that delivered it shows as U+FFFD wherever the webmail shows it: the
-// "via" line, a reply's To, the Spam note, Blocked senders, and Sent, with a
-// file named with the mark. The block is of the address as it came.
+// "via" line, the Spam note, Blocked senders, and Sent, with a file named with
+// the mark. The block is of the address as it came; a reply's To is left empty.
 test('a reversing mark in an address shows as a replacement character wherever the webmail shows it', async ({
   browser,
 }) => {
@@ -1392,7 +1392,7 @@ test('a reversing mark in an address shows as a replacement character wherever t
   await expect(page.getByTestId('via')).toHaveText('via in\uFFFDvoice.example')
   await reader(page).getByRole('button', { name: 'Reply' }).click()
   const reply = page.getByRole('dialog', { name: 'New message' })
-  await expect(reply.getByLabel('To', { exact: true })).toHaveValue(seen)
+  await expect(reply.getByLabel('To', { exact: true })).toHaveValue('')
   await reply.getByRole('button', { name: 'Close' }).click()
   await expect(reply).toHaveCount(0)
   await spamFromReader(page)

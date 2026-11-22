@@ -381,9 +381,11 @@ function Reader({
     const subject = /^re:/i.test(mail.subject)
       ? mail.subject
       : `Re: ${mail.subject}`
-    // The address as the From line shows it, so the reply goes where it is
-    // seen to go: one with a mark in it shows, and goes to, U+FFFD in its place
-    onReply({ to: shown(mail.fromAddress), subject, body: quote(mail) })
+    // An address with a mark in it is left out: as it came it shows as
+    // something else, and cleaned it is another address
+    const to =
+      shown(mail.fromAddress) === mail.fromAddress ? mail.fromAddress : ''
+    onReply({ to, subject, body: quote(mail) })
   }
 
   const via = mail
