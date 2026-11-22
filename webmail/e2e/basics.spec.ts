@@ -810,12 +810,12 @@ test('an ended sign-in returns to the sign-in page, keeping the draft for the sa
     buffer: Buffer.from('x'),
   })
   await end()
-  await expect(page.getByRole('status')).toContainText(
+  // The page's other status, the update banner's, is empty
+  const ended = page.getByRole('status').filter({ hasText: /./ })
+  await expect(ended).toContainText(
     'Your sign-in has ended. Please sign in again.'
   )
-  await expect(page.getByRole('status')).toContainText(
-    'Your unsent message reopens'
-  )
+  await expect(ended).toContainText('Your unsent message reopens')
   await expect(page.getByTestId('address')).toHaveCount(0)
   await expect(page.getByRole('dialog')).toHaveCount(0)
 
