@@ -30,7 +30,8 @@ import {
 } from './ical'
 import { deployment } from './settings'
 
-const seconds = (d: Date) => BigInt(Math.floor(d.getTime() / 1000))
+// Seconds since 1970, and none before: the backend's times are unsigned
+const seconds = (d: Date) => BigInt(Math.max(0, Math.floor(d.getTime() / 1000)))
 
 // The six weeks shown for a month, from the Monday on or before its first day
 function gridOf(month: Date): { start: Date; end: Date; days: Date[] } {

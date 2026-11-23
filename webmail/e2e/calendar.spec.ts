@@ -863,13 +863,21 @@ test('a new address made while the dialog was closed shows when it opens again',
   let releaseLoad = () => {}
   const loadGate = new Promise<void>((resolve) => (releaseLoad = resolve))
   let answered = 0
+  let fetched = () => {}
+  const read = new Promise<void>((resolve) => (fetched = resolve))
   await page.route(/\/api\/v\d\/canister\/[^/]+\/query$/, async (route) => {
+    // Only the address's load: the method name is plain text in the body
+    const body = route.request().postDataBuffer()
+    if (!body?.includes('mail_cal_feed')) return route.continue()
     const response = await route.fetch()
+    fetched()
     await loadGate
     await route.fulfill({ response })
     answered++
   })
   await subscribe.click()
+  // The load has read the old address before the renewal goes on
+  await read
   await expect(address).toHaveValue(old)
   release()
   await expect(address).not.toHaveValue(old)
@@ -881,5 +889,45 @@ test('a new address made while the dialog was closed shows when it opens again',
   const [token] = await alice.mail_cal_feed('alice')
   expect(await address.inputValue()).toContain(String(token))
   await alice.mail_cal_feed_stop('alice')
+  await context.close()
+})
+
+test('a month from before 1970 shows without a load error', async ({
+  browser,
+}) => {
+  await putRaw(
+    'early',
+    [
+      'DTSTAMP:20260101T000000Z',
+      'DTSTART:19700115T120000Z',
+      'DTEND:19700115T130000Z',
+      'SUMMARY:Early',
+    ],
+    new Date(Date.UTC(1970, 0, 15)),
+    new Date(Date.UTC(1970, 0, 16))
+  )
+  const { context, page } = await signedIn(browser, USER_A)
+  await openCalendar(page)
+  // Back to January 1970, whose grid starts in December 1969
+  const back = (now.getFullYear() - 1970) * 12 + now.getMonth()
+  await page
+    .getByRole('button', { name: 'Previous month' })
+    .evaluate((button: HTMLElement, times: number) => {
+      for (let i = 0; i < times; ++i) button.click()
+    }, back)
+  const january = new Date(1970, 0, 1).toLocaleDateString(undefined, {
+    month: 'long',
+    year: 'numeric',
+  })
+  await expect(
+    page.getByRole('heading', { level: 2, name: january })
+  ).toBeVisible()
+  // The month loads: its event shows, and no error
+  await expect(month(page).getByRole('button', { name: /Early/ })).toHaveCount(
+    1
+  )
+  await expect(
+    page.getByRole('region', { name: 'Calendar' }).getByRole('alert')
+  ).toHaveCount(0)
   await context.close()
 })
