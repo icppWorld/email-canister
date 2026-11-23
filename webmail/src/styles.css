@@ -1173,6 +1173,9 @@ th {
   flex-wrap: wrap;
   gap: 6px;
 }
+.event-fields {
+  display: contents;
+}
 .event-dialog textarea {
   min-height: 80px;
 }

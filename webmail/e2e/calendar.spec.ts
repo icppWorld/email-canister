@@ -124,6 +124,8 @@ test('a repeat and an all-day event show on their days', async ({
 
   await addEvent(page, 'Weekly round', async (p) => {
     await dialog(p).getByLabel('Start date').fill(third)
+    // A named zone, so the feed carries its VTIMEZONE whatever the browser's
+    await dialog(p).getByLabel('Time zone').selectOption('Europe/Amsterdam')
     await dialog(p).getByLabel('Repeats').selectOption('WEEKLY')
   })
   // The 3rd, 10th, 17th and 24th at least, and more in the grid's other days
@@ -200,7 +202,11 @@ test('a calendar app subscribes at the secret address', async ({ browser }) => {
     .getAllSubcomponents('vevent')
     .find((e) => new ICAL.Event(e).summary === 'Weekly round')
   expect(String(round?.getFirstPropertyValue('rrule'))).toBe('FREQ=WEEKLY')
-  expect(calendar.getAllSubcomponents('vtimezone').length).toBeGreaterThan(0)
+  expect(
+    calendar
+      .getAllSubcomponents('vtimezone')
+      .map((z) => z.getFirstPropertyValue('tzid'))
+  ).toEqual(['Europe/Amsterdam'])
 
   // A new address: the old one stops working
   await page
@@ -476,5 +482,42 @@ test('a repeat that cannot be expanded safely shows once', async ({
   ).toHaveCount(0)
   const alice = await asAlice()
   await alice.mail_cal_delete('alice', 'never')
+  await context.close()
+})
+
+test('an event the form cannot show is read-only, and can be deleted', async ({
+  browser,
+}) => {
+  await putRaw(
+    'hourly',
+    [
+      'DTSTAMP:20260101T000000Z',
+      `DTSTART;TZID=America/New_York:${ymd(0, 12)}T090000`,
+      // Ends in another zone: 09:00 in Chicago is 10:00 in New York
+      `DTEND;TZID=America/Chicago:${ymd(0, 12)}T090000`,
+      'RRULE:FREQ=HOURLY;COUNT=3',
+      'SUMMARY:Hourly',
+    ],
+    new Date(now.getFullYear(), now.getMonth(), 11),
+    new Date(now.getFullYear(), now.getMonth(), 14)
+  )
+  const { context, page } = await signedIn(browser, USER_A)
+  await openCalendar(page)
+  const hourly = month(page).getByRole('button', { name: /Hourly/ })
+  await expect(hourly).toHaveCount(1)
+  await hourly.click()
+  await expect(dialog(page)).toContainText('can be deleted here, not changed')
+  await expect(dialog(page).getByLabel('Title')).toBeDisabled()
+  await expect(dialog(page).getByLabel('Time zone')).toHaveValue(
+    'America/New_York'
+  )
+  await expect(dialog(page).getByLabel('Start time')).toHaveValue('09:00')
+  await expect(dialog(page).getByLabel('End time')).toHaveValue('10:00')
+  await expect(dialog(page).getByRole('button', { name: 'Save' })).toHaveCount(
+    0
+  )
+  await dialog(page).getByRole('button', { name: 'Delete' }).click()
+  await expect(dialog(page)).toBeHidden()
+  await expect(hourly).toHaveCount(0)
   await context.close()
 })

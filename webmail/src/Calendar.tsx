@@ -104,6 +104,7 @@ function newFields(date: string): EventFields {
     created: '',
     kept: null,
     source: '',
+    readOnly: false,
   }
 }
 
@@ -442,144 +443,154 @@ function EventDialog({
         className="compose-body"
         onSubmit={(e) => {
           e.preventDefault()
-          save()
+          if (!f.readOnly) save()
         }}
       >
-        <label>
-          Title
-          <input
-            aria-label="Title"
-            value={f.title}
-            autoFocus
-            onChange={(e) => set({ title: e.target.value })}
-          />
-        </label>
-        <label className="check">
-          <input
-            type="checkbox"
-            checked={f.allDay}
-            onChange={(e) => set({ allDay: e.target.checked })}
-          />
-          All day
-        </label>
-        <label>
-          Starts
-          <span className="when">
-            <input
-              aria-label="Start date"
-              type="date"
-              value={f.startDate}
-              onChange={(e) => {
-                const startDate = e.target.value
-                // The end moves with the start, keeping the length in days
-                const days =
-                  f.startDate && f.endDate
-                    ? Math.round(
-                        (Date.parse(f.endDate) - Date.parse(f.startDate)) /
-                          86_400_000
-                      )
-                    : 0
-                set({
-                  startDate,
-                  endDate: startDate ? addDays(startDate, days) : f.endDate,
-                })
-              }}
-            />
-            {!f.allDay && (
-              <input
-                aria-label="Start time"
-                type="time"
-                value={f.startTime}
-                onChange={(e) => set({ startTime: e.target.value })}
-              />
-            )}
-          </span>
-        </label>
-        <label>
-          Ends
-          <span className="when">
-            <input
-              aria-label="End date"
-              type="date"
-              value={f.endDate}
-              onChange={(e) => set({ endDate: e.target.value })}
-            />
-            {!f.allDay && (
-              <input
-                aria-label="End time"
-                type="time"
-                value={f.endTime}
-                onChange={(e) => set({ endTime: e.target.value })}
-              />
-            )}
-          </span>
-        </label>
-        {!f.allDay && (
+        {f.readOnly && (
+          <p className="hint">
+            Another calendar app wrote this event in a way this form cannot
+            show. It can be deleted here, not changed.
+          </p>
+        )}
+        <fieldset className="event-fields" disabled={f.readOnly}>
           <label>
-            Time zone
+            Title
+            <input
+              aria-label="Title"
+              value={f.title}
+              autoFocus
+              onChange={(e) => set({ title: e.target.value })}
+            />
+          </label>
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={f.allDay}
+              onChange={(e) => set({ allDay: e.target.checked })}
+            />
+            All day
+          </label>
+          <label>
+            Starts
+            <span className="when">
+              <input
+                aria-label="Start date"
+                type="date"
+                value={f.startDate}
+                onChange={(e) => {
+                  const startDate = e.target.value
+                  // The end moves with the start, keeping the length in days
+                  const days =
+                    f.startDate && f.endDate
+                      ? Math.round(
+                          (Date.parse(f.endDate) - Date.parse(f.startDate)) /
+                            86_400_000
+                        )
+                      : 0
+                  set({
+                    startDate,
+                    endDate: startDate ? addDays(startDate, days) : f.endDate,
+                  })
+                }}
+              />
+              {!f.allDay && (
+                <input
+                  aria-label="Start time"
+                  type="time"
+                  value={f.startTime}
+                  onChange={(e) => set({ startTime: e.target.value })}
+                />
+              )}
+            </span>
+          </label>
+          <label>
+            Ends
+            <span className="when">
+              <input
+                aria-label="End date"
+                type="date"
+                value={f.endDate}
+                onChange={(e) => set({ endDate: e.target.value })}
+              />
+              {!f.allDay && (
+                <input
+                  aria-label="End time"
+                  type="time"
+                  value={f.endTime}
+                  onChange={(e) => set({ endTime: e.target.value })}
+                />
+              )}
+            </span>
+          </label>
+          {!f.allDay && (
+            <label>
+              Time zone
+              <select
+                aria-label="Time zone"
+                value={f.tzid}
+                onChange={(e) => set({ tzid: e.target.value })}
+              >
+                {zoneOptions}
+              </select>
+            </label>
+          )}
+          <label>
+            Repeats
             <select
-              aria-label="Time zone"
-              value={f.tzid}
-              onChange={(e) => set({ tzid: e.target.value })}
+              aria-label="Repeats"
+              value={f.repeat}
+              onChange={(e) => set({ repeat: e.target.value as Repeat })}
             >
-              {zoneOptions}
+              {REPEATS.map(([value, text]) => (
+                <option key={value} value={value}>
+                  {text}
+                </option>
+              ))}
             </select>
           </label>
-        )}
-        <label>
-          Repeats
-          <select
-            aria-label="Repeats"
-            value={f.repeat}
-            onChange={(e) => set({ repeat: e.target.value as Repeat })}
-          >
-            {REPEATS.map(([value, text]) => (
-              <option key={value} value={value}>
-                {text}
-              </option>
-            ))}
-          </select>
-        </label>
-        {f.repeat && (
+          {f.repeat && (
+            <label>
+              Until
+              <input
+                aria-label="Repeat until"
+                type="date"
+                value={f.until}
+                onChange={(e) => set({ until: e.target.value })}
+              />
+            </label>
+          )}
           <label>
-            Until
+            Where
             <input
-              aria-label="Repeat until"
-              type="date"
-              value={f.until}
-              onChange={(e) => set({ until: e.target.value })}
+              aria-label="Location"
+              value={f.location}
+              onChange={(e) => set({ location: e.target.value })}
             />
           </label>
-        )}
-        <label>
-          Where
-          <input
-            aria-label="Location"
-            value={f.location}
-            onChange={(e) => set({ location: e.target.value })}
-          />
-        </label>
-        <label>
-          Notes
-          <textarea
-            aria-label="Notes"
-            value={f.notes}
-            onChange={(e) => set({ notes: e.target.value })}
-          />
-        </label>
+          <label>
+            Notes
+            <textarea
+              aria-label="Notes"
+              value={f.notes}
+              onChange={(e) => set({ notes: e.target.value })}
+            />
+          </label>
+        </fieldset>
         {error && (
           <p className="error" role="alert">
             {error}
           </p>
         )}
         <div className="toolbar">
-          <IconButton
-            type="submit"
-            variant="primary"
-            label="Save"
-            icon="check"
-            disabled={busy}
-          />
+          {!f.readOnly && (
+            <IconButton
+              type="submit"
+              variant="primary"
+              label="Save"
+              icon="check"
+              disabled={busy}
+            />
+          )}
           {!isNew && (
             <IconButton
               variant="danger"

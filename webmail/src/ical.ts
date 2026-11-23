@@ -9,6 +9,7 @@ import { tzlib_get_ical_block as icalBlock } from 'timezones-ical-library'
 import type { EventRequest, ZoneBlock } from './api'
 
 export type Repeat = '' | 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'YEARLY'
+const REPEATS = ['DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY']
 
 // What the event form edits. Dates are YYYY-MM-DD and times HH:MM, in the
 // event's time zone; an all-day event's end date is its last day.
@@ -32,6 +33,9 @@ export type EventFields = {
   kept: { freq: string; parts: Record<string, unknown> } | null
   // The stored block, whose other properties and alarms a save keeps, or ''
   source: string
+  // Written by another app in a way the form cannot show, such as extra
+  // dates or an hourly repeat: it can be deleted here, not changed
+  readOnly: boolean
 }
 
 // The properties the form writes; a save keeps every other one
@@ -257,8 +261,8 @@ export function buildEvent(f: EventFields): EventRequest {
 function parseEvent(vevent: string): ICAL.Event | null {
   try {
     // Its zone first, so that its times read in it
-    const tzid = /;TZID="?([^":;]+)"?[:;]/.exec(vevent)?.[1]
-    if (tzid) zoneOf(tzid)
+    for (const named of vevent.matchAll(/;TZID="?([^":;]+)"?[:;]/g))
+      zoneOf(named[1])
     const calendar = new ICAL.Component(
       ICAL.parse(`BEGIN:VCALENDAR\r\n${vevent}\r\nEND:VCALENDAR`)
     )
@@ -272,10 +276,17 @@ function parseEvent(vevent: string): ICAL.Event | null {
 // The form's fields of a parsed event
 function fieldsOf(event: ICAL.Event): EventFields {
   const start = event.startDate
-  const end = event.endDate ?? start
   const allDay = start.isDate
+  // An end written in another zone is shown in the start's
+  let end = event.endDate ?? start
+  if (!allDay && start.zone && end.zone && end.zone.tzid !== start.zone.tzid)
+    end = end.convertToZone(start.zone)
   const component = event.component
   const rule = component.getFirstPropertyValue('rrule') as ICAL.Recur | null
+  const readOnly =
+    component.hasProperty('rdate') ||
+    component.getAllProperties('rrule').length > 1 ||
+    (rule !== null && !REPEATS.includes(rule.freq))
   const repeat = (rule?.freq ?? '') as Repeat
   let until = ''
   if (rule?.until) {
@@ -312,25 +323,24 @@ function fieldsOf(event: ICAL.Event): EventFields {
       start.zone?.tzid && start.zone.tzid !== 'floating'
         ? start.zone.tzid
         : localZone(),
-    repeat: ['DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY'].includes(repeat)
-      ? repeat
-      : '',
+    repeat: REPEATS.includes(repeat) ? repeat : '',
     until,
     sequence: event.sequence ?? 0,
     created: created ? created.toString() : '',
     kept,
     source: event.component.toString(),
+    readOnly,
   }
 }
 
-// A repeat ical.js expands safely: with BY parts, such as a weekday a daily
-// repeat never reaches, its iterator can search for ever
+// A repeat ical.js expands safely, and soon: with BY parts, such as a
+// weekday a daily repeat never reaches, its iterator can search for ever, and
+// an hourly one would take too many steps to reach the window
 function safeRepeat(event: ICAL.Event): boolean {
-  return event.component
-    .getAllProperties('rrule')
-    .every(
-      (p) => Object.keys((p.getFirstValue() as ICAL.Recur).parts).length === 0
-    )
+  return event.component.getAllProperties('rrule').every((p) => {
+    const rule = p.getFirstValue() as ICAL.Recur
+    return REPEATS.includes(rule.freq) && Object.keys(rule.parts).length === 0
+  })
 }
 
 // A local Date at the time, or at local midnight of an all-day date
