@@ -239,7 +239,7 @@ def test__a_long_list_comes_in_pages() -> None:
         ("a", vevent("a", extra="BEGIN;X=1:VTimezone"), "with parameters"),
         (
             "a",
-            vevent("b", extra="BEGIN;X=1:VALARM\r\nUID:a\r\nEND;X=1:VALARM"),
+            vevent("a", extra="BEGIN;X=1:VALARM\r\nUID:b\r\nEND;X=1:VALARM"),
             "with parameters",
         ),
         ("a", vevent("a") + "\r\n X", "must be one VEVENT"),
