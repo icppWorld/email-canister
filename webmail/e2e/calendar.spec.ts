@@ -367,64 +367,6 @@ test('an event longer than two months shows on every day of the grid', async ({
   await context.close()
 })
 
-test('a save that ends late leaves a newer form and month alone', async ({
-  browser,
-}) => {
-  await putRaw(
-    'slow',
-    [
-      'DTSTAMP:20260101T000000Z',
-      `DTSTART:${ymd(0, 20)}T090000Z`,
-      `DTEND:${ymd(0, 20)}T100000Z`,
-      'SUMMARY:Slow',
-    ],
-    new Date(now.getFullYear(), now.getMonth(), 20),
-    new Date(now.getFullYear(), now.getMonth(), 21)
-  )
-  const { context, page } = await signedIn(browser, USER_A)
-  await openCalendar(page)
-  // The next update call, the save, waits until the test lets it go
-  let release = () => {}
-  const gate = new Promise<void>((resolve) => (release = resolve))
-  let held = 0
-  await page.route(/\/api\/v\d\/canister\/[^/]+\/call$/, async (route) => {
-    if (held++ === 0) await gate
-    await route.continue()
-  })
-  const slow = month(page).getByRole('button', { name: /Slow/ })
-  await slow.click()
-  await dialog(page).getByLabel('Title').fill('Slow save')
-  await dialog(page).getByRole('button', { name: 'Save' }).click()
-  // Closed while it saves; the month left and shown again, as a new grid;
-  // the same event opened again in a new form
-  await dialog(page).getByRole('button', { name: 'Close' }).click()
-  await page.getByRole('button', { name: 'Next month' }).click()
-  await page.getByRole('button', { name: 'Previous month' }).click()
-  await slow.click()
-  await dialog(page).getByLabel('Title').fill('Still typing')
-  release()
-
-  const alice = await asAlice()
-  await expect
-    .poll(async () => {
-      const found = await alice.mail_cal_list('alice', {
-        from: 0n,
-        to: 253_402_300_799n,
-        cursor: [],
-        limit: 100n,
-      })
-      return found.items.some((e) => e.vevent.includes('SUMMARY:Slow save'))
-    })
-    .toBe(true)
-  // The month shown loads again with the save, and the new form stays
-  await expect(
-    month(page).getByRole('button', { name: /Slow save/ })
-  ).toHaveCount(1)
-  await expect(dialog(page).getByLabel('Title')).toHaveValue('Still typing')
-  await alice.mail_cal_delete('alice', 'slow')
-  await context.close()
-})
-
 test('an event from another app keeps what the form does not show', async ({
   browser,
 }) => {
@@ -829,69 +771,6 @@ test('the form holds its fields while it saves', async ({ browser }) => {
   await context.close()
 })
 
-test('a new address made while the dialog was closed shows when it opens again', async ({
-  browser,
-}) => {
-  const { context, page } = await signedIn(browser, USER_A)
-  answer(page, true, true)
-  await openCalendar(page)
-  const subscribe = page.getByRole('button', {
-    name: 'Subscribe from a calendar app',
-  })
-  await subscribe.click()
-  await page.getByRole('button', { name: 'Make a secret address' }).click()
-  const address = page.getByLabel('Secret address', { exact: true })
-  await expect(address).toHaveValue(/\.ics$/)
-  const old = await address.inputValue()
-
-  // The renewal waits until the dialog has closed and opened again
-  let release = () => {}
-  const gate = new Promise<void>((resolve) => (release = resolve))
-  let held = 0
-  await page.route(/\/api\/v\d\/canister\/[^/]+\/call$/, async (route) => {
-    if (held++ === 0) await gate
-    await route.continue()
-  })
-  await page
-    .getByRole('button', {
-      name: 'New secret address: the old one stops working',
-    })
-    .click()
-  await page.keyboard.press('Escape')
-  // The reopened dialog's load answers only after the renewal: it read the
-  // old address, which must not replace the new one
-  let releaseLoad = () => {}
-  const loadGate = new Promise<void>((resolve) => (releaseLoad = resolve))
-  let answered = 0
-  let fetched = () => {}
-  const read = new Promise<void>((resolve) => (fetched = resolve))
-  await page.route(/\/api\/v\d\/canister\/[^/]+\/query$/, async (route) => {
-    // Only the address's load: the method name is plain text in the body
-    const body = route.request().postDataBuffer()
-    if (!body?.includes('mail_cal_feed')) return route.continue()
-    const response = await route.fetch()
-    fetched()
-    await loadGate
-    await route.fulfill({ response })
-    answered++
-  })
-  await subscribe.click()
-  // The load has read the old address before the renewal goes on
-  await read
-  await expect(address).toHaveValue(old)
-  release()
-  await expect(address).not.toHaveValue(old)
-  releaseLoad()
-  await expect.poll(() => answered).toBeGreaterThan(0)
-  await page.unroute(/\/api\/v\d\/canister\/[^/]+\/query$/)
-  await expect(address).not.toHaveValue(old)
-  const alice = await asAlice()
-  const [token] = await alice.mail_cal_feed('alice')
-  expect(await address.inputValue()).toContain(String(token))
-  await alice.mail_cal_feed_stop('alice')
-  await context.close()
-})
-
 test('a month from before 1970 shows without a load error', async ({
   browser,
 }) => {
@@ -929,64 +808,6 @@ test('a month from before 1970 shows without a load error', async ({
   await expect(
     page.getByRole('region', { name: 'Calendar' }).getByRole('alert')
   ).toHaveCount(0)
-  await context.close()
-})
-
-test('a save or a stop that fails after its dialog closed shows on the calendar', async ({
-  browser,
-}) => {
-  const { context, page } = await signedIn(browser, USER_A)
-  answer(page, true, true)
-  await openCalendar(page)
-  // Update calls wait, then fail as a lost connection, retries included,
-  // until the route is taken away
-  const calls = /\/api\/v\d\/canister\/[^/]+\/call$/
-  const failNext = async () => {
-    let release = () => {}
-    const gate = new Promise<void>((resolve) => (release = resolve))
-    await page.route(calls, async (route) => {
-      await gate
-      await route.abort()
-    })
-    return () => release()
-  }
-
-  let fail = await failNext()
-  await page.getByRole('button', { name: 'New event', exact: true }).click()
-  await dialog(page).getByLabel('Title').fill('Never saved')
-  await dialog(page).getByRole('button', { name: 'Save' }).click()
-  await dialog(page).getByRole('button', { name: 'Close' }).click()
-  fail()
-  const calendar = page.getByRole('region', { name: 'Calendar' })
-  await expect(calendar.getByRole('alert')).toContainText(
-    'The event was not changed'
-  )
-  await page.unroute(calls)
-  await expect(
-    month(page).getByRole('button', { name: /Never saved/ })
-  ).toHaveCount(0)
-
-  // A stop that fails leaves the calendar shared, and says so
-  const subscribe = page.getByRole('button', {
-    name: 'Subscribe from a calendar app',
-  })
-  await subscribe.click()
-  await page.getByRole('button', { name: 'Make a secret address' }).click()
-  const address = page.getByLabel('Secret address', { exact: true })
-  await expect(address).toHaveValue(/\.ics$/)
-  fail = await failNext()
-  await page
-    .getByRole('button', { name: 'Stop sharing: the address stops working' })
-    .click()
-  await page.keyboard.press('Escape')
-  fail()
-  await expect(calendar.getByRole('alert')).toContainText(
-    'The secret address was not changed'
-  )
-  await page.unroute(calls)
-  const alice = await asAlice()
-  expect(await alice.mail_cal_feed('alice')).toHaveLength(1)
-  await alice.mail_cal_feed_stop('alice')
   await context.close()
 })
 
@@ -1029,5 +850,120 @@ test('Delete in the form deletes only, and never also saves', async ({
     limit: 10n,
   })
   expect(left.items).toHaveLength(0)
+  await context.close()
+})
+
+test('a dialog stays open while its change runs, and so does the calendar', async ({
+  browser,
+}) => {
+  await putRaw(
+    'waits',
+    [
+      'DTSTAMP:20260101T000000Z',
+      `DTSTART:${ymd(0, 20)}T090000Z`,
+      `DTEND:${ymd(0, 20)}T100000Z`,
+      'SUMMARY:Waits',
+    ],
+    new Date(now.getFullYear(), now.getMonth(), 20),
+    new Date(now.getFullYear(), now.getMonth(), 21)
+  )
+  const { context, page } = await signedIn(browser, USER_A)
+  await openCalendar(page)
+  // The save waits until the test lets it go
+  const calls = /\/api\/v\d\/canister\/[^/]+\/call$/
+  let release = () => {}
+  const gate = new Promise<void>((resolve) => (release = resolve))
+  await page.route(calls, async (route) => {
+    await gate
+    await route.continue()
+  })
+  await month(page).getByRole('button', { name: /Waits/ }).click()
+  await dialog(page).getByLabel('Title').fill('Waited')
+  await dialog(page).getByRole('button', { name: 'Save' }).click()
+  // Nothing leaves the form, or opens another, while it saves
+  await expect(
+    dialog(page).getByRole('button', { name: 'Close' })
+  ).toBeDisabled()
+  await page.keyboard.press('Escape')
+  await expect(dialog(page)).toBeVisible()
+  await expect(
+    page.getByRole('button', { name: 'New event', exact: true })
+  ).toBeDisabled()
+  await expect(
+    page.getByRole('button', { name: 'Subscribe from a calendar app' })
+  ).toBeDisabled()
+  await expect(
+    month(page).getByRole('button', { name: /Waits/ })
+  ).toBeDisabled()
+  // The month's reload after the save waits too: until it is in, the old
+  // event shows but does not open, as its form would hold the old fields
+  const queries = /\/api\/v\d\/canister\/[^/]+\/query$/
+  let reload = () => {}
+  const reloaded = new Promise<void>((resolve) => (reload = resolve))
+  await page.route(queries, async (route) => {
+    if (route.request().postDataBuffer()?.includes('mail_cal_list'))
+      await reloaded
+    await route.continue()
+  })
+  release()
+  await expect(dialog(page)).toBeHidden()
+  await expect(
+    month(page).getByRole('button', { name: /Waits/ })
+  ).toBeDisabled()
+  reload()
+  await expect(
+    month(page).getByRole('button', { name: /Waited/ })
+  ).toBeEnabled()
+  await page.unroute(calls)
+  await page.unroute(queries)
+  await context.close()
+})
+
+test('a change that fails shows in its dialog, which stays open', async ({
+  browser,
+}) => {
+  const { context, page } = await signedIn(browser, USER_A)
+  answer(page, true, true)
+  await openCalendar(page)
+  // Update calls fail as a lost connection, retries included
+  const calls = /\/api\/v\d\/canister\/[^/]+\/call$/
+  const failing = () => page.route(calls, (route) => route.abort())
+
+  await failing()
+  await page.getByRole('button', { name: 'New event', exact: true }).click()
+  await dialog(page).getByLabel('Title').fill('Never saved')
+  await dialog(page).getByRole('button', { name: 'Save' }).click()
+  await expect(dialog(page).getByRole('alert')).toBeVisible()
+  await expect(dialog(page).getByLabel('Title')).toHaveValue('Never saved')
+  await expect(
+    dialog(page).getByRole('button', { name: 'Close' })
+  ).toBeEnabled()
+  await page.unroute(calls)
+  await dialog(page).getByRole('button', { name: 'Close' }).click()
+  await expect(
+    month(page).getByRole('button', { name: /Never saved/ })
+  ).toHaveCount(0)
+
+  // A stop that fails leaves the calendar shared, and says so in the dialog
+  await page
+    .getByRole('button', { name: 'Subscribe from a calendar app' })
+    .click()
+  const shown = page.getByRole('dialog', {
+    name: 'Subscribe from a calendar app',
+  })
+  await shown.getByRole('button', { name: 'Make a secret address' }).click()
+  const address = page.getByLabel('Secret address', { exact: true })
+  await expect(address).toHaveValue(/\.ics$/)
+  const kept = await address.inputValue()
+  await failing()
+  await shown
+    .getByRole('button', { name: 'Stop sharing: the address stops working' })
+    .click()
+  await expect(shown.getByRole('alert')).toBeVisible()
+  await expect(address).toHaveValue(kept)
+  await page.unroute(calls)
+  const alice = await asAlice()
+  expect(await alice.mail_cal_feed('alice')).toHaveLength(1)
+  await alice.mail_cal_feed_stop('alice')
   await context.close()
 })

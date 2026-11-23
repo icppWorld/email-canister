@@ -123,11 +123,12 @@ export function Calendar({
   address: string
 }) {
   const [month, setMonth] = useState(thisMonth)
-  // The events, with the grid they were loaded for: a month just left shows
-  // nothing rather than its events read against the new grid
+  // The events, with the grid and the change they were loaded for: a month
+  // just left shows nothing rather than its events read against the new grid
   const [loaded, setLoaded] = useState<{
     grid: ReturnType<typeof gridOf>
     items: CalendarEvent[]
+    changes: number
   } | null>(null)
   const [error, setError] = useState('')
   // Each opening of the form is its own, by `opened`, so that a click on
@@ -138,25 +139,17 @@ export function Calendar({
     opened: number
   } | null>(null)
   const openings = useRef(0)
-  // The form open now, for a save that ends after another one opened
-  const shown = useRef(editing)
-  shown.current = editing
   const [sharing, setSharing] = useState(false)
-  // A change that failed after its dialog closed
-  const [late, setLate] = useState('')
-  const eventLate = useCallback(
-    (text: string) => setLate(`The event was not changed: ${text}`),
-    []
-  )
-  const feedLate = useCallback(
-    (text: string) => setLate(`The secret address was not changed: ${text}`),
-    []
-  )
-  const feed = useFeed(backend)
+  // A save, delete or address change is running: its dialog stays open until
+  // it ends, and no other opens, so that its outcome always shows there
+  const [busy, setBusy] = useState(false)
   // Raised after a change, so that the month shown then loads again
   const [changes, setChanges] = useState(0)
   const grid = useMemo(() => gridOf(month), [month])
   const events = loaded?.grid === grid ? loaded.items : null
+  // Events loaded before the last change show, but do not open until the
+  // month has loaded again: a form would start from the old fields
+  const stale = loaded?.changes !== changes
 
   // Only the newest load shows
   const latest = useRef(0)
@@ -178,16 +171,16 @@ export function Calendar({
         if (cursor.length === 0) break
       }
       if (request !== latest.current) return
-      setLoaded({ grid, items: found })
+      setLoaded({ grid, items: found, changes })
       setError('')
     } catch (e) {
       if (request === latest.current) setError(errorText(e))
     }
-  }, [backend, grid])
+  }, [backend, grid, changes])
 
   useEffect(() => {
     load()
-  }, [load, changes])
+  }, [load])
 
   const byDay = useMemo(() => {
     const days = new Map<string, Occurrence[]>()
@@ -214,28 +207,24 @@ export function Calendar({
   const today = dayKey(new Date())
   const shift = (months: number) =>
     setMonth((m) => new Date(m.getFullYear(), m.getMonth() + months, 1))
-  // A late failure's line stays until another form opens
-  const open = (o: Occurrence) => {
-    setLate('')
+  const open = (o: Occurrence) =>
     setEditing({
       fields: { ...o.fields },
       isNew: false,
       opened: ++openings.current,
     })
-  }
-  const create = (date: string) => {
-    setLate('')
+  const create = (date: string) =>
     setEditing({
       fields: newFields(date),
       isNew: true,
       opened: ++openings.current,
     })
-  }
 
   const chip = (o: Occurrence, key: string) => (
     <li key={key}>
       <button
         className={o.fields.allDay ? 'event all-day' : 'event'}
+        disabled={busy || stale}
         onClick={() => open(o)}
       >
         {!o.fields.allDay && (
@@ -278,6 +267,7 @@ export function Calendar({
           variant="primary"
           label="New event"
           icon="plus"
+          disabled={busy}
           onClick={() =>
             create(
               month.getTime() === thisMonth().getTime() ? today : dayKey(month)
@@ -287,20 +277,13 @@ export function Calendar({
         <IconButton
           label="Subscribe from a calendar app"
           icon="link"
-          onClick={() => {
-            setLate('')
-            setSharing(true)
-          }}
+          disabled={busy}
+          onClick={() => setSharing(true)}
         />
       </div>
       {error && (
         <p className="error" role="alert">
           {error}
-        </p>
-      )}
-      {late && (
-        <p className="error" role="alert">
-          {late}
         </p>
       )}
       <div className="month" role="grid" aria-label={monthTitle(month)}>
@@ -320,6 +303,7 @@ export function Calendar({
                 className="bare day-number"
                 aria-label={`New event on ${dayTitle(d)}`}
                 title="New event"
+                disabled={busy}
                 onClick={() => create(key)}
               >
                 {d.getDate()}
@@ -347,12 +331,11 @@ export function Calendar({
           backend={backend}
           fields={editing.fields}
           isNew={editing.isNew}
+          busy={busy}
+          setBusy={setBusy}
           onClose={() => setEditing(null)}
-          onLate={eventLate}
           onSaved={(movedTo) => {
             setChanges((n) => n + 1)
-            // A save that ends late leaves a newer form and the month alone
-            if (shown.current !== editing) return
             setEditing(null)
             if (movedTo) {
               const [y, m] = movedTo.split('-').map(Number)
@@ -363,11 +346,11 @@ export function Calendar({
       )}
       {sharing && (
         <SubscribeDialog
-          feed={feed}
           backend={backend}
           address={address}
+          busy={busy}
+          setBusy={setBusy}
           onClose={() => setSharing(false)}
-          onLate={feedLate}
         />
       )}
     </section>
@@ -391,15 +374,18 @@ function zones(current: string): string[] {
   return zoneNames.includes(current) ? zoneNames : [current, ...zoneNames]
 }
 
-// A calendar dialog: its title, a Close, and Escape to close it
+// A calendar dialog: its title, a Close, and Escape to close it, both of
+// which wait while its change runs
 function Dialog({
   label,
   title,
+  busy,
   onClose,
   children,
 }: {
   label: string
   title: string
+  busy: boolean
   onClose: () => void
   children: ReactNode
 }) {
@@ -426,7 +412,7 @@ function Dialog({
       role="dialog"
       aria-label={label}
       onKeyDown={(e) => {
-        if (e.key === 'Escape') onClose()
+        if (e.key === 'Escape' && !busy) onClose()
       }}
     >
       <div className="compose-bar">
@@ -435,6 +421,7 @@ function Dialog({
           className="bare"
           label="Close"
           icon="close"
+          disabled={busy}
           onClick={onClose}
         />
       </div>
@@ -447,21 +434,22 @@ function EventDialog({
   backend,
   fields: initial,
   isNew,
+  busy,
+  setBusy,
   onClose,
   onSaved,
-  onLate,
 }: {
   backend: Mailbox
   fields: EventFields
   isNew: boolean
+  busy: boolean
+  setBusy: (busy: boolean) => void
   onClose: () => void
   // With the start date when a save moved the event, so that its month shows
   onSaved: (movedTo?: string) => void
-  onLate: (text: string) => void
 }) {
   const [f, setF] = useState(initial)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useErrorLine(onLate)
+  const [error, setError] = useState('')
   const set = (change: Partial<EventFields>) =>
     setF((now) => ({ ...now, ...change }))
 
@@ -477,18 +465,15 @@ function EventDialog({
   )
 
   // Runs a change, then closes; a refusal shows and the form stays
-  const run = (work: () => Promise<unknown>, movedTo?: string) => {
+  const run = async (work: () => Promise<unknown>, movedTo?: string) => {
     setBusy(true)
-    return attempt(
-      async () => {
-        await work()
-        onSaved(movedTo)
-      },
-      (text) => {
-        setError(text)
-        if (text) setBusy(false)
-      }
-    )
+    let done = false
+    await attempt(async () => {
+      await work()
+      done = true
+    }, setError)
+    setBusy(false)
+    if (done) onSaved(movedTo)
   }
 
   const save = () => {
@@ -508,7 +493,12 @@ function EventDialog({
 
   const label = isNew ? 'New event' : 'Event'
   return (
-    <Dialog label={label} title={f.title.trim() || label} onClose={onClose}>
+    <Dialog
+      label={label}
+      title={f.title.trim() || label}
+      busy={busy}
+      onClose={onClose}
+    >
       <form
         className="compose-body"
         onSubmit={(e) => {
@@ -679,88 +669,45 @@ function EventDialog({
   )
 }
 
-// A dialog's error line: its own while it is open, and the calendar's once it
-// has closed, so that a change failing after the dialog closed still shows
-function useErrorLine(onLate: (text: string) => void) {
-  const [error, setError] = useState('')
-  const open = useRef(true)
-  useEffect(() => {
-    open.current = true
-    return () => {
-      open.current = false
-    }
-  }, [])
-  const report = useCallback(
-    (text: string) => {
-      if (open.current) setError(text)
-      else if (text) onLate(text)
-    },
-    [onLate]
-  )
-  return [error, report] as const
-}
-
-// The secret address's token, kept by the calendar rather than its dialog,
-// so that a change still running when the dialog closes reaches the next one
-function useFeed(backend: Mailbox) {
-  // undefined while it loads, null while the calendar is not shared
-  const [token, setToken] = useState<string | null | undefined>(undefined)
-  const [busy, setBusy] = useState(false)
-  // Counts each change's start and end, so that a load begun before or
-  // during a change is ignored
-  const changes = useRef(0)
-
-  const load = useCallback(async () => {
-    const seen = changes.current
-    const found = await backend.mail_cal_feed()
-    if (changes.current === seen) setToken(found[0] ?? null)
-  }, [backend])
-
-  const change = async (work: () => Promise<string | null>) => {
-    ++changes.current
-    setBusy(true)
-    try {
-      setToken(await work())
-    } finally {
-      ++changes.current
-      setBusy(false)
-    }
-  }
-  return { token, busy, load, change }
-}
-
-type Feed = ReturnType<typeof useFeed>
-
 function SubscribeDialog({
-  feed,
   backend,
   address,
+  busy,
+  setBusy,
   onClose,
-  onLate,
 }: {
-  feed: Feed
   backend: Mailbox
   address: string
+  busy: boolean
+  setBusy: (busy: boolean) => void
   onClose: () => void
-  onLate: (text: string) => void
 }) {
-  const { token, busy, load } = feed
-  const [error, setError] = useErrorLine(onLate)
+  // undefined while it loads, null while the calendar is not shared
+  const [token, setToken] = useState<string | null | undefined>(undefined)
+  const [error, setError] = useState('')
   const [copied, setCopied] = useState(false)
 
   useEffect(() => {
     let current = true
-    load().catch((e: unknown) => {
-      if (current) setError(errorText(e))
-    })
+    backend
+      .mail_cal_feed()
+      .then((found) => {
+        if (current) setToken(found[0] ?? null)
+      })
+      .catch((e: unknown) => {
+        if (current) setError(errorText(e))
+      })
     return () => {
       current = false
     }
-  }, [load, setError])
+  }, [backend])
 
+  // The dialog stays open while a change runs, so its outcome shows here
   const act = async (work: () => Promise<string | null>) => {
+    setBusy(true)
     setCopied(false)
-    await attempt(() => feed.change(work), setError)
+    await attempt(async () => setToken(await work()), setError)
+    setBusy(false)
   }
 
   const { backend: canister, network } = deployment()
@@ -770,6 +717,7 @@ function SubscribeDialog({
     <Dialog
       label="Subscribe from a calendar app"
       title={`Subscribe to ${address}`}
+      busy={busy}
       onClose={onClose}
     >
       <div className="compose-body">
