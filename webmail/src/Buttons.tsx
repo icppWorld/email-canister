@@ -6,13 +6,16 @@ import { Icon, type IconName } from './Icon'
 
 // A button that is only its icon: the label is its tooltip, and with `name`,
 // which says what it acts on where there are several, its name. A bare one
-// keeps the icon's own size, as in a list row.
+// keeps the icon's own size, as in a list row. In a form it submits only
+// with type="submit": a plain button by default, so that an action such as
+// Delete never also saves.
 export function IconButton({
   label,
   name,
   icon,
   variant,
   className,
+  type = 'button',
   ...props
 }: {
   label: string
@@ -27,6 +30,7 @@ export function IconButton({
   return (
     <button
       {...props}
+      type={type}
       className={[...kind, className].filter(Boolean).join(' ')}
       aria-label={name ? `${label}: ${name}` : label}
       title={label}

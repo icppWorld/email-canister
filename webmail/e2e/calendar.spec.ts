@@ -989,3 +989,45 @@ test('a save or a stop that fails after its dialog closed shows on the calendar'
   await alice.mail_cal_feed_stop('alice')
   await context.close()
 })
+
+test('Delete in the form deletes only, and never also saves', async ({
+  browser,
+}) => {
+  await putRaw(
+    'only-delete',
+    [
+      'DTSTAMP:20260101T000000Z',
+      `DTSTART:${ymd(0, 9)}T090000Z`,
+      `DTEND:${ymd(0, 9)}T100000Z`,
+      'SUMMARY:Only delete',
+    ],
+    new Date(now.getFullYear(), now.getMonth(), 9),
+    new Date(now.getFullYear(), now.getMonth(), 10)
+  )
+  const { context, page } = await signedIn(browser, USER_A)
+  await openCalendar(page)
+  await month(page)
+    .getByRole('button', { name: /Only delete/ })
+    .click()
+  expect(
+    await dialog(page)
+      .getByRole('button', { name: 'Delete' })
+      .evaluate((b) => (b as HTMLButtonElement).type)
+  ).toBe('button')
+  // A click in one go, before the page can disable the button
+  await dialog(page)
+    .getByRole('button', { name: 'Delete' })
+    .evaluate((b) => (b as HTMLButtonElement).click())
+  await expect(dialog(page)).toBeHidden()
+  const alice = await asAlice()
+  // A save sent with the delete would bring the event back
+  await page.waitForLoadState('networkidle')
+  const left = await alice.mail_cal_list('alice', {
+    from: 0n,
+    to: 253_402_300_799n,
+    cursor: [],
+    limit: 10n,
+  })
+  expect(left.items).toHaveLength(0)
+  await context.close()
+})
