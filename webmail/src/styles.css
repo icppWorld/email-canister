@@ -665,11 +665,10 @@ button.star.on .icon {
   padding: 0;
   margin: 0 0 10px;
 }
-/* The box a message's frame fills, or is scaled down to (MessageBody.tsx) */
+/* The box a message's frame fills, or is scaled down to (MessageBody.tsx),
+   sized where it is shown: the reader, or compose's preview */
 .message-box {
   position: relative;
-  flex: 1;
-  min-height: 340px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   overflow: hidden;
@@ -808,7 +807,16 @@ iframe.body {
   width: auto;
   max-height: none;
 }
-.dialog.compose.full textarea {
+.reader .message-box {
+  flex: 1;
+  min-height: 340px;
+}
+/* An HTML message's preview takes the place, and the size, of the text */
+.dialog.compose .message-box {
+  min-height: 200px;
+}
+.dialog.compose.full textarea,
+.dialog.compose.full .message-box {
   flex: 1;
 }
 .backdrop {

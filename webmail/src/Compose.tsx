@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 import {
   errorText,
+  jsonSize,
   MAX_ENCODED_BYTES,
   mailbox,
   type Attachment,
@@ -9,7 +10,8 @@ import {
   type MailboxInfo,
 } from './api'
 import { IconButton } from './Buttons'
-import { textToHtml } from './mime'
+import { MessageBody } from './MessageBody'
+import { frameBody, htmlMessage, textToHtml } from './mime'
 
 // Held in memory only, so a draft survives signing in again but not a reload
 export type Draft = {
@@ -22,8 +24,13 @@ export type Draft = {
   subject?: string
   body?: string
   files?: File[]
+  // An HTML file sent as the message in place of the text, which stays
+  // behind it for Use plain text instead
+  html?: HtmlMessage
   clientId?: string
 }
+
+type HtmlMessage = { name: string; body: string }
 
 // At phone width the window always fills the screen
 type Size = 'normal' | 'minimised' | 'full'
@@ -32,8 +39,9 @@ function addresses(text: string): string[] {
   return text.split(/[,;\s]+/).filter(Boolean)
 }
 
+// As the backend counts it: the content in base64
 function encodedSize(attachment: File): number {
-  return Math.ceil(attachment.size / 3) * 4 + attachment.name.length
+  return Math.ceil(attachment.size / 3) * 4 + jsonSize(attachment.name)
 }
 
 // Files are told apart by name and size: the browser gives no path
@@ -61,6 +69,7 @@ export function Compose({
   const [subject, setSubject] = useState(draft.subject ?? '')
   const [body, setBody] = useState(draft.body ?? '')
   const [files, setFiles] = useState<File[]>(draft.files ?? [])
+  const [html, setHtml] = useState<HtmlMessage | undefined>(draft.html)
   const [size, setSize] = useState<Size>('normal')
   const [sending, setSending] = useState(false)
   const [error, setError] = useState('')
@@ -70,17 +79,38 @@ export function Compose({
   const [clientId] = useState(() => draft.clientId ?? crypto.randomUUID())
   // The file picker, which Attach opens
   const picker = useRef<HTMLInputElement>(null)
+  // The picker for an HTML file to send as the message
+  const htmlPicker = useRef<HTMLInputElement>(null)
+  // The latest HTML file picked, by number: only it may become the message.
+  // While it is read, the message stays as it is: the text cannot be edited,
+  // and Send and Use plain text instead wait.
+  const picks = useRef(0)
+  const [reading, setReading] = useState(false)
+  // Why the last HTML file picked was not taken, apart from a send's error,
+  // until the message changes or another is picked
+  const [pickError, setPickError] = useState('')
 
   useEffect(() => {
-    onChange({ from, to, cc, bcc, subject, body, files, clientId })
-  }, [onChange, from, to, cc, bcc, subject, body, files, clientId])
+    onChange({ from, to, cc, bcc, subject, body, files, html, clientId })
+  }, [onChange, from, to, cc, bcc, subject, body, files, html, clientId])
 
   const listed = mailboxes.some((m) => m.local === from)
-  const html = textToHtml(body)
+  const htmlBody = useMemo(
+    () => (html ? html.body : textToHtml(body)),
+    [html, body]
+  )
+  // Worked out once per change of the message, not as the other fields are typed in
+  const bodySize = useMemo(() => jsonSize(htmlBody), [htmlBody])
+  // Shown the way the reader shows it, in its sandboxed frame, with its
+  // images: it is the sender's own
+  const preview = useMemo(() => html && frameBody(html.body, []), [html])
   const total =
     files.reduce((sum, f) => sum + encodedSize(f), 0) +
-    new TextEncoder().encode(html).length +
-    new TextEncoder().encode(subject).length
+    bodySize +
+    jsonSize(subject) +
+    [to, cc, bcc]
+      .flatMap(addresses)
+      .reduce((sum, address) => sum + jsonSize(address), 0)
   const tooLarge = total > MAX_ENCODED_BYTES
 
   const send = async () => {
@@ -100,7 +130,7 @@ export function Compose({
         cc: addresses(cc),
         bcc: addresses(bcc),
         subject,
-        html_body: html,
+        html_body: htmlBody,
         attachments,
       })
       onSent(from, clientId)
@@ -195,10 +225,75 @@ export function Compose({
               onChange={(e) => setSubject(e.target.value)}
             />
           </label>
-          <textarea
-            aria-label="Message"
-            value={body}
-            onChange={(e) => setBody(e.target.value)}
+          {html && preview ? (
+            <>
+              <p className="attached hint" data-testid="html-message">
+                HTML message: {html.name}
+                <IconButton
+                  variant="bare"
+                  label="Use plain text instead"
+                  icon="close"
+                  onClick={() => {
+                    setHtml(undefined)
+                    setPickError('')
+                  }}
+                  disabled={reading}
+                />
+              </p>
+              <MessageBody framed={preview} images />
+            </>
+          ) : (
+            <textarea
+              aria-label="Message"
+              value={body}
+              readOnly={reading}
+              onChange={(e) => {
+                setBody(e.target.value)
+                setPickError('')
+              }}
+            />
+          )}
+          <input
+            ref={htmlPicker}
+            aria-label="HTML file"
+            type="file"
+            accept=".html,.htm,text/html"
+            hidden
+            onChange={async (e) => {
+              const file = e.target.files?.[0]
+              // Cleared, so the same file can be picked again after an edit
+              e.target.value = ''
+              if (!file) return
+              const pick = ++picks.current
+              setPickError('')
+              // By its size first, so a far larger one is never read or shown
+              if (file.size > MAX_ENCODED_BYTES) {
+                setReading(false)
+                return setPickError(
+                  `${file.name} is too large to send: a message can be about 1.9 MB.`
+                )
+              }
+              setReading(true)
+              try {
+                const bytes = await file.arrayBuffer()
+                if (pick !== picks.current) return
+                // UTF-8 only, as the message is sent: another encoding would
+                // lose its accents, so it is refused rather than guessed
+                const text = new TextDecoder('utf-8', { fatal: true }).decode(
+                  bytes
+                )
+                setHtml({ name: file.name, body: htmlMessage(text) })
+              } catch (e) {
+                if (pick !== picks.current) return
+                setPickError(
+                  e instanceof TypeError
+                    ? `${file.name} is not UTF-8. Save it as UTF-8 and pick it again.`
+                    : `Could not read ${file.name}: ${errorText(e)}`
+                )
+              } finally {
+                if (pick === picks.current) setReading(false)
+              }
+            }}
           />
           <input
             ref={picker}
@@ -249,8 +344,13 @@ export function Compose({
           )}
           {tooLarge && (
             <p className="error" role="alert">
-              This message is too large to send. Attachments can total about 1.4
-              MB.
+              This message is too large to send. It can be about 1.9 MB in all,
+              and attachments count a third more than their size.
+            </p>
+          )}
+          {pickError && (
+            <p className="error" role="alert">
+              {pickError}
             </p>
           )}
           {error && (
@@ -264,12 +364,17 @@ export function Compose({
               label={sending ? 'Sending…' : 'Send'}
               icon="send"
               onClick={send}
-              disabled={sending || tooLarge}
+              disabled={sending || tooLarge || reading}
             />
             <IconButton
               label="Attach"
               icon="paperclip"
               onClick={() => picker.current?.click()}
+            />
+            <IconButton
+              label="Use an HTML page instead of text"
+              icon="code"
+              onClick={() => htmlPicker.current?.click()}
             />
           </div>
         </div>

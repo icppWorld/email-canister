@@ -156,6 +156,27 @@ export const OUTBOX_UNKNOWN = 4n
 // The limit the backend enforces, with attachments in base64
 export const MAX_ENCODED_BYTES = 1_950_000
 
+// Text's size as the backend counts it (outbox_encoded_size in
+// src/store/outbox_store.cpp): UTF-8, as the bridge's JSON escapes it, a
+// quote, a backslash, \n, \r and \t in two bytes, any other control
+// character in six. Change them together.
+export function jsonSize(text: string): number {
+  let size = 0
+  for (const byte of new TextEncoder().encode(text)) {
+    size +=
+      byte === 0x22 ||
+      byte === 0x5c ||
+      byte === 0x0a ||
+      byte === 0x0d ||
+      byte === 0x09
+        ? 2
+        : byte < 0x20
+          ? 6
+          : 1
+  }
+  return size
+}
+
 // The methods of one mailbox, as the backend has them after the mailbox's
 // local part
 export type Mailbox = {

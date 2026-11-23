@@ -24,6 +24,7 @@ import {
   reader,
   roleColour,
   send,
+  sentMessage,
   sha256,
   signedIn,
   signInAgain,
@@ -1146,24 +1147,6 @@ test('a 1.4 MB attachment survives receiving and sending, by hash', async ({
   await context.close()
 })
 
-test('refuses an oversize attachment before sending', async ({ browser }) => {
-  const { context, page } = await signedIn(browser, USER_A)
-  await page.getByRole('button', { name: 'Compose' }).click()
-  await page
-    .getByRole('dialog')
-    .getByLabel('Attachments')
-    .setInputFiles({
-      name: 'x.bin',
-      mimeType: 'application/octet-stream',
-      buffer: Buffer.alloc(1_600_000),
-    })
-  await expect(page.getByRole('alert')).toContainText('too large')
-  await expect(
-    page.getByRole('button', { name: 'Send', exact: true })
-  ).toBeDisabled()
-  await context.close()
-})
-
 test('shows an unknown outcome and warns before sending again', async ({
   browser,
 }) => {
@@ -1226,6 +1209,223 @@ test('shows mail the gateway refused, with its reason, and sends it again', asyn
   )
   await context.close()
 })
+
+test('an HTML file is sent as the message, as it is but for its saved-from mark, after a preview', async ({
+  browser,
+}) => {
+  const { context, page } = await signedIn(browser, USER_A)
+  await compose(page, 'Newsletter from a file')
+  const dialog = page.getByRole('dialog', { name: 'New message' })
+  const html =
+    '<html><head><style>.big{color:#123456}' +
+    '@media (max-width:620px){.big{font-size:30px}}</style></head>' +
+    '<body><p class="big">Countdown started</p>' +
+    '<script>parent.__xss = 1</script></body></html>'
+  const saved =
+    '<!DOCTYPE html>\n' +
+    '<!-- saved from url=(0038)https://saved.example/blobs/1234567890 -->\n' +
+    html
+  await dialog.getByLabel('HTML file').setInputFiles({
+    name: 'news.html',
+    mimeType: 'text/html',
+    buffer: Buffer.from(saved),
+  })
+  await expect(dialog.getByTestId('html-message')).toHaveText(
+    'HTML message: news.html'
+  )
+  await expect(dialog.getByRole('textbox', { name: 'Message' })).toHaveCount(0)
+  // The preview is the reader's own frame, with the file's style sheet
+  await expect(dialog.locator('iframe.body')).toHaveAttribute(
+    'sandbox',
+    SANDBOX
+  )
+  // With its images: the message is the sender's own
+  await expect(dialog.locator('iframe.body')).toHaveAttribute(
+    'srcdoc',
+    /img-src data: https:/
+  )
+  const preview = dialog.frameLocator('iframe.body').locator('p.big')
+  await expect(preview).toHaveText('Countdown started')
+  await expect(preview).toHaveCSS('color', 'rgb(18, 52, 86)')
+  expect(
+    await page.evaluate(() => (window as unknown as { __xss?: number }).__xss)
+  ).toBeUndefined()
+
+  await send(page)
+  await expect(dialog).toHaveCount(0)
+  expect((await sentMessage('Newsletter from a file'))?.html_body).toBe(
+    `<!DOCTYPE html>\n${html}`
+  )
+  await viewSent(page)
+  await page.getByRole('button', { name: /Newsletter from a file/ }).click()
+  await expect(page.frameLocator('iframe.body').locator('p.big')).toHaveText(
+    'Countdown started'
+  )
+  await context.close()
+})
+
+test('only the latest HTML file picked is the message, which stays as it is while one is read', async ({
+  browser,
+}) => {
+  const { context, page } = await signedIn(browser, USER_A)
+  // A read of slow.html is held until the test lets it finish
+  await page.evaluate(() => {
+    const read = File.prototype.arrayBuffer
+    let held: (() => void)[] = []
+    Object.assign(window, {
+      releaseReads: () => {
+        held.forEach((release) => release())
+        held = []
+      },
+    })
+    File.prototype.arrayBuffer = async function (this: File) {
+      if (this.name === 'slow.html')
+        await new Promise<void>((resolve) => held.push(resolve))
+      return read.call(this)
+    }
+  })
+  const release = () =>
+    page.evaluate(() =>
+      (window as unknown as { releaseReads: () => void }).releaseReads()
+    )
+  await compose(page, 'Latest choice')
+  const dialog = page.getByRole('dialog', { name: 'New message' })
+  const send = dialog.getByRole('button', { name: 'Send', exact: true })
+  const shown = dialog.getByTestId('html-message')
+  const pick = (name: string) =>
+    dialog.getByLabel('HTML file').setInputFiles({
+      name,
+      mimeType: 'text/html',
+      buffer: Buffer.from(`<p>${name}</p>`),
+    })
+
+  // While a file is read, the message stays as it is
+  const text = dialog.getByRole('textbox', { name: 'Message', exact: true })
+  await pick('slow.html')
+  await expect(send).toBeDisabled()
+  await expect(text).toHaveAttribute('readonly', '')
+  await release()
+  await expect(shown).toHaveText('HTML message: slow.html')
+  await expect(send).toBeEnabled()
+
+  // Of two files, the later one
+  await pick('slow.html')
+  await expect(send).toBeDisabled()
+  await pick('fast.html')
+  await expect(shown).toHaveText('HTML message: fast.html')
+  await release()
+  await page.waitForTimeout(300)
+  await expect(shown).toHaveText('HTML message: fast.html')
+  await expect(send).toBeEnabled()
+  await context.close()
+})
+
+test('an HTML file that is not UTF-8 is refused, not garbled', async ({
+  browser,
+}) => {
+  const { context, page } = await signedIn(browser, USER_A)
+  await compose(page, 'Latin-1')
+  const dialog = page.getByRole('dialog', { name: 'New message' })
+  await dialog.getByLabel('HTML file').setInputFiles({
+    name: 'cafe.html',
+    mimeType: 'text/html',
+    // "café" with the é as one Windows-1252 byte
+    buffer: Buffer.from([
+      0x3c, 0x70, 0x3e, 0x63, 0x61, 0x66, 0xe9, 0x3c, 0x2f, 0x70, 0x3e,
+    ]),
+  })
+  await expect(dialog.getByRole('alert')).toContainText(
+    'cafe.html is not UTF-8'
+  )
+  await expect(dialog.getByTestId('html-message')).toHaveCount(0)
+  // Writing the message instead puts it away
+  await dialog
+    .getByRole('textbox', { name: 'Message', exact: true })
+    .fill('Plain after all')
+  await expect(dialog.getByRole('alert')).toHaveCount(0)
+  await context.close()
+})
+
+test('the size counts as the canister does: a quote in an HTML file twice', async ({
+  browser,
+}) => {
+  const { context, page } = await signedIn(browser, USER_A)
+  await compose(page, 'Quotes')
+  const dialog = page.getByRole('dialog', { name: 'New message' })
+  // 1.1 MB on disk, 2.2 MB once its quotes are escaped
+  await dialog.getByLabel('HTML file').setInputFiles({
+    name: 'quotes.html',
+    mimeType: 'text/html',
+    buffer: Buffer.from(`<p>${'"'.repeat(1_100_000)}</p>`),
+  })
+  await expect(dialog.getByTestId('html-message')).toHaveText(
+    'HTML message: quotes.html'
+  )
+  await expect(dialog.getByRole('alert')).toContainText('too large to send')
+  await expect(
+    dialog.getByRole('button', { name: 'Send', exact: true })
+  ).toBeDisabled()
+  await context.close()
+})
+
+test("picking an HTML file leaves a send's error in place", async ({
+  browser,
+}) => {
+  const { context, page } = await signedIn(browser, USER_A)
+  await compose(page, 'Too many')
+  const dialog = page.getByRole('dialog', { name: 'New message' })
+  await dialog
+    .getByLabel('Bcc', { exact: true })
+    .fill(Array.from({ length: 51 }, (_, i) => `r${i}@example.org`).join(', '))
+  await send(page)
+  const refused = dialog.getByRole('alert')
+  await expect(refused).toContainText('too many recipients')
+  await dialog.getByLabel('HTML file').setInputFiles({
+    name: 'news.html',
+    mimeType: 'text/html',
+    buffer: Buffer.from('<p>news</p>'),
+  })
+  await expect(dialog.getByTestId('html-message')).toHaveText(
+    'HTML message: news.html'
+  )
+  await expect(refused).toContainText('too many recipients')
+  await context.close()
+})
+
+// The size is checked when the file is picked, before anything is sent. An
+// attachment stops the send; an HTML file is not read, and the message stays
+// the text.
+for (const [label, name] of [
+  ['Attachments', 'x.bin'],
+  ['HTML file', 'huge.html'],
+]) {
+  test(`refuses an oversize file before sending, as ${label}`, async ({
+    browser,
+  }) => {
+    const { context, page } = await signedIn(browser, USER_A)
+    await page.getByRole('button', { name: 'Compose' }).click()
+    await page
+      .getByRole('dialog')
+      .getByLabel(label, { exact: true })
+      .setInputFiles({
+        name,
+        mimeType: 'application/octet-stream',
+        buffer: Buffer.alloc(2_000_000, 'x'),
+      })
+    await expect(page.getByRole('alert')).toContainText(
+      label === 'Attachments' ? 'too large' : 'huge.html is too large'
+    )
+    if (label === 'Attachments')
+      await expect(
+        page.getByRole('button', { name: 'Send', exact: true })
+      ).toBeDisabled()
+    else
+      await expect(
+        page.getByRole('textbox', { name: 'Message', exact: true })
+      ).toBeVisible()
+    await context.close()
+  })
+}
 
 test('sends to every Cc and Bcc address, however they are separated', async ({
   browser,
