@@ -226,6 +226,11 @@ export function App() {
     [backend, local]
   )
   const current = box !== null ? view : 'admin'
+  // The mailbox whose calendar was opened: it stays, hidden, while another
+  // page of that mailbox shows, so that a save still running there ends where
+  // its form is
+  const [calendarFor, setCalendarFor] = useState<string | undefined>()
+  if (current === 'calendar' && local !== calendarFor) setCalendarFor(local)
   const download = useDownload(box, shown?.address ?? '', backend)
 
   // The webmail's Reload asks first while a message is being written or a copy
@@ -639,10 +644,15 @@ export function App() {
             refresh={refresh}
           />
         )}
-        {current === 'calendar' && box && shown && (
-          <Suspense fallback={<p className="hint">Loading the calendar…</p>}>
-            <Calendar key={local} backend={box} address={shown.address} />
-          </Suspense>
+        {calendarFor === local && box && shown && (
+          // Hidden, not gone, while another page shows
+          <div
+            style={{ display: current === 'calendar' ? 'contents' : 'none' }}
+          >
+            <Suspense fallback={<p className="hint">Loading the calendar…</p>}>
+              <Calendar key={local} backend={box} address={shown.address} />
+            </Suspense>
+          </div>
         )}
         {current === 'admin' && <AdminPanel backend={backend} />}
       </div>

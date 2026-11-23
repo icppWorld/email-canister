@@ -667,6 +667,17 @@ test('an event another app wrote beyond the form opens read-only', async ({
   browser,
 }) => {
   const cases: [string, number, string[]][] = [
+    // A repeat whose length is a day, kept in local time across a clock
+    // change
+    [
+      'Day long',
+      16,
+      [
+        `DTSTART;TZID=America/New_York:${ymd(0, 16)}T120000`,
+        'DURATION:P1D',
+        'RRULE:FREQ=DAILY;COUNT=2',
+      ],
+    ],
     // No zone and no Z: a time read in each viewer's own zone
     [
       'Floating',
@@ -1078,5 +1089,156 @@ test('a very long or very sparse repeat neither stalls the month nor a save', as
   const saved = all.items.find((e) => e.uid === 'million')
   expect(saved?.vevent).toContain('SUMMARY:Million renamed')
   expect(saved?.ends).toBe(253_402_300_799n)
+  await context.close()
+})
+
+test('a counted repeat with many skipped dates saves', async ({ browser }) => {
+  // 501 skipped days in a row from the 21st of next month
+  const skipped = Array.from(
+    { length: 501 },
+    (_, i) => `EXDATE:${ymd(1, 21 + i)}T090000Z`
+  )
+  await putRaw(
+    'skips',
+    [
+      'DTSTAMP:20260101T000000Z',
+      `DTSTART:${ymd(0, 1)}T090000Z`,
+      `DTEND:${ymd(0, 1)}T100000Z`,
+      'RRULE:FREQ=DAILY;COUNT=600',
+      ...skipped,
+      'SUMMARY:Skips',
+    ],
+    new Date(now.getFullYear(), now.getMonth(), 1),
+    new Date(9999, 0, 1)
+  )
+  const { context, page } = await signedIn(browser, USER_A)
+  await openCalendar(page)
+  await month(page).getByRole('button', { name: /Skips/ }).first().click()
+  await dialog(page).getByLabel('Title').fill('Skips renamed')
+  await dialog(page).getByRole('button', { name: 'Save' }).click()
+  await expect(dialog(page)).toBeHidden()
+  const alice = await asAlice()
+  const all = await alice.mail_cal_list('alice', {
+    from: 0n,
+    to: 253_402_300_799n,
+    cursor: [],
+    limit: 10n,
+  })
+  const saved = all.items.find((e) => e.uid === 'skips')
+  expect(saved?.vevent).toContain('SUMMARY:Skips renamed')
+  // The rule's 600th day, not no end
+  const last = new Date(now.getFullYear(), now.getMonth(), 1 + 599)
+  expect(Number(saved?.ends)).toBeGreaterThan(last.getTime() / 1000)
+  expect(saved?.ends).toBeLessThan(253_402_300_799n)
+  await context.close()
+})
+
+test('a month that failed to load again can be tried again', async ({
+  browser,
+}) => {
+  await putRaw(
+    'retry',
+    [
+      'DTSTAMP:20260101T000000Z',
+      `DTSTART:${ymd(0, 10)}T090000Z`,
+      `DTEND:${ymd(0, 10)}T100000Z`,
+      'SUMMARY:Retry',
+    ],
+    new Date(now.getFullYear(), now.getMonth(), 10),
+    new Date(now.getFullYear(), now.getMonth(), 11)
+  )
+  const { context, page } = await signedIn(browser, USER_A)
+  await openCalendar(page)
+  await month(page).getByRole('button', { name: /Retry/ }).click()
+  await dialog(page).getByLabel('Title').fill('Retried')
+  // The reload after the save fails
+  const queries = /\/api\/v\d\/canister\/[^/]+\/query$/
+  await page.route(queries, (route) =>
+    route.request().postDataBuffer()?.includes('mail_cal_list')
+      ? route.abort()
+      : route.continue()
+  )
+  await dialog(page).getByRole('button', { name: 'Save' }).click()
+  await expect(dialog(page)).toBeHidden()
+  const calendar = page.getByRole('region', { name: 'Calendar' })
+  await expect(calendar.getByRole('alert')).toBeVisible()
+  await expect(
+    month(page).getByRole('button', { name: /Retry/ })
+  ).toBeDisabled()
+  await page.unroute(queries)
+  await calendar.getByRole('button', { name: 'Try again' }).click()
+  await expect(
+    month(page).getByRole('button', { name: /Retried/ })
+  ).toBeEnabled()
+  await expect(calendar.getByRole('alert')).toHaveCount(0)
+  await context.close()
+})
+
+test('a save still running when another page opens ends in its form', async ({
+  browser,
+}) => {
+  const { context, page } = await signedIn(browser, USER_A)
+  await openCalendar(page)
+  const calls = /\/api\/v\d\/canister\/[^/]+\/call$/
+  let release = () => {}
+  const gate = new Promise<void>((resolve) => (release = resolve))
+  await page.route(calls, async (route) => {
+    await gate
+    await route.abort()
+  })
+  await page.getByRole('button', { name: 'New event', exact: true }).click()
+  await dialog(page).getByLabel('Title').fill('Left behind')
+  await dialog(page).getByRole('button', { name: 'Save' }).click()
+  await page.getByRole('button', { name: 'Inbox', exact: true }).click()
+  await expect(page.getByRole('region', { name: 'Calendar' })).toBeHidden()
+  release()
+  await openCalendar(page)
+  // The form is there, with what was typed and why it was not saved
+  await expect(dialog(page).getByRole('alert')).toBeVisible()
+  await expect(dialog(page).getByLabel('Title')).toHaveValue('Left behind')
+  await page.unroute(calls)
+  await dialog(page).getByRole('button', { name: 'Close' }).click()
+  await context.close()
+})
+
+test('Copied shows only for the address copied, and not during a change', async ({
+  browser,
+}) => {
+  const { context, page } = await signedIn(browser, USER_A)
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+  answer(page, true, true, true)
+  await openCalendar(page)
+  await page
+    .getByRole('button', { name: 'Subscribe from a calendar app' })
+    .click()
+  await page.getByRole('button', { name: 'Make a secret address' }).click()
+  const address = page.getByLabel('Secret address', { exact: true })
+  await expect(address).toHaveValue(/\.ics$/)
+  await page.getByRole('button', { name: 'Copy the address' }).click()
+  await expect(page.getByRole('button', { name: 'Copied' })).toBeVisible()
+
+  const calls = /\/api\/v\d\/canister\/[^/]+\/call$/
+  let release = () => {}
+  const gate = new Promise<void>((resolve) => (release = resolve))
+  await page.route(calls, async (route) => {
+    await gate
+    await route.continue()
+  })
+  const old = await address.inputValue()
+  await page
+    .getByRole('button', {
+      name: 'New secret address: the old one stops working',
+    })
+    .click()
+  await expect(page.getByRole('button', { name: 'Copied' })).toBeDisabled()
+  release()
+  await expect(address).not.toHaveValue(old)
+  // The copy was of the old address
+  await expect(
+    page.getByRole('button', { name: 'Copy the address' })
+  ).toBeEnabled()
+  await page.unroute(calls)
+  const alice = await asAlice()
+  await alice.mail_cal_feed_stop('alice')
   await context.close()
 })

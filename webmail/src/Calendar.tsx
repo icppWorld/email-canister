@@ -282,9 +282,12 @@ export function Calendar({
         />
       </div>
       {error && (
-        <p className="error" role="alert">
-          {error}
-        </p>
+        <div className="toolbar">
+          <p className="error" role="alert">
+            {error}
+          </p>
+          <IconButton label="Try again" icon="refresh" onClick={load} />
+        </div>
       )}
       <div className="month" role="grid" aria-label={monthTitle(month)}>
         {WEEKDAYS.map((w) => (
@@ -685,7 +688,8 @@ function SubscribeDialog({
   // undefined while it loads, null while the calendar is not shared
   const [token, setToken] = useState<string | null | undefined>(undefined)
   const [error, setError] = useState('')
-  const [copied, setCopied] = useState(false)
+  // The address last copied: "Copied" shows only while it is the one shown
+  const [copied, setCopied] = useState('')
 
   useEffect(() => {
     let current = true
@@ -705,7 +709,6 @@ function SubscribeDialog({
   // The dialog stays open while a change runs, so its outcome shows here
   const act = async (work: () => Promise<string | null>) => {
     setBusy(true)
-    setCopied(false)
     await attempt(async () => setToken(await work()), setError)
     setBusy(false)
   }
@@ -759,12 +762,13 @@ function SubscribeDialog({
             />
             <div className="toolbar">
               <IconButton
-                label={copied ? 'Copied' : 'Copy the address'}
-                icon={copied ? 'check' : 'copy'}
+                label={copied === url ? 'Copied' : 'Copy the address'}
+                icon={copied === url ? 'check' : 'copy'}
+                disabled={busy}
                 onClick={async () => {
                   try {
                     await navigator.clipboard.writeText(url)
-                    setCopied(true)
+                    setCopied(url)
                   } catch {
                     setError('Copy it from the box above.')
                   }

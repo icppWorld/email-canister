@@ -322,6 +322,21 @@ def test__a_zone_no_event_names_is_dropped() -> None:
     mail("mail_cal_feed_stop", "alice", "()", USER_A)
 
 
+def test__a_stored_zone_keeps_its_block() -> None:
+    token = token_of(mail("mail_cal_feed_reset", "alice", "()", USER_A))
+    put("kept-1")
+    # Another event sends a different block for the same zone
+    other = ZONE.replace("TZOFFSETTO:+0100", "TZOFFSETTO:+0100\r\nTZNAME:CET")
+    assert other != ZONE
+    put("kept-2", zones=[("Europe/Amsterdam", other)])
+    served = feed(token)
+    assert ZONE in served
+    assert "TZNAME:CET" not in served
+    for uid in ("kept-1", "kept-2"):
+        mail("mail_cal_delete", "alice", f'("{uid}")', USER_A)
+    mail("mail_cal_feed_stop", "alice", "()", USER_A)
+
+
 def test__calendars_are_apart() -> None:
     put("alice-only")
     assert "alice-only" not in uids_in(listed(local="bob", user=USER_B))

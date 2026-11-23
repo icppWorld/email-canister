@@ -320,12 +320,15 @@ function boundedRule(rule: ICAL.Recur): boolean {
   )
 }
 
-// The start of a counted repeat's last occurrence, or null for a count too
-// long to step through, which then counts as no end
+// The start of a counted repeat's last occurrence by its rule alone, or null
+// for a count too long to step through, which then counts as no end. Skipped
+// dates only take times away, so the rule's last bounds the event's; and many
+// in a row would stop the event's own iterator
 function lastStart(event: ICAL.Component, count: number): ICAL.Time | null {
   const rule = event.getFirstPropertyValue('rrule') as ICAL.Recur | null
-  if (!rule || !boundedRule(rule) || count > MAX_STEPS) return null
-  const iterator = new ICAL.Event(event).iterator()
+  const start = event.getFirstPropertyValue('dtstart') as ICAL.Time | null
+  if (!rule || !start || !boundedRule(rule) || count > MAX_STEPS) return null
+  const iterator = rule.iterator(start)
   let last: ICAL.Time | null = null
   for (let i = 0; i < count; ++i) {
     const next = iterator.next()
@@ -369,6 +372,9 @@ function fieldsOf(event: ICAL.Event): EventFields {
     (rule !== null && !boundedRule(rule)) ||
     !untilShown ||
     start.second !== 0 ||
+    // A repeat whose length is days, which a calendar keeps in local time
+    // across a clock change, while the form writes an end in hours
+    (rule !== null && !allDay && nominalDuration(component)) ||
     // A floating time, read in each viewer's own zone, which the form would
     // replace with a named one
     (!allDay && (!start.zone || start.zone.tzid === 'floating')) ||
@@ -418,6 +424,14 @@ function fieldsOf(event: ICAL.Event): EventFields {
     source: event.component.toString(),
     readOnly,
   }
+}
+
+// A DURATION in days or weeks, rather than hours or less
+function nominalDuration(component: ICAL.Component): boolean {
+  const duration = component.getFirstPropertyValue(
+    'duration'
+  ) as ICAL.Duration | null
+  return duration !== null && (duration.days > 0 || duration.weeks > 0)
 }
 
 // A repeat the month view expands; any other shows once, at its start

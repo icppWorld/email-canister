@@ -267,8 +267,11 @@ std::optional<std::string> put_event(const Mailbox &box, const Event &event,
 
   // The event names these zones now, and only these
   db::Stmt forget(box.file, "DELETE FROM event_zones WHERE event_id = ?");
-  db::Stmt zone(box.file, "INSERT INTO zones(tzid, block) VALUES(?1, ?2) "
-                          "ON CONFLICT(tzid) DO UPDATE SET block = ?2");
+  // A zone already stored keeps its block: other events read their times in
+  // it, and a block sent with this one, from a newer zone list perhaps,
+  // would move them
+  db::Stmt zone(box.file,
+                "INSERT OR IGNORE INTO zones(tzid, block) VALUES(?1, ?2)");
   db::Stmt name(box.file, "INSERT OR IGNORE INTO event_zones(event_id, tzid) "
                           "VALUES(?, ?)");
   if (!forget || !zone || !name || !forget.integer(1, id).done())
