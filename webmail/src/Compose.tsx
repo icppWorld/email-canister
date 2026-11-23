@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 
 import {
   errorText,
+  jsonSize,
   MAX_ENCODED_BYTES,
   mailbox,
   type Attachment,
@@ -23,17 +24,13 @@ export type Draft = {
   subject?: string
   body?: string
   files?: File[]
-  // An HTML file, or HTML pasted, sent as the message in place of the text,
-  // which stays behind it for Use plain text instead
+  // An HTML file sent as the message in place of the text, which stays
+  // behind it for Use plain text instead
   html?: HtmlMessage
   clientId?: string
 }
 
 type HtmlMessage = { name: string; body: string }
-
-// The message is refused when larger than this; an HTML file is checked by its
-// size before it is read, so a far larger one is never read or shown
-const TOO_LARGE = `This message is too large to send. Attachments can total about 1.4 MB.`
 
 // At phone width the window always fills the screen
 type Size = 'normal' | 'minimised' | 'full'
@@ -42,8 +39,9 @@ function addresses(text: string): string[] {
   return text.split(/[,;\s]+/).filter(Boolean)
 }
 
+// As the backend counts it: the content in base64
 function encodedSize(attachment: File): number {
-  return Math.ceil(attachment.size / 3) * 4 + attachment.name.length
+  return Math.ceil(attachment.size / 3) * 4 + jsonSize(attachment.name)
 }
 
 // Files are told apart by name and size: the browser gives no path
@@ -85,32 +83,34 @@ export function Compose({
   const htmlPicker = useRef<HTMLInputElement>(null)
   // The latest HTML file picked, by number: only it may become the message.
   // While it is read, the message stays as it is: the text cannot be edited,
-  // nothing pasted is taken, and Send and Use plain text instead wait.
+  // and Send and Use plain text instead wait.
   const picks = useRef(0)
   const [reading, setReading] = useState(false)
+  // Why the last HTML file picked was not taken, apart from a send's error,
+  // until the message changes or another is picked
+  const [pickError, setPickError] = useState('')
 
   useEffect(() => {
     onChange({ from, to, cc, bcc, subject, body, files, html, clientId })
   }, [onChange, from, to, cc, bcc, subject, body, files, html, clientId])
 
   const listed = mailboxes.some((m) => m.local === from)
-  const htmlBody = html ? html.body : textToHtml(body)
-  // Shown the way the reader shows it, in its sandboxed frame, with its size,
-  // both worked out once: it cannot be edited, and typing in the other fields
-  // renders this again
-  const htmlView = useMemo(
-    () =>
-      html && {
-        name: html.name,
-        framed: frameBody(html.body, []),
-        bytes: new TextEncoder().encode(html.body).length,
-      },
-    [html]
+  const htmlBody = useMemo(
+    () => (html ? html.body : textToHtml(body)),
+    [html, body]
   )
+  // Worked out once per change of the message, not as the other fields are typed in
+  const bodySize = useMemo(() => jsonSize(htmlBody), [htmlBody])
+  // Shown the way the reader shows it, in its sandboxed frame, with its
+  // images: it is the sender's own
+  const preview = useMemo(() => html && frameBody(html.body, []), [html])
   const total =
     files.reduce((sum, f) => sum + encodedSize(f), 0) +
-    (htmlView ? htmlView.bytes : new TextEncoder().encode(htmlBody).length) +
-    new TextEncoder().encode(subject).length
+    bodySize +
+    jsonSize(subject) +
+    [to, cc, bcc]
+      .flatMap(addresses)
+      .reduce((sum, address) => sum + jsonSize(address), 0)
   const tooLarge = total > MAX_ENCODED_BYTES
 
   const send = async () => {
@@ -225,35 +225,31 @@ export function Compose({
               onChange={(e) => setSubject(e.target.value)}
             />
           </label>
-          {htmlView ? (
+          {html && preview ? (
             <>
               <p className="attached hint" data-testid="html-message">
-                HTML message: {htmlView.name}
+                HTML message: {html.name}
                 <IconButton
                   variant="bare"
                   label="Use plain text instead"
                   icon="close"
-                  onClick={() => setHtml(undefined)}
+                  onClick={() => {
+                    setHtml(undefined)
+                    setPickError('')
+                  }}
                   disabled={reading}
                 />
               </p>
-              <MessageBody framed={htmlView.framed} />
+              <MessageBody framed={preview} images />
             </>
           ) : (
             <textarea
               aria-label="Message"
               value={body}
               readOnly={reading}
-              onChange={(e) => setBody(e.target.value)}
-              // HTML pasted into an empty message becomes the message, with
-              // its text behind it; into a message with text, only its text
-              // goes in, so nothing written is replaced
-              onPaste={(e) => {
-                const pasted = e.clipboardData.getData('text/html')
-                if (reading || body !== '' || !pasted) return
-                e.preventDefault()
-                setBody(e.clipboardData.getData('text/plain'))
-                setHtml({ name: 'Pasted HTML', body: pasted })
+              onChange={(e) => {
+                setBody(e.target.value)
+                setPickError('')
               }}
             />
           )}
@@ -269,9 +265,13 @@ export function Compose({
               e.target.value = ''
               if (!file) return
               const pick = ++picks.current
+              setPickError('')
+              // By its size first, so a far larger one is never read or shown
               if (file.size > MAX_ENCODED_BYTES) {
                 setReading(false)
-                return setError(TOO_LARGE)
+                return setPickError(
+                  `${file.name} is too large to send: a message can be about 1.9 MB.`
+                )
               }
               setReading(true)
               try {
@@ -283,10 +283,9 @@ export function Compose({
                   bytes
                 )
                 setHtml({ name: file.name, body: htmlMessage(text) })
-                setError('')
               } catch (e) {
                 if (pick !== picks.current) return
-                setError(
+                setPickError(
                   e instanceof TypeError
                     ? `${file.name} is not UTF-8. Save it as UTF-8 and pick it again.`
                     : `Could not read ${file.name}: ${errorText(e)}`
@@ -345,7 +344,13 @@ export function Compose({
           )}
           {tooLarge && (
             <p className="error" role="alert">
-              {TOO_LARGE}
+              This message is too large to send. It can be about 1.9 MB in all,
+              and attachments count a third more than their size.
+            </p>
+          )}
+          {pickError && (
+            <p className="error" role="alert">
+              {pickError}
             </p>
           )}
           {error && (

@@ -1239,6 +1239,11 @@ test('an HTML file is sent as the message, as it is but for its saved-from mark,
     'sandbox',
     SANDBOX
   )
+  // With its images: the message is the sender's own
+  await expect(dialog.locator('iframe.body')).toHaveAttribute(
+    'srcdoc',
+    /img-src data: https:/
+  )
   const preview = dialog.frameLocator('iframe.body').locator('p.big')
   await expect(preview).toHaveText('Countdown started')
   await expect(preview).toHaveCSS('color', 'rgb(18, 52, 86)')
@@ -1299,17 +1304,6 @@ test('only the latest HTML file picked is the message, which stays as it is whil
   await pick('slow.html')
   await expect(send).toBeDisabled()
   await expect(text).toHaveAttribute('readonly', '')
-  await text.evaluate((textarea) => {
-    const data = new DataTransfer()
-    data.setData('text/html', '<p>pasted</p>')
-    textarea.dispatchEvent(
-      new ClipboardEvent('paste', {
-        clipboardData: data,
-        bubbles: true,
-        cancelable: true,
-      })
-    )
-  })
   await release()
   await expect(shown).toHaveText('HTML message: slow.html')
   await expect(send).toBeEnabled()
@@ -1344,57 +1338,57 @@ test('an HTML file that is not UTF-8 is refused, not garbled', async ({
     'cafe.html is not UTF-8'
   )
   await expect(dialog.getByTestId('html-message')).toHaveCount(0)
+  // Writing the message instead puts it away
+  await dialog
+    .getByRole('textbox', { name: 'Message', exact: true })
+    .fill('Plain after all')
+  await expect(dialog.getByRole('alert')).toHaveCount(0)
   await context.close()
 })
 
-test('HTML pasted into an empty message becomes the message, its text kept for plain text', async ({
+test('the size counts as the canister does: a quote in an HTML file twice', async ({
   browser,
 }) => {
   const { context, page } = await signedIn(browser, USER_A)
-  await compose(page, 'Pasted newsletter')
+  await compose(page, 'Quotes')
   const dialog = page.getByRole('dialog', { name: 'New message' })
-  const message = dialog.getByRole('textbox', { name: 'Message', exact: true })
-  const paste = () =>
-    message.evaluate((textarea) => {
-      const data = new DataTransfer()
-      data.setData('text/html', '<p><b>Bold</b> news</p>')
-      data.setData('text/plain', 'Bold news')
-      textarea.dispatchEvent(
-        new ClipboardEvent('paste', {
-          clipboardData: data,
-          bubbles: true,
-          cancelable: true,
-        })
-      )
-    })
-
-  // Into a message with text, it stays text
-  await message.fill('Hello')
-  await paste()
-  await expect(dialog.getByTestId('html-message')).toHaveCount(0)
-  await expect(message).toHaveValue('Hello')
-
-  await message.fill('')
-  await paste()
+  // 1.1 MB on disk, 2.2 MB once its quotes are escaped
+  await dialog.getByLabel('HTML file').setInputFiles({
+    name: 'quotes.html',
+    mimeType: 'text/html',
+    buffer: Buffer.from(`<p>${'"'.repeat(1_100_000)}</p>`),
+  })
   await expect(dialog.getByTestId('html-message')).toHaveText(
-    'HTML message: Pasted HTML'
+    'HTML message: quotes.html'
   )
-  await expect(dialog.frameLocator('iframe.body').locator('b')).toHaveText(
-    'Bold'
-  )
-  await dialog
-    .getByRole('button', { name: 'Use plain text instead', exact: true })
-    .click()
-  await expect(message).toHaveValue('Bold news')
+  await expect(dialog.getByRole('alert')).toContainText('too large to send')
+  await expect(
+    dialog.getByRole('button', { name: 'Send', exact: true })
+  ).toBeDisabled()
+  await context.close()
+})
 
-  // Back to HTML, and sent as it was pasted
-  await message.fill('')
-  await paste()
+test("picking an HTML file leaves a send's error in place", async ({
+  browser,
+}) => {
+  const { context, page } = await signedIn(browser, USER_A)
+  await compose(page, 'Too many')
+  const dialog = page.getByRole('dialog', { name: 'New message' })
+  await dialog
+    .getByLabel('Bcc', { exact: true })
+    .fill(Array.from({ length: 51 }, (_, i) => `r${i}@example.org`).join(', '))
   await send(page)
-  await expect(dialog).toHaveCount(0)
-  expect((await sentMessage('Pasted newsletter'))?.html_body).toBe(
-    '<p><b>Bold</b> news</p>'
+  const refused = dialog.getByRole('alert')
+  await expect(refused).toContainText('too many recipients')
+  await dialog.getByLabel('HTML file').setInputFiles({
+    name: 'news.html',
+    mimeType: 'text/html',
+    buffer: Buffer.from('<p>news</p>'),
+  })
+  await expect(dialog.getByTestId('html-message')).toHaveText(
+    'HTML message: news.html'
   )
+  await expect(refused).toContainText('too many recipients')
   await context.close()
 })
 
@@ -1418,7 +1412,9 @@ for (const [label, name] of [
         mimeType: 'application/octet-stream',
         buffer: Buffer.alloc(2_000_000, 'x'),
       })
-    await expect(page.getByRole('alert')).toContainText('too large')
+    await expect(page.getByRole('alert')).toContainText(
+      label === 'Attachments' ? 'too large' : 'huge.html is too large'
+    )
     if (label === 'Attachments')
       await expect(
         page.getByRole('button', { name: 'Send', exact: true })
