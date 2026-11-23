@@ -146,10 +146,10 @@ footer { color: var(--muted); font-size: 13.5px; border-top: 1px solid var(--lin
 
   <main>
     <header>
-      <span class="eyebrow">email-canister · v0.10.0</span>
+      <span class="eyebrow">email-canister · v0.11.0</span>
       <h1>How email-canister works</h1>
       <p class="lede">email-canister is a product: a repository whose versioned releases hold the code a domain needs to run its own mail on the Internet Computer. A deployment serves one domain with two canisters you control, a C++ backend that receives, stores, indexes and sends mail, and a webmail that users sign in to with Internet Identity, plus a small domain canister for a domain registered elsewhere. The domain also needs a Caffeine app, which is not part of a release: it serves the domain's website, and sends mail through the release's bridge code added to its backend. This page explains each part, where it lives, how mail moves through them, and what you take on by relying on it.</p>
-      <div class="meta"><span>Covers release v0.10.0</span><span>Source: docs/design.md, docs/setup-guide.md, bridge/README.md, webmail/brand/README.md, scripts/make-release-zip.sh</span></div>
+      <div class="meta"><span>Covers release v0.11.0</span><span>Source: docs/design.md, docs/setup-guide.md, bridge/README.md, webmail/brand/README.md, scripts/make-release-zip.sh</span></div>
     </header>
 
     <section id="overview">
@@ -567,7 +567,7 @@ footer { color: var(--muted); font-size: 13.5px; border-top: 1px solid var(--lin
           <dl>
             <dt>Runs in</dt><dd>An asset canister serves the files, and the app runs in the user's browser.</dd>
             <dt>Code</dt><dd>TypeScript, built with Vite into static files in the repository's <code>webmail/</code>. The release ships the built <code>dist</code>, the same bytes for every deployment.</dd>
-            <dt>Does</dt><dd>The mail client users see: a list of their mailboxes; the Inbox, Spam and Trash, with Delete and Undo, actions on several messages at once, stars and blocked senders; reading and search; a compose window with attachments that can be minimised or made full screen; outbox status; a download of a mailbox; and an Admin screen where controllers create mailboxes and manage members and names. It signs in with Internet Identity and calls the backend directly from the browser.</dd>
+            <dt>Does</dt><dd>The mail client users see: a list of their mailboxes; the Inbox, Spam and Trash, with Delete and Undo, actions on several messages at once, stars and blocked senders; reading and search; a compose window with attachments, which sends typed text or an HTML file as it is and can be minimised or made full screen; outbox status; a download of a mailbox; and an Admin screen where controllers create mailboxes and manage members and names. It signs in with Internet Identity and calls the backend directly from the browser.</dd>
             <dt>Interfaces</dt><dd>A static app in an asset canister. Its settings (backend id, network, sign-in origin, brand) sit in one JSON block in <code>index.html</code>, so every deployment serves the same JavaScript.</dd>
             <dt>Limits</dt><dd>Sign-ins last up to 7 days. The sign-in origin cannot change once users exist: each user would get a new principal and lose their mailbox. The webmail can also answer on up to 10 custom domains, such as <code>mail.example.com</code>, with the same principals: the brand script lists them in the origin's <code>/.well-known/ii-alternative-origins</code>, which Internet Identity reads.</dd>
           </dl>
@@ -778,7 +778,7 @@ footer { color: var(--muted); font-size: 13.5px; border-top: 1px solid var(--lin
     </section>
 
     <footer>
-      <p>Updated for release v0.10.0. The source of truth is the repository: <code>docs/design.md</code> for the design and its measurements, <code>docs/setup-guide.md</code> for deploying, and <code>ROADMAP.md</code> for what comes next, including aliases, mailbox states and per-mailbox rate limits.</p>
+      <p>Updated for release v0.11.0. The source of truth is the repository: <code>docs/design.md</code> for the design and its measurements, <code>docs/setup-guide.md</code> for deploying, and <code>ROADMAP.md</code> for what comes next, including aliases, mailbox states and per-mailbox rate limits.</p>
     </footer>
   </main>
 </div>
