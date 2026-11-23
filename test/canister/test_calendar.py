@@ -236,7 +236,12 @@ def test__a_long_list_comes_in_pages() -> None:
         # A parser unfolds lines and reads names in any case
         ("a", vevent("a", extra="END:VEV\r\n ENT\r\nBEGIN:VEVENT"), "another VEVENT"),
         ("a", vevent("a", extra="end:vcalendar"), "another VCALENDAR"),
-        ("a", vevent("a", extra="BEGIN;X=1:VTimezone"), "another VTIMEZONE"),
+        ("a", vevent("a", extra="BEGIN;X=1:VTimezone"), "with parameters"),
+        (
+            "a",
+            vevent("b", extra="BEGIN;X=1:VALARM\r\nUID:a\r\nEND;X=1:VALARM"),
+            "with parameters",
+        ),
         ("a", vevent("a") + "\r\n X", "must be one VEVENT"),
         ("a", vevent("a", extra="BEGIN:VALARM"), "do not nest"),
         ("a", vevent("a", extra="END:VALARM"), "do not nest"),

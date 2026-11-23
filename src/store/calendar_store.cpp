@@ -68,14 +68,21 @@ std::string upper(std::string s) {
 }
 
 // The component a BEGIN or END line names, in upper case, or empty for any
-// other line. A line is read as a parser reads it: in any case, and with any
-// parameters.
+// other line. A line is read in any case, as a parser reads it.
 std::string component_of(const std::string &line, std::string_view keyword) {
   const size_t colon = line.find(':');
-  if (colon == std::string::npos ||
-      upper(line.substr(0, line.find_first_of(":;"))) != keyword)
+  if (colon == std::string::npos || upper(line.substr(0, colon)) != keyword)
     return "";
   return upper(line.substr(colon + 1));
+}
+
+// A BEGIN or END line with parameters, which parsers read differently: some
+// as a component's edge, others as a property
+bool has_parameters(const std::string &line) {
+  const size_t cut = line.find_first_of(":;");
+  if (cut == std::string::npos || line[cut] != ';') return false;
+  const std::string name = upper(line.substr(0, cut));
+  return name == "BEGIN" || name == "END";
 }
 
 // The components a calendar holds, which no block may hold inside it
@@ -101,6 +108,8 @@ std::string invalid_block(std::string_view block, std::string_view component,
   std::vector<std::string> open;
   int ids = 0;
   for (size_t i = 1; i + 1 < lines.size(); ++i) {
+    if (has_parameters(lines[i]))
+      return "the block has a BEGIN or END line with parameters";
     const std::string begins = component_of(lines[i], "BEGIN");
     const std::string ends = component_of(lines[i], "END");
     for (std::string_view outer : k_outer) {

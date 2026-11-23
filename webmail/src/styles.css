@@ -1086,6 +1086,8 @@ th {
   flex: 1;
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
+  /* The weekday names take their own height, the six weeks the rest */
+  grid-template-rows: auto;
   grid-auto-rows: minmax(96px, 1fr);
   border-top: 1px solid var(--border);
   border-left: 1px solid var(--border);

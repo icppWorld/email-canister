@@ -627,6 +627,9 @@ test('a crowded day scrolls, and the phone list has its own rows', async ({
       .first()
       .evaluate((day) => getComputedStyle(day).overflowY)
   ).toBe('auto')
+  // The weekday names are one line high, not a week's row
+  const names = await month(page).locator('.weekday').first().boundingBox()
+  expect(names?.height).toBeLessThan(40)
   await page.setViewportSize({ width: 390, height: 844 })
   const row = page
     .getByLabel('Events this month')
