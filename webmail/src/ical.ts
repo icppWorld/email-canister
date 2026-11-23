@@ -369,6 +369,9 @@ function fieldsOf(event: ICAL.Event): EventFields {
     (rule !== null && !boundedRule(rule)) ||
     !untilShown ||
     start.second !== 0 ||
+    // A floating time, read in each viewer's own zone, which the form would
+    // replace with a named one
+    (!allDay && (!start.zone || start.zone.tzid === 'floating')) ||
     (!allDay && (event.endDate ?? start).second !== 0) ||
     zones.some((z) => z !== startZone)
   const repeat = (rule?.freq ?? '') as Repeat

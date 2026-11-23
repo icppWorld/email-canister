@@ -667,6 +667,12 @@ test('an event another app wrote beyond the form opens read-only', async ({
   browser,
 }) => {
   const cases: [string, number, string[]][] = [
+    // No zone and no Z: a time read in each viewer's own zone
+    [
+      'Floating',
+      15,
+      [`DTSTART:${ymd(0, 15)}T090000`, `DTEND:${ymd(0, 15)}T100000`],
+    ],
     [
       'Seconds',
       21,

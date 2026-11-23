@@ -200,6 +200,14 @@ def test__a_window_lists_the_events_that_overlap_it() -> None:
         "forever",
         "past",
     ]
+    # The window is half-open: an event that ends where it starts is over,
+    # and one with no length is in the window that starts at its time
+    assert sorted(uids_in(listed(NOW + 3600, NOW + 7200))) == ["forever"]
+    assert sorted(uids_in(listed(NOW + 60, NOW + 120))) == [
+        "forever",
+        "instant",
+        "now",
+    ]
     for uid in ("past", "now", "forever", "instant"):
         mail("mail_cal_delete", "alice", f'("{uid}")', USER_A)
 

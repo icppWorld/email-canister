@@ -200,8 +200,12 @@ std::optional<EventPage> list_events(const Mailbox &box, int64_t from,
                                      int64_t limit, size_t max_bytes) {
   db::Stmt select(box.file,
                   "SELECT id, uid, vevent, starts, ends, modified_ns "
-                  "FROM events WHERE ends >= ? AND starts < ? AND id > ? "
-                  "ORDER BY id LIMIT ?");
+                  // The half-open window [from, to): an event that ends at
+                  // `from` is over, and one with no length is in it when it
+                  // starts there
+                  "FROM events WHERE ends >= ?1 "
+                  "AND (ends > ?1 OR ends = starts) AND starts < ?2 "
+                  "AND id > ?3 ORDER BY id LIMIT ?4");
   if (!select) return std::nullopt;
   select.integer(1, from).integer(2, to).integer(3, cursor.value_or(0));
   select.integer(4, limit + 1);
