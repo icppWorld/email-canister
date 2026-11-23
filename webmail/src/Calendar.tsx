@@ -142,6 +142,16 @@ export function Calendar({
   const shown = useRef(editing)
   shown.current = editing
   const [sharing, setSharing] = useState(false)
+  // A change that failed after its dialog closed
+  const [late, setLate] = useState('')
+  const eventLate = useCallback(
+    (text: string) => setLate(`The event was not changed: ${text}`),
+    []
+  )
+  const feedLate = useCallback(
+    (text: string) => setLate(`The secret address was not changed: ${text}`),
+    []
+  )
   const feed = useFeed(backend)
   // Raised after a change, so that the month shown then loads again
   const [changes, setChanges] = useState(0)
@@ -204,18 +214,23 @@ export function Calendar({
   const today = dayKey(new Date())
   const shift = (months: number) =>
     setMonth((m) => new Date(m.getFullYear(), m.getMonth() + months, 1))
-  const open = (o: Occurrence) =>
+  // A late failure's line stays until another form opens
+  const open = (o: Occurrence) => {
+    setLate('')
     setEditing({
       fields: { ...o.fields },
       isNew: false,
       opened: ++openings.current,
     })
-  const create = (date: string) =>
+  }
+  const create = (date: string) => {
+    setLate('')
     setEditing({
       fields: newFields(date),
       isNew: true,
       opened: ++openings.current,
     })
+  }
 
   const chip = (o: Occurrence, key: string) => (
     <li key={key}>
@@ -272,12 +287,20 @@ export function Calendar({
         <IconButton
           label="Subscribe from a calendar app"
           icon="link"
-          onClick={() => setSharing(true)}
+          onClick={() => {
+            setLate('')
+            setSharing(true)
+          }}
         />
       </div>
       {error && (
         <p className="error" role="alert">
           {error}
+        </p>
+      )}
+      {late && (
+        <p className="error" role="alert">
+          {late}
         </p>
       )}
       <div className="month" role="grid" aria-label={monthTitle(month)}>
@@ -325,6 +348,7 @@ export function Calendar({
           fields={editing.fields}
           isNew={editing.isNew}
           onClose={() => setEditing(null)}
+          onLate={eventLate}
           onSaved={(movedTo) => {
             setChanges((n) => n + 1)
             // A save that ends late leaves a newer form and the month alone
@@ -343,6 +367,7 @@ export function Calendar({
           backend={backend}
           address={address}
           onClose={() => setSharing(false)}
+          onLate={feedLate}
         />
       )}
     </section>
@@ -424,6 +449,7 @@ function EventDialog({
   isNew,
   onClose,
   onSaved,
+  onLate,
 }: {
   backend: Mailbox
   fields: EventFields
@@ -431,10 +457,11 @@ function EventDialog({
   onClose: () => void
   // With the start date when a save moved the event, so that its month shows
   onSaved: (movedTo?: string) => void
+  onLate: (text: string) => void
 }) {
   const [f, setF] = useState(initial)
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
+  const [error, setError] = useErrorLine(onLate)
   const set = (change: Partial<EventFields>) =>
     setF((now) => ({ ...now, ...change }))
 
@@ -652,6 +679,27 @@ function EventDialog({
   )
 }
 
+// A dialog's error line: its own while it is open, and the calendar's once it
+// has closed, so that a change failing after the dialog closed still shows
+function useErrorLine(onLate: (text: string) => void) {
+  const [error, setError] = useState('')
+  const open = useRef(true)
+  useEffect(() => {
+    open.current = true
+    return () => {
+      open.current = false
+    }
+  }, [])
+  const report = useCallback(
+    (text: string) => {
+      if (open.current) setError(text)
+      else if (text) onLate(text)
+    },
+    [onLate]
+  )
+  return [error, report] as const
+}
+
 // The secret address's token, kept by the calendar rather than its dialog,
 // so that a change still running when the dialog closes reaches the next one
 function useFeed(backend: Mailbox) {
@@ -688,14 +736,16 @@ function SubscribeDialog({
   backend,
   address,
   onClose,
+  onLate,
 }: {
   feed: Feed
   backend: Mailbox
   address: string
   onClose: () => void
+  onLate: (text: string) => void
 }) {
   const { token, busy, load } = feed
-  const [error, setError] = useState('')
+  const [error, setError] = useErrorLine(onLate)
   const [copied, setCopied] = useState(false)
 
   useEffect(() => {
@@ -706,7 +756,7 @@ function SubscribeDialog({
     return () => {
       current = false
     }
-  }, [load])
+  }, [load, setError])
 
   const act = async (work: () => Promise<string | null>) => {
     setCopied(false)

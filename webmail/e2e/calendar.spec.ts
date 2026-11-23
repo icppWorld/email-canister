@@ -931,3 +931,61 @@ test('a month from before 1970 shows without a load error', async ({
   ).toHaveCount(0)
   await context.close()
 })
+
+test('a save or a stop that fails after its dialog closed shows on the calendar', async ({
+  browser,
+}) => {
+  const { context, page } = await signedIn(browser, USER_A)
+  answer(page, true, true)
+  await openCalendar(page)
+  // The next update call waits, then fails as a lost connection
+  const failNext = async () => {
+    let release = () => {}
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    await page.route(
+      /\/api\/v\d\/canister\/[^/]+\/call$/,
+      async (route) => {
+        await gate
+        await route.abort()
+      },
+      { times: 1 }
+    )
+    return () => release()
+  }
+
+  let fail = await failNext()
+  await page.getByRole('button', { name: 'New event', exact: true }).click()
+  await dialog(page).getByLabel('Title').fill('Never saved')
+  await dialog(page).getByRole('button', { name: 'Save' }).click()
+  await dialog(page).getByRole('button', { name: 'Close' }).click()
+  fail()
+  const calendar = page.getByRole('region', { name: 'Calendar' })
+  await expect(calendar.getByRole('alert')).toContainText(
+    'The event was not changed'
+  )
+  await expect(
+    month(page).getByRole('button', { name: /Never saved/ })
+  ).toHaveCount(0)
+
+  // A stop that fails leaves the calendar shared, and says so
+  const subscribe = page.getByRole('button', {
+    name: 'Subscribe from a calendar app',
+  })
+  await subscribe.click()
+  await page.getByRole('button', { name: 'Make a secret address' }).click()
+  const address = page.getByLabel('Secret address', { exact: true })
+  await expect(address).toHaveValue(/\.ics$/)
+  fail = await failNext()
+  await page
+    .getByRole('button', { name: 'Stop sharing: the address stops working' })
+    .click()
+  await page.keyboard.press('Escape')
+  fail()
+  await expect(calendar.getByRole('alert')).toContainText(
+    'The secret address was not changed'
+  )
+  const alice = await asAlice()
+  expect(await alice.mail_cal_feed('alice')).toHaveLength(1)
+  await alice.mail_cal_feed_stop('alice')
+  await context.close()
+})
