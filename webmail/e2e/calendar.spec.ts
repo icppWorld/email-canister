@@ -13,6 +13,19 @@ test.describe.configure({ mode: 'serial' })
 
 test.beforeAll(() => freshBackend())
 
+// Each test starts on an empty calendar and makes the events it needs, so
+// that it also passes when run on its own
+test.beforeEach(async () => {
+  const alice = await asAlice()
+  const all = await alice.mail_cal_list('alice', {
+    from: 0n,
+    to: 253_402_300_799n,
+    cursor: [],
+    limit: 500n,
+  })
+  for (const e of all.items) await alice.mail_cal_delete('alice', e.uid)
+})
+
 const pad = (n: number) => String(n).padStart(2, '0')
 const now = new Date()
 // The 3rd of this month, so a weekly repeat shows four times in it
@@ -116,18 +129,28 @@ test('events are added, shown, changed and deleted', async ({ browser }) => {
   await context.close()
 })
 
-test('a repeat and an all-day event show on their days', async ({
-  browser,
-}) => {
-  const { context, page } = await signedIn(browser, USER_A)
-  await openCalendar(page)
-
+// A weekly repeat from the 3rd in a named zone, and an all-day event on the
+// 3rd and 4th, added through the form
+async function addSamples(page: Page): Promise<void> {
   await addEvent(page, 'Weekly round', async (p) => {
     await dialog(p).getByLabel('Start date').fill(third)
     // A named zone, so the feed carries its VTIMEZONE whatever the browser's
     await dialog(p).getByLabel('Time zone').selectOption('Europe/Amsterdam')
     await dialog(p).getByLabel('Repeats').selectOption('WEEKLY')
   })
+  await addEvent(page, 'Club holiday', async (p) => {
+    await dialog(p).getByLabel('Start date').fill(third)
+    await dialog(p).getByLabel('All day').check()
+    await dialog(p).getByLabel('End date').fill(third.replace(/03$/, '04'))
+  })
+}
+
+test('a repeat and an all-day event show on their days', async ({
+  browser,
+}) => {
+  const { context, page } = await signedIn(browser, USER_A)
+  await openCalendar(page)
+  await addSamples(page)
   // The 3rd, 10th, 17th and 24th at least, and more in the grid's other days
   // The month loads again after the form closes
   await expect
@@ -137,12 +160,6 @@ test('a repeat and an all-day event show on their days', async ({
         .count()
     )
     .toBeGreaterThanOrEqual(4)
-
-  await addEvent(page, 'Club holiday', async (p) => {
-    await dialog(p).getByLabel('Start date').fill(third)
-    await dialog(p).getByLabel('All day').check()
-    await dialog(p).getByLabel('End date').fill(third.replace(/03$/, '04'))
-  })
   const holiday = month(page).locator('.event.all-day', {
     hasText: 'Club holiday',
   })
@@ -166,6 +183,7 @@ test('a calendar app subscribes at the secret address', async ({ browser }) => {
   // Sharing is asked first, once declined; then each change is confirmed
   const asked = answer(page, false, true, true, true)
   await openCalendar(page)
+  await addSamples(page)
   await page
     .getByRole('button', { name: 'Subscribe from a calendar app' })
     .click()
@@ -619,6 +637,17 @@ test('the form refuses an event with no length, or before 1970', async ({
 test('a crowded day scrolls, and the phone list has its own rows', async ({
   browser,
 }) => {
+  await putRaw(
+    'phone-row',
+    [
+      'DTSTAMP:20260101T000000Z',
+      `DTSTART:${ymd(0, 12)}T090000Z`,
+      `DTEND:${ymd(0, 12)}T100000Z`,
+      'SUMMARY:Phone row',
+    ],
+    new Date(now.getFullYear(), now.getMonth(), 12),
+    new Date(now.getFullYear(), now.getMonth(), 13)
+  )
   const { context, page } = await signedIn(browser, USER_A)
   await openCalendar(page)
   expect(
@@ -633,8 +662,7 @@ test('a crowded day scrolls, and the phone list has its own rows', async ({
   await page.setViewportSize({ width: 390, height: 844 })
   const row = page
     .getByLabel('Events this month')
-    .getByRole('button', { name: /Weekly round/ })
-    .first()
+    .getByRole('button', { name: /Phone row/ })
   expect(await row.evaluate((b) => getComputedStyle(b).fontSize)).toBe('14px')
   await context.close()
 })
@@ -642,6 +670,17 @@ test('a crowded day scrolls, and the phone list has its own rows', async ({
 test('an event that cannot be read leaves the others shown', async ({
   browser,
 }) => {
+  await putRaw(
+    'readable',
+    [
+      'DTSTAMP:20260101T000000Z',
+      `DTSTART:${ymd(0, 13)}T090000Z`,
+      `DTEND:${ymd(0, 13)}T100000Z`,
+      'SUMMARY:Readable',
+    ],
+    new Date(now.getFullYear(), now.getMonth(), 13),
+    new Date(now.getFullYear(), now.getMonth(), 14)
+  )
   await putRaw(
     'bad-end',
     [
@@ -667,13 +706,9 @@ test('an event that cannot be read leaves the others shown', async ({
   )
   const { context, page } = await signedIn(browser, USER_A)
   await openCalendar(page)
-  await expect
-    .poll(() =>
-      month(page)
-        .getByRole('button', { name: /Weekly round/ })
-        .count()
-    )
-    .toBeGreaterThanOrEqual(4)
+  await expect(
+    month(page).getByRole('button', { name: /Readable/ })
+  ).toHaveCount(1)
   await expect(month(page).getByRole('button', { name: /Period/ })).toHaveCount(
     1
   )
@@ -747,5 +782,49 @@ test('an event another app wrote beyond the form opens read-only', async ({
   const alice = await asAlice()
   for (const [title] of cases)
     await alice.mail_cal_delete('alice', title.replace(' ', '-').toLowerCase())
+  await context.close()
+})
+
+test('an event moved to another month is shown there after the save', async ({
+  browser,
+}) => {
+  const { context, page } = await signedIn(browser, USER_A)
+  await openCalendar(page)
+  const later = new Date(now.getFullYear(), now.getMonth() + 3, 5)
+  const heading = later.toLocaleDateString(undefined, {
+    month: 'long',
+    year: 'numeric',
+  })
+  await addEvent(page, 'Moved on', async (p) => {
+    await dialog(p)
+      .getByLabel('Start date')
+      .fill(`${later.getFullYear()}-${pad(later.getMonth() + 1)}-05`)
+  })
+  await expect(
+    page.getByRole('heading', { level: 2, name: heading })
+  ).toBeVisible()
+  await expect(
+    month(page).getByRole('button', { name: /Moved on/ })
+  ).toHaveCount(1)
+  await context.close()
+})
+
+test('the form holds its fields while it saves', async ({ browser }) => {
+  const { context, page } = await signedIn(browser, USER_A)
+  await openCalendar(page)
+  let release = () => {}
+  const gate = new Promise<void>((resolve) => (release = resolve))
+  let held = 0
+  await page.route(/\/api\/v\d\/canister\/[^/]+\/call$/, async (route) => {
+    if (held++ === 0) await gate
+    await route.continue()
+  })
+  await page.getByRole('button', { name: 'New event', exact: true }).click()
+  await dialog(page).getByLabel('Title').fill('Held')
+  await dialog(page).getByRole('button', { name: 'Save' }).click()
+  await expect(dialog(page).getByLabel('Title')).toBeDisabled()
+  release()
+  await expect(dialog(page)).toBeHidden()
+  await expect(month(page).getByRole('button', { name: /Held/ })).toHaveCount(1)
   await context.close()
 })

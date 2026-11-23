@@ -137,6 +137,9 @@ export function Calendar({
     opened: number
   } | null>(null)
   const openings = useRef(0)
+  // The form open now, for a save that ends after another one opened
+  const shown = useRef(editing)
+  shown.current = editing
   const [sharing, setSharing] = useState(false)
   // Raised after a change, so that the month shown then loads again
   const [changes, setChanges] = useState(0)
@@ -320,11 +323,15 @@ export function Calendar({
           fields={editing.fields}
           isNew={editing.isNew}
           onClose={() => setEditing(null)}
-          onSaved={() => {
-            // A save that ends late closes only its own form
-            const saved = editing
-            setEditing((now) => (now === saved ? null : now))
+          onSaved={(movedTo) => {
             setChanges((n) => n + 1)
+            // A save that ends late leaves a newer form and the month alone
+            if (shown.current !== editing) return
+            setEditing(null)
+            if (movedTo) {
+              const [y, m] = movedTo.split('-').map(Number)
+              setMonth(new Date(y, m - 1, 1))
+            }
           }}
         />
       )}
@@ -419,7 +426,8 @@ function EventDialog({
   fields: EventFields
   isNew: boolean
   onClose: () => void
-  onSaved: () => void
+  // With the start date when a save moved the event, so that its month shows
+  onSaved: (movedTo?: string) => void
 }) {
   const [f, setF] = useState(initial)
   const [busy, setBusy] = useState(false)
@@ -439,12 +447,12 @@ function EventDialog({
   )
 
   // Runs a change, then closes; a refusal shows and the form stays
-  const run = (work: () => Promise<unknown>) => {
+  const run = (work: () => Promise<unknown>, movedTo?: string) => {
     setBusy(true)
     return attempt(
       async () => {
         await work()
-        onSaved()
+        onSaved(movedTo)
       },
       (text) => {
         setError(text)
@@ -459,10 +467,12 @@ function EventDialog({
       setError(why)
       return
     }
-    run(() =>
-      backend.mail_cal_put(
-        buildEvent({ ...f, sequence: isNew ? 0 : f.sequence + 1 })
-      )
+    run(
+      () =>
+        backend.mail_cal_put(
+          buildEvent({ ...f, sequence: isNew ? 0 : f.sequence + 1 })
+        ),
+      f.startDate !== initial.startDate ? f.startDate : undefined
     )
   }
 
@@ -482,7 +492,8 @@ function EventDialog({
             show. It can be deleted here, not changed.
           </p>
         )}
-        <fieldset className="event-fields" disabled={f.readOnly}>
+        {/* Held while it saves: a later change would not be in the save */}
+        <fieldset className="event-fields" disabled={f.readOnly || busy}>
           <label>
             Title
             <input
