@@ -1259,47 +1259,72 @@ test('an HTML file is sent as the message, as it is but for its saved-from mark,
   await context.close()
 })
 
-test('of two HTML files picked, the later one is the message, and Send waits while one is read', async ({
+test('only the latest choice of HTML is the message, and Send waits while a file is read', async ({
   browser,
 }) => {
   const { context, page } = await signedIn(browser, USER_A)
-  // The first file's read is held until the test lets it finish
+  // A read of slow.html is held until the test lets it finish
   await page.evaluate(() => {
     const read = File.prototype.arrayBuffer
-    let release = () => {}
-    const held = new Promise<void>((resolve) => (release = resolve))
-    Object.assign(window, { releaseRead: release })
+    let held: (() => void)[] = []
+    Object.assign(window, {
+      releaseReads: () => {
+        held.forEach((release) => release())
+        held = []
+      },
+    })
     File.prototype.arrayBuffer = async function (this: File) {
-      if (this.name === 'slow.html') await held
+      if (this.name === 'slow.html')
+        await new Promise<void>((resolve) => held.push(resolve))
       return read.call(this)
     }
   })
-  await compose(page, 'Two files')
+  const release = () =>
+    page.evaluate(() =>
+      (window as unknown as { releaseReads: () => void }).releaseReads()
+    )
+  await compose(page, 'Latest choice')
   const dialog = page.getByRole('dialog', { name: 'New message' })
+  const send = dialog.getByRole('button', { name: 'Send', exact: true })
+  const shown = dialog.getByTestId('html-message')
   const pick = (name: string) =>
     dialog.getByLabel('HTML file').setInputFiles({
       name,
       mimeType: 'text/html',
       buffer: Buffer.from(`<p>${name}</p>`),
     })
+
+  // A paste while a file is read is the message
   await pick('slow.html')
-  await expect(
-    dialog.getByRole('button', { name: 'Send', exact: true })
-  ).toBeDisabled()
-  await pick('fast.html')
-  await expect(dialog.getByTestId('html-message')).toHaveText(
-    'HTML message: fast.html'
-  )
-  await page.evaluate(() =>
-    (window as unknown as { releaseRead: () => void }).releaseRead()
-  )
+  await expect(send).toBeDisabled()
+  await dialog
+    .getByRole('textbox', { name: 'Message', exact: true })
+    .evaluate((textarea) => {
+      const data = new DataTransfer()
+      data.setData('text/html', '<p>pasted</p>')
+      textarea.dispatchEvent(
+        new ClipboardEvent('paste', {
+          clipboardData: data,
+          bubbles: true,
+          cancelable: true,
+        })
+      )
+    })
+  await expect(shown).toHaveText('HTML message: Pasted HTML')
+  await expect(send).toBeEnabled()
+  await release()
   await page.waitForTimeout(300)
-  await expect(dialog.getByTestId('html-message')).toHaveText(
-    'HTML message: fast.html'
-  )
-  await expect(
-    dialog.getByRole('button', { name: 'Send', exact: true })
-  ).toBeEnabled()
+  await expect(shown).toHaveText('HTML message: Pasted HTML')
+
+  // Of two files, the later one
+  await pick('slow.html')
+  await expect(send).toBeDisabled()
+  await pick('fast.html')
+  await expect(shown).toHaveText('HTML message: fast.html')
+  await release()
+  await page.waitForTimeout(300)
+  await expect(shown).toHaveText('HTML message: fast.html')
+  await expect(send).toBeEnabled()
   await context.close()
 })
 

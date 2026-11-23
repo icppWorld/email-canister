@@ -87,6 +87,12 @@ export function Compose({
   // and Send waits while it is read, so it never sends the one before
   const picks = useRef(0)
   const [reading, setReading] = useState(false)
+  // A paste or Use plain text instead is newer than any file still being read
+  const choose = (next?: HtmlMessage) => {
+    picks.current += 1
+    setReading(false)
+    setHtml(next)
+  }
 
   useEffect(() => {
     onChange({ from, to, cc, bcc, subject, body, files, html, clientId })
@@ -232,7 +238,7 @@ export function Compose({
                   variant="bare"
                   label="Use plain text instead"
                   icon="close"
-                  onClick={() => setHtml(undefined)}
+                  onClick={() => choose(undefined)}
                 />
               </p>
               <MessageBody framed={htmlView.framed} />
@@ -250,7 +256,7 @@ export function Compose({
                 if (body !== '' || !pasted) return
                 e.preventDefault()
                 setBody(e.clipboardData.getData('text/plain'))
-                setHtml({ name: 'Pasted HTML', body: pasted })
+                choose({ name: 'Pasted HTML', body: pasted })
               }}
             />
           )}
