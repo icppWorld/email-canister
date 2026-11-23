@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import type { Identity } from '@icp-sdk/core/agent'
 
 import { createBackend, errorText, mailbox, type Backend, type Me } from './api'
@@ -23,12 +31,18 @@ import {
 } from './Toast'
 import { reload, setUnsaved, VERSION } from './Update'
 
+// The calendar and its libraries load only when it is opened
+const Calendar = lazy(() =>
+  import('./Calendar').then((m) => ({ default: m.Calendar }))
+)
+
 // A mailbox's folders and pages, each with an address of its own
 const PAGES = {
   inbox: 'Inbox',
   sent: 'Sent',
   spam: 'Spam',
   trash: 'Trash',
+  calendar: 'Calendar',
   blocked: 'Blocked senders',
 } as const
 type Page = keyof typeof PAGES
@@ -602,6 +616,11 @@ export function App() {
             principal={principal}
             refresh={refresh}
           />
+        )}
+        {current === 'calendar' && box && shown && (
+          <Suspense fallback={<p className="hint">Loading the calendar…</p>}>
+            <Calendar key={local} backend={box} address={shown.address} />
+          </Suspense>
         )}
         {current === 'admin' && <AdminPanel backend={backend} />}
       </div>

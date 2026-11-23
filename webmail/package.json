@@ -17,9 +17,11 @@
     "@icp-sdk/auth": "^11.2.0",
     "@icp-sdk/core": "^6.1.1",
     "dompurify": "3.4.18",
+    "ical.js": "2.2.1",
     "postal-mime": "^4.2.0",
     "react": "19.1",
-    "react-dom": "19.1"
+    "react-dom": "19.1",
+    "timezones-ical-library": "2.4.0"
   },
   "devDependencies": {
     "@eslint/compat": "2.1.1",

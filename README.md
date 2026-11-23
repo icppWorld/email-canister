@@ -5,6 +5,7 @@ Email for your own domain, run from Internet Computer canisters you control.
 - **Receive** mail through the DFINITY SMTP gateway, into a C++ canister that stores and indexes it in SQLite.
 - **Read and send** in a webmail served from an asset canister, signed in with Internet Identity. There are no passwords.
 - **Send** through a small relay app on Caffeine, which hands mail to its mail gateway. A message is typed as text, or is an HTML file (a newsletter, say) sent as it is. A message goes to at most 50 recipients; a larger list takes several messages.
+- **Calendar**: every mailbox has one, shared by its members. Any calendar app that subscribes by URL can follow it at a secret address, as a standard iCalendar (`.ics`) file. Those apps fetch it on their own schedule, some only every few hours.
 - **Brand** the webmail with your own name, logo, fonts and colours.
 
 > **Status: alpha.** Everything can still change between releases: the canister interface, the storage format, the webmail and the deployment steps. A new release may need a reinstall, which erases all mail, as v0.2.0 did. It runs real mailboxes, but read the risks in [docs/design.md](docs/design.md#known-limits) before relying on it, and keep your own copy of mail that matters.

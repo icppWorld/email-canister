@@ -151,6 +151,50 @@ type ExportChunkRequest = record { offset : nat64; length : nat64 };
 type ExportChunk = record { data : blob; size : nat64; started_ns : nat64 };
 type Settings = record { domain : text; bridge : opt principal };
 
+// A calendar event: one VEVENT block (RFC 5545) with lines ending in CRLF,
+// whose UID line is the uid, and the span it covers in UTC seconds, with a
+// far-ahead end for a repeat that never ends. uid: letters, digits, @._-
+type CalendarEvent = record {
+    uid : text;
+    vevent : text;
+    starts : nat64;
+    ends : nat64;
+    modified_ns : nat64;
+};
+// A VTIMEZONE block, named by its IANA TZID
+type TimeZone = record { tzid : text; block : text };
+type EventRequest = record {
+    uid : text;
+    vevent : text;
+    starts : nat64;
+    ends : nat64;
+    vtimezones : vec TimeZone; // the zones the event names, at most 4
+};
+// The events overlapping [from, to), in UTC seconds
+type EventWindow = record { from : nat64; to : nat64; cursor : opt nat64; limit : nat64 };
+type EventPage = record { items : vec CalendarEvent; cursor : opt nat64 };
+
+type HeaderField = record { text; text };
+type HttpRequest = record {
+    method : text;
+    url : text;
+    headers : vec HeaderField;
+    body : blob;
+    certificate_version : opt nat16;
+};
+type HttpUpdateRequest = record {
+    method : text;
+    url : text;
+    headers : vec HeaderField;
+    body : blob;
+};
+type HttpResponse = record {
+    status_code : nat16;
+    headers : vec HeaderField;
+    body : blob;
+    upgrade : opt bool;
+};
+
 service : () -> {
     "smtp_request_validate" : (SmtpRequest) -> (SmtpResponse) query;
     "smtp_request" : (SmtpRequest) -> (SmtpResponse);
@@ -216,6 +260,21 @@ service : () -> {
     "mail_export_freeze" : (text, opt nat64) -> (ExportInfo); // the started_ns it renews
     "mail_export_thaw" : (text, nat64) -> (); // the download's started_ns
     "mail_export_chunk" : (text, ExportChunkRequest) -> (ExportChunk) query;
+
+    // The mailbox's calendar: at most 5,000 events of up to 16 KiB
+    "mail_cal_list" : (text, EventWindow) -> (EventPage) query;
+    "mail_cal_put" : (text, EventRequest) -> (); // adds or replaces, by uid
+    "mail_cal_delete" : (text, text) -> (bool); // true when there was one
+    // The token of the calendar's secret address, /cal/<token>.ics on this
+    // canister, or null while it is not shared. Whoever has the address
+    // reads the calendar.
+    "mail_cal_feed" : (text) -> (opt text) query;
+    "mail_cal_feed_reset" : (text) -> (text); // a new address; the old one stops
+    "mail_cal_feed_stop" : (text) -> (); // stops sharing
+
+    // The calendar feeds, GET /cal/<token>.ics; anything else is 404
+    "http_request" : (HttpRequest) -> (HttpResponse) query;
+    "http_request_update" : (HttpUpdateRequest) -> (HttpResponse);
 
     // Test build only
     "dev_pause" : (bool) -> ();

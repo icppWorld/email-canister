@@ -1066,3 +1066,141 @@ th {
     padding-bottom: 0;
   }
 }
+/* The calendar: a month's grid, or at phone width a list of its days */
+.calendar {
+  height: 100%;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 18px;
+}
+.calendar-bar {
+  flex-wrap: wrap;
+}
+.calendar-bar h2 {
+  flex: 1;
+  margin: 0 8px;
+}
+.month {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  grid-auto-rows: minmax(96px, 1fr);
+  border-top: 1px solid var(--border);
+  border-left: 1px solid var(--border);
+}
+.month .weekday {
+  padding: 4px 6px;
+  font-size: 12px;
+  color: var(--ink-muted);
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.month .day {
+  min-width: 0;
+  padding: 2px 4px 4px;
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  overflow: hidden;
+}
+.month .day.other {
+  background: var(--surface-muted);
+  color: var(--ink-muted);
+}
+.day-number {
+  min-height: 0;
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+}
+.day.today .day-number {
+  background: var(--action);
+  color: var(--on-action);
+}
+.calendar ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.calendar button.event {
+  display: flex;
+  gap: 4px;
+  width: 100%;
+  min-height: 0;
+  margin-top: 2px;
+  padding: 1px 4px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font-size: 12px;
+  font-weight: normal;
+  text-align: left;
+  white-space: nowrap;
+}
+.calendar button.event.all-day {
+  background: var(--selected);
+}
+.event-time {
+  color: var(--ink-muted);
+}
+.event-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.agenda {
+  display: none;
+}
+.agenda-day h3 {
+  margin: 12px 0 4px;
+}
+.agenda .event {
+  font-size: 14px;
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--border);
+}
+.dialog.event-dialog {
+  padding: 0;
+  gap: 0;
+}
+.dialog label.check {
+  display: flex;
+  gap: 8px;
+  padding-left: 96px;
+}
+.when {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.event-dialog textarea {
+  min-height: 80px;
+}
+.link-button {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--control-height);
+  padding: 4px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  color: inherit;
+  text-decoration: none;
+}
+@media (max-width: 760px) {
+  .month {
+    display: none;
+  }
+  .agenda {
+    display: block;
+  }
+  .dialog.event-dialog {
+    inset: 0;
+    width: auto;
+    max-height: none;
+    border: 0;
+    border-radius: 0;
+  }
+  .dialog label.check {
+    padding-left: 0;
+  }
+}

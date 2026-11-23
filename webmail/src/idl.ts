@@ -155,6 +155,30 @@ export const idlFactory: IDL.InterfaceFactory = ({ IDL }) => {
     domain: IDL.Text,
     bridge: IDL.Opt(IDL.Principal),
   })
+  const CalendarEvent = IDL.Record({
+    uid: IDL.Text,
+    vevent: IDL.Text,
+    starts: IDL.Nat64,
+    ends: IDL.Nat64,
+    modified_ns: IDL.Nat64,
+  })
+  const EventPage = IDL.Record({
+    items: IDL.Vec(CalendarEvent),
+    cursor: IDL.Opt(IDL.Nat64),
+  })
+  const EventWindow = IDL.Record({
+    from: IDL.Nat64,
+    to: IDL.Nat64,
+    cursor: IDL.Opt(IDL.Nat64),
+    limit: IDL.Nat64,
+  })
+  const EventRequest = IDL.Record({
+    uid: IDL.Text,
+    vevent: IDL.Text,
+    starts: IDL.Nat64,
+    ends: IDL.Nat64,
+    vtimezones: IDL.Vec(IDL.Record({ tzid: IDL.Text, block: IDL.Text })),
+  })
 
   return IDL.Service({
     // Each mail_ method but mail_me names its mailbox first
@@ -209,6 +233,12 @@ export const idlFactory: IDL.InterfaceFactory = ({ IDL }) => {
       [ExportChunk],
       ['query']
     ),
+    mail_cal_list: IDL.Func([IDL.Text, EventWindow], [EventPage], ['query']),
+    mail_cal_put: IDL.Func([IDL.Text, EventRequest], [], []),
+    mail_cal_delete: IDL.Func([IDL.Text, IDL.Text], [IDL.Bool], []),
+    mail_cal_feed: IDL.Func([IDL.Text], [IDL.Opt(IDL.Text)], ['query']),
+    mail_cal_feed_reset: IDL.Func([IDL.Text], [IDL.Text], []),
+    mail_cal_feed_stop: IDL.Func([IDL.Text], [], []),
     admin_set_domain: IDL.Func([IDL.Text], [], []),
     admin_set_bridge: IDL.Func([IDL.Principal], [], []),
     admin_settings: IDL.Func([], [Settings], ['query']),

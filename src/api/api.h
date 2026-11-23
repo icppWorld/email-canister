@@ -72,6 +72,19 @@ void mail_export_thaw()
     WASM_SYMBOL_EXPORTED("canister_update mail_export_thaw");
 void mail_export_chunk()
     WASM_SYMBOL_EXPORTED("canister_query mail_export_chunk");
+void mail_cal_list() WASM_SYMBOL_EXPORTED("canister_query mail_cal_list");
+void mail_cal_put() WASM_SYMBOL_EXPORTED("canister_update mail_cal_put");
+void mail_cal_delete() WASM_SYMBOL_EXPORTED("canister_update mail_cal_delete");
+void mail_cal_feed() WASM_SYMBOL_EXPORTED("canister_query mail_cal_feed");
+void mail_cal_feed_reset()
+    WASM_SYMBOL_EXPORTED("canister_update mail_cal_feed_reset");
+void mail_cal_feed_stop()
+    WASM_SYMBOL_EXPORTED("canister_update mail_cal_feed_stop");
+
+// The calendar feed, for anyone who has its address
+void http_request() WASM_SYMBOL_EXPORTED("canister_query http_request");
+void http_request_update()
+    WASM_SYMBOL_EXPORTED("canister_update http_request_update");
 
 #ifdef EMAIL_CANISTER_TEST_HOOKS
 void dev_pause() WASM_SYMBOL_EXPORTED("canister_update dev_pause");

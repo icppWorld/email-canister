@@ -177,6 +177,17 @@ export function jsonSize(text: string): number {
   return size
 }
 
+// A calendar event as the backend keeps it: a VEVENT block (see ical.ts),
+// and the span it covers in UTC seconds
+export type CalendarEvent = {
+  uid: string
+  vevent: string
+  starts: bigint
+  ends: bigint
+  modified_ns: bigint
+}
+export type EventPage = { items: CalendarEvent[]; cursor: [] | [bigint] }
+
 // The methods of one mailbox, as the backend has them after the mailbox's
 // local part
 export type Mailbox = {
@@ -229,6 +240,28 @@ export type Mailbox = {
     offset: bigint
     length: bigint
   }): Promise<ExportChunk>
+  // The events that overlap [from, to), in UTC seconds
+  mail_cal_list(request: {
+    from: bigint
+    to: bigint
+    cursor: [] | [bigint]
+    limit: bigint
+  }): Promise<EventPage>
+  // Adds or replaces the event with this uid
+  mail_cal_put(request: {
+    uid: string
+    vevent: string
+    starts: bigint
+    ends: bigint
+    vtimezones: { tzid: string; block: string }[]
+  }): Promise<void>
+  // Whether there was such an event
+  mail_cal_delete(uid: string): Promise<boolean>
+  // The token of the calendar's secret address, while it is shared
+  mail_cal_feed(): Promise<[] | [string]>
+  // A new secret address; the old one stops working
+  mail_cal_feed_reset(): Promise<string>
+  mail_cal_feed_stop(): Promise<void>
 }
 
 // Each Mailbox method with the mailbox's local part as its first argument

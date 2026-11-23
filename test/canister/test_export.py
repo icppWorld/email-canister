@@ -153,6 +153,14 @@ def test__nothing_changes_the_file_while_it_is_downloaded() -> None:
             '(record { client_id = "c"; to = vec { "x@y.example" }; cc = vec {}; '
             'bcc = vec {}; subject = "s"; html_body = "b"; attachments = vec {} })',
         ),
+        (
+            "mail_cal_put",
+            '(record { uid = "x"; vevent = "BEGIN:VEVENT\\r\\nUID:x\\r\\n'
+            'END:VEVENT"; starts = 0 : nat64; ends = 0 : nat64; vtimezones = vec {} })',
+        ),
+        ("mail_cal_delete", '("x")'),
+        ("mail_cal_feed_reset", "()"),
+        ("mail_cal_feed_stop", "()"),
     ]:
         assert "downloading:" in mail(method, "alice", argument, USER_A), method
 
