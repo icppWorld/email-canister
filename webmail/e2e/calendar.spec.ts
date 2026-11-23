@@ -967,3 +967,110 @@ test('a change that fails shows in its dialog, which stays open', async ({
   await alice.mail_cal_feed_stop('alice')
   await context.close()
 })
+
+test('zones are read in any case, and every zone named is in the feed', async ({
+  browser,
+}) => {
+  await putRaw(
+    'lower-zone',
+    [
+      'DTSTAMP:20260101T000000Z',
+      `DTSTART;tzid=America/New_York:${ymd(0, 4)}T090000`,
+      `DTEND;tzid=America/New_York:${ymd(0, 4)}T100000`,
+      'RRULE:FREQ=DAILY;COUNT=3',
+      `EXDATE;tzid=America/New_York:${ymd(0, 5)}T090000`,
+      'SUMMARY:Lower zone',
+    ],
+    new Date(now.getFullYear(), now.getMonth(), 4),
+    new Date(now.getFullYear(), now.getMonth(), 7)
+  )
+  const { context, page } = await signedIn(browser, USER_A)
+  await openCalendar(page)
+  await month(page)
+    .getByRole('button', { name: /Lower zone/ })
+    .first()
+    .click()
+  // Read in its own zone, not as a floating time
+  await expect(dialog(page).getByLabel('Time zone')).toHaveValue(
+    'America/New_York'
+  )
+  await expect(dialog(page).getByLabel('Start time')).toHaveValue('09:00')
+  // Moved to UTC, the skipped date keeps naming New York
+  await dialog(page).getByLabel('Time zone').selectOption('UTC')
+  await dialog(page).getByRole('button', { name: 'Save' }).click()
+  await expect(dialog(page)).toBeHidden()
+
+  const alice = await asAlice()
+  const token = await alice.mail_cal_feed_reset('alice')
+  const { port } = new URL(env.url)
+  const feed = await fetchFeed(
+    page,
+    `http://${env.backend}.localhost:${port}/cal/${token}.ics`
+  )
+  expect(feed.body).toMatch(/EXDATE;TZID=America\/New_York/i)
+  const calendar = new ICAL.Component(ICAL.parse(feed.body))
+  expect(
+    calendar
+      .getAllSubcomponents('vtimezone')
+      .map((z) => z.getFirstPropertyValue('tzid'))
+  ).toContain('America/New_York')
+  await alice.mail_cal_feed_stop('alice')
+  await context.close()
+})
+
+test('a very long or very sparse repeat neither stalls the month nor a save', async ({
+  browser,
+}) => {
+  await putRaw(
+    'million',
+    [
+      'DTSTAMP:20260101T000000Z',
+      `DTSTART:${ymd(0, 2)}T120000Z`,
+      `DTEND:${ymd(0, 2)}T130000Z`,
+      'RRULE:FREQ=DAILY;COUNT=1000000',
+      'SUMMARY:Million',
+    ],
+    new Date(now.getFullYear(), now.getMonth(), 2),
+    new Date(9999, 0, 1)
+  )
+  await putRaw(
+    'sparse',
+    [
+      'DTSTAMP:20260101T000000Z',
+      `DTSTART:${ymd(0, 6)}T120000Z`,
+      `DTEND:${ymd(0, 6)}T130000Z`,
+      'RRULE:FREQ=DAILY;INTERVAL=2147483647',
+      'SUMMARY:Sparse',
+    ],
+    new Date(now.getFullYear(), now.getMonth(), 6),
+    new Date(9999, 0, 1)
+  )
+  const { context, page } = await signedIn(browser, USER_A)
+  await openCalendar(page)
+  // The sparse one shows once, and opens read-only
+  const sparse = month(page).getByRole('button', { name: /Sparse/ })
+  await expect(sparse).toHaveCount(1)
+  await sparse.click()
+  await expect(dialog(page)).toContainText('can be deleted here, not changed')
+  await dialog(page).getByRole('button', { name: 'Close' }).click()
+
+  // The long one saves at once, and counts as having no end
+  await month(page)
+    .getByRole('button', { name: /Million/ })
+    .first()
+    .click()
+  await dialog(page).getByLabel('Title').fill('Million renamed')
+  await dialog(page).getByRole('button', { name: 'Save' }).click()
+  await expect(dialog(page)).toBeHidden()
+  const alice = await asAlice()
+  const all = await alice.mail_cal_list('alice', {
+    from: 0n,
+    to: 253_402_300_799n,
+    cursor: [],
+    limit: 10n,
+  })
+  const saved = all.items.find((e) => e.uid === 'million')
+  expect(saved?.vevent).toContain('SUMMARY:Million renamed')
+  expect(saved?.ends).toBe(253_402_300_799n)
+  await context.close()
+})

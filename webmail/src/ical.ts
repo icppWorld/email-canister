@@ -267,28 +267,64 @@ export function buildEvent(f: EventFields): EventRequest {
     vevent: event.toString(),
     starts,
     ends,
-    vtimezones: zoneData ? [zoneData] : [],
+    // Every zone the event names, kept properties such as a skipped date's
+    // included, so that the feed defines each one
+    vtimezones: [...zonesNamed(event)]
+      .map(zoneBlock)
+      .filter((z): z is ZoneBlock => z !== null),
   }
+}
+
+// The zones an event's properties name, read as a parser reads them: in any
+// case, and across a folded line
+function zonesNamed(component: ICAL.Component): Set<string> {
+  const found = new Set<string>()
+  for (const property of component.getAllProperties()) {
+    const tzid = property.getParameter('tzid')
+    if (typeof tzid === 'string') found.add(tzid)
+  }
+  for (const sub of component.getAllSubcomponents())
+    for (const tzid of zonesNamed(sub)) found.add(tzid)
+  return found
 }
 
 function parseEvent(vevent: string): ICAL.Event | null {
   try {
-    // Its zone first, so that its times read in it
-    for (const named of vevent.matchAll(/;TZID="?([^":;]+)"?[:;]/g))
-      zoneOf(named[1])
     const calendar = new ICAL.Component(
       ICAL.parse(`BEGIN:VCALENDAR\r\n${vevent}\r\nEND:VCALENDAR`)
     )
     const component = calendar.getFirstSubcomponent('vevent')
-    return component ? new ICAL.Event(component) : null
+    if (!component) return null
+    // Its zones before its times are read, so that they read in them
+    for (const tzid of zonesNamed(component)) zoneOf(tzid)
+    return new ICAL.Event(component)
   } catch {
     return null
   }
 }
 
-// The start of a counted repeat's last occurrence: the form writes only
-// daily to yearly rules, whose count is reached in that many steps
+// The most steps a repeat may take, and the longest gap between two of its
+// times: ical.js steps through each day of a gap
+const MAX_STEPS = 1000
+const MAX_INTERVAL = 1000
+
+// A rule ical.js expands safely, and soon: with BY parts, such as a weekday a
+// daily repeat never reaches, its iterator can search for ever, an hourly one
+// would take too many steps to reach the window, and a long gap takes as
+// many steps as its days
+function boundedRule(rule: ICAL.Recur): boolean {
+  return (
+    REPEATS.includes(rule.freq) &&
+    Object.keys(rule.parts).length === 0 &&
+    (rule.interval ?? 1) <= MAX_INTERVAL
+  )
+}
+
+// The start of a counted repeat's last occurrence, or null for a count too
+// long to step through, which then counts as no end
 function lastStart(event: ICAL.Component, count: number): ICAL.Time | null {
+  const rule = event.getFirstPropertyValue('rrule') as ICAL.Recur | null
+  if (!rule || !boundedRule(rule) || count > MAX_STEPS) return null
   const iterator = new ICAL.Event(event).iterator()
   let last: ICAL.Time | null = null
   for (let i = 0; i < count; ++i) {
@@ -312,7 +348,7 @@ function fieldsOf(event: ICAL.Event): EventFields {
   // Zones named anywhere but on the start, such as an end or a skipped date
   // in another zone
   const startZone = component.getFirstProperty('dtstart')?.getParameter('tzid')
-  const zones = [...component.toString().matchAll(/;TZID="?([^":;]+)"?[:;]/g)]
+  const zones = [...zonesNamed(component)]
   const lastUntil = rule?.until?.clone()
   const untilAt =
     lastUntil && !lastUntil.isDate && start.zone
@@ -330,12 +366,11 @@ function fieldsOf(event: ICAL.Event): EventFields {
   const readOnly =
     component.hasProperty('rdate') ||
     component.getAllProperties('rrule').length > 1 ||
-    (rule !== null &&
-      (!REPEATS.includes(rule.freq) || Object.keys(rule.parts).length > 0)) ||
+    (rule !== null && !boundedRule(rule)) ||
     !untilShown ||
     start.second !== 0 ||
     (!allDay && (event.endDate ?? start).second !== 0) ||
-    zones.some((z) => z[1] !== startZone)
+    zones.some((z) => z !== startZone)
   const repeat = (rule?.freq ?? '') as Repeat
   let until = ''
   if (rule?.until) {
@@ -382,16 +417,13 @@ function fieldsOf(event: ICAL.Event): EventFields {
   }
 }
 
-// A repeat ical.js expands safely, and soon: with BY parts, such as a
-// weekday a daily repeat never reaches, its iterator can search for ever, and
-// an hourly one would take too many steps to reach the window
+// A repeat the month view expands; any other shows once, at its start
 function safeRepeat(event: ICAL.Event): boolean {
-  // Extra dates may be periods, which the loop does not read: shown once
+  // Extra dates may be periods, which the loop does not read
   if (event.component.hasProperty('rdate')) return false
-  return event.component.getAllProperties('rrule').every((p) => {
-    const rule = p.getFirstValue() as ICAL.Recur
-    return REPEATS.includes(rule.freq) && Object.keys(rule.parts).length === 0
-  })
+  return event.component
+    .getAllProperties('rrule')
+    .every((p) => boundedRule(p.getFirstValue() as ICAL.Recur))
 }
 
 // A local Date at the time, or at local midnight of an all-day date
