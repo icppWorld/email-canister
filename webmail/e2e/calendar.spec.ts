@@ -858,9 +858,24 @@ test('a new address made while the dialog was closed shows when it opens again',
     })
     .click()
   await page.keyboard.press('Escape')
+  // The reopened dialog's load answers only after the renewal: it read the
+  // old address, which must not replace the new one
+  let releaseLoad = () => {}
+  const loadGate = new Promise<void>((resolve) => (releaseLoad = resolve))
+  let answered = 0
+  await page.route(/\/api\/v\d\/canister\/[^/]+\/query$/, async (route) => {
+    const response = await route.fetch()
+    await loadGate
+    await route.fulfill({ response })
+    answered++
+  })
   await subscribe.click()
   await expect(address).toHaveValue(old)
   release()
+  await expect(address).not.toHaveValue(old)
+  releaseLoad()
+  await expect.poll(() => answered).toBeGreaterThan(0)
+  await page.unroute(/\/api\/v\d\/canister\/[^/]+\/query$/)
   await expect(address).not.toHaveValue(old)
   const alice = await asAlice()
   const [token] = await alice.mail_cal_feed('alice')

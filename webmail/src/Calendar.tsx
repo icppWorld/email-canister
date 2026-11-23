@@ -657,7 +657,8 @@ function useFeed(backend: Mailbox) {
   // undefined while it loads, null while the calendar is not shared
   const [token, setToken] = useState<string | null | undefined>(undefined)
   const [busy, setBusy] = useState(false)
-  // Counts the changes, so that a load older than a change is ignored
+  // Counts each change's start and end, so that a load begun before or
+  // during a change is ignored
   const changes = useRef(0)
 
   const load = useCallback(async () => {
@@ -672,6 +673,7 @@ function useFeed(backend: Mailbox) {
     try {
       setToken(await work())
     } finally {
+      ++changes.current
       setBusy(false)
     }
   }
