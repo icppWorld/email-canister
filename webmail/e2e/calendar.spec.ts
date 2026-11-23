@@ -177,7 +177,7 @@ test('a calendar app subscribes at the secret address', async ({ browser }) => {
   const alice = await asAlice()
   expect(await alice.mail_cal_feed('alice')).toEqual([])
   await make.click()
-  const address = page.getByLabel('Secret address')
+  const address = page.getByLabel('Secret address', { exact: true })
   await expect(address).toHaveValue(/\/cal\/[0-9a-f]{32}\.ics$/)
   const url = await address.inputValue()
   const { port } = new URL(env.url)

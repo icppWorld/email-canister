@@ -106,11 +106,25 @@ def message(hit: Hit) -> str:
     return call("dev_message", f'("{hit[0]}", {hit[1]} : nat64)')
 
 
+BLOB_ESCAPES = {"n": b"\n", "r": b"\r", "t": b"\t", '"': b'"', "'": b"'", "\\": b"\\"}
+
+
 def blob_of(output: str, field: str) -> bytes:
-    """A blob in a reply, which icp prints as \\xx escapes"""
-    found = re.search(rf'\b{field} = blob "((?:\\[0-9a-f]{{2}})*)"', output)
+    """A blob in a reply, which icp prints as \\xx escapes, with printable
+    bytes as they are"""
+    found = re.search(rf'\b{field} = blob "((?:[^"\\]|\\.)*)"', output)
     assert found, f"no {field} in {output[:500]}"
-    return bytes.fromhex(found.group(1).replace("\\", ""))
+    out = bytearray()
+    for escape, plain in re.findall(
+        r"\\([0-9a-fA-F]{2}|[nrt\"'\\])|([^\\]+)", found.group(1)
+    ):
+        if plain:
+            out += plain.encode()
+        elif escape in BLOB_ESCAPES:
+            out += BLOB_ESCAPES[escape]
+        else:
+            out.append(int(escape, 16))
+    return bytes(out)
 
 
 def candid_blob(data: bytes) -> str:
