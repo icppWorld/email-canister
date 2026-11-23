@@ -48,11 +48,38 @@ bool plain_name(std::string_view s, size_t max, std::string_view extra) {
   return true;
 }
 
+// The block's content lines, unfolded (RFC 5545 3.1): a line that starts
+// with a space or a tab continues the one before
+std::vector<std::string> unfolded(const std::vector<std::string_view> &raw) {
+  std::vector<std::string> lines;
+  for (std::string_view line : raw) {
+    if (!lines.empty() && !line.empty() && (line[0] == ' ' || line[0] == '\t'))
+      lines.back().append(line.substr(1));
+    else lines.emplace_back(line);
+  }
+  return lines;
+}
+
+std::string upper(std::string s) {
+  for (char &c : s) {
+    if (c >= 'a' && c <= 'z') c = static_cast<char>(c - 'a' + 'A');
+  }
+  return s;
+}
+
+// The component a BEGIN or END line names, in upper case, or empty for any
+// other line. A line is read as a parser reads it: in any case, and with any
+// parameters.
+std::string component_of(const std::string &line, std::string_view keyword) {
+  const size_t colon = line.find(':');
+  if (colon == std::string::npos ||
+      upper(line.substr(0, line.find_first_of(":;"))) != keyword)
+    return "";
+  return upper(line.substr(colon + 1));
+}
+
 // The components a calendar holds, which no block may hold inside it
-const std::string_view k_outer[] = {
-    "BEGIN:VCALENDAR", "END:VCALENDAR",   "BEGIN:VEVENT",
-    "END:VEVENT",      "BEGIN:VTIMEZONE", "END:VTIMEZONE",
-};
+const std::string_view k_outer[] = {"VCALENDAR", "VEVENT", "VTIMEZONE"};
 
 // Why `block` is not one `component` that has the property line `id_line`,
 // or empty. It may hold subcomponents, such as a VALARM.
@@ -61,17 +88,21 @@ std::string invalid_block(std::string_view block, std::string_view component,
   if (block.size() > k_max_event_bytes) return "the block is too large";
   if (!clean_lines(block))
     return "lines must end in CRLF, with no other control characters";
-  const std::string begin = "BEGIN:" + std::string(component);
-  const std::string end = "END:" + std::string(component);
-  const std::vector<std::string_view> lines = lines_of(block);
-  if (lines.size() < 3 || lines.front() != begin || lines.back() != end)
+  // The first and last lines exactly as the webmail writes them, unfolded
+  const std::vector<std::string_view> raw = lines_of(block);
+  const std::vector<std::string> lines = unfolded(raw);
+  if (lines.size() < 3 || lines.front() != "BEGIN:" + std::string(component) ||
+      lines.back() != "END:" + std::string(component) ||
+      raw.back() != lines.back())
     return "the block must be one " + std::string(component);
   bool has_id = false;
   for (size_t i = 1; i + 1 < lines.size(); ++i) {
-    for (std::string_view outer : k_outer) {
-      if (lines[i] == outer)
-        return "the block holds another " +
-               std::string(outer.substr(outer.find(':') + 1));
+    for (std::string_view keyword : {"BEGIN", "END"}) {
+      const std::string named = component_of(lines[i], keyword);
+      for (std::string_view outer : k_outer) {
+        if (named == outer)
+          return "the block holds another " + std::string(outer);
+      }
     }
     if (lines[i] == id_line) has_id = true;
   }
@@ -254,10 +285,9 @@ std::optional<std::string> feed_token(int64_t mailbox) {
 
 bool set_feed_token(int64_t mailbox, const std::string &token) {
   db::Transaction write(db::control());
-  db::Stmt clear(db::control(), "DELETE FROM feeds WHERE mailbox_id = ?");
   db::Stmt add(db::control(),
                "INSERT INTO feeds(mailbox_id, token) VALUES(?, ?)");
-  return write && clear && add && clear.integer(1, mailbox).done() &&
+  return write && add && stop_feed(mailbox) &&
          (token.empty() || add.integer(1, mailbox).text(2, token).done()) &&
          write.commit();
 }

@@ -7,7 +7,7 @@ import { expect, type Page, test } from '@playwright/test'
 import ICAL from 'ical.js'
 
 import { env } from './local'
-import { asAlice, freshBackend, signedIn, USER_A } from './support'
+import { answer, asAlice, freshBackend, signedIn, USER_A } from './support'
 
 test.describe.configure({ mode: 'serial' })
 
@@ -68,6 +68,8 @@ test('events are added, shown, changed and deleted', async ({ browser }) => {
     await dialog(p).getByLabel('Start time').fill('09:30')
     await dialog(p).getByLabel('End time').fill('11:00')
     await dialog(p).getByLabel('Location').fill('The club')
+    // A soft line break pasted from a word processor is a control character
+    await dialog(p).getByLabel('Notes').fill('Bring\u000bclubs')
   })
   const tee = month(page).getByRole('button', { name: /Tee time/ })
   await expect(tee).toHaveCount(1)
@@ -83,6 +85,7 @@ test('events are added, shown, changed and deleted', async ({ browser }) => {
   expect(stored.items).toHaveLength(1)
   expect(stored.items[0].vevent).toContain('SUMMARY:Tee time')
   expect(stored.items[0].vevent).toContain('LOCATION:The club')
+  expect(stored.items[0].vevent).toContain('DESCRIPTION:Bring clubs')
 
   // Changed: the same event, with a new title and a higher sequence
   await tee.click()
@@ -155,11 +158,20 @@ test('a repeat and an all-day event show on their days', async ({
 
 test('a calendar app subscribes at the secret address', async ({ browser }) => {
   const { context, page } = await signedIn(browser, USER_A)
+  // Sharing is asked first, once declined; then each change is confirmed
+  const asked = answer(page, false, true, true, true)
   await openCalendar(page)
   await page
     .getByRole('button', { name: 'Subscribe from a calendar app' })
     .click()
-  await page.getByRole('button', { name: 'Make a secret address' }).click()
+  const make = page.getByRole('button', { name: 'Make a secret address' })
+  await make.click()
+  await expect.poll(() => asked.length).toBe(1)
+  expect(asked[0]).toContain('Anyone who has the secret address')
+  await expect(make).toBeVisible()
+  const alice = await asAlice()
+  expect(await alice.mail_cal_feed('alice')).toEqual([])
+  await make.click()
   const address = page.getByLabel('Secret address')
   await expect(address).toHaveValue(/\/cal\/[0-9a-f]{32}\.ics$/)
   const url = await address.inputValue()
@@ -205,5 +217,24 @@ test('a calendar app subscribes at the secret address', async ({ browser }) => {
     page.getByRole('button', { name: 'Make a secret address' })
   ).toBeVisible()
   expect((await fetchFeed(page, renewed)).status).not.toBe(200)
+  expect(asked).toHaveLength(4)
+  await context.close()
+})
+
+test('a calendar that cannot load leaves the webmail working', async ({
+  browser,
+}) => {
+  const { context, page } = await signedIn(browser, USER_A)
+  // As when a new release has replaced the old build's files
+  await page.route(/\/Calendar-[^/]*\.js$/, (route) => route.abort())
+  await page.getByRole('button', { name: 'Calendar', exact: true }).click()
+  await expect(page.getByRole('alert')).toHaveText(
+    'The calendar could not load. Reload the webmail to try again.'
+  )
+  await expect(
+    page.getByRole('button', { name: 'Reload the webmail' })
+  ).toBeVisible()
+  await page.getByRole('button', { name: 'Inbox', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Compose' })).toBeVisible()
   await context.close()
 })

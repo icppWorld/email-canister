@@ -879,6 +879,7 @@ test('every button is an icon, with its name as its tooltip', async ({
   await page
     .getByRole('button', { name: 'Subscribe from a calendar app' })
     .click()
+  answer(page, true)
   await page.getByRole('button', { name: 'Make a secret address' }).click()
   await expect(page.getByLabel('Secret address')).toHaveValue(/\.ics$/)
   await allIcons('the calendar address')

@@ -31,10 +31,32 @@ import {
 } from './Toast'
 import { reload, setUnsaved, VERSION } from './Update'
 
-// The calendar and its libraries load only when it is opened
+// The calendar and its libraries load only when it is opened. When they
+// cannot load, as after a new release replaced them, the calendar says so and
+// the rest of the webmail stays.
 const Calendar = lazy(() =>
-  import('./Calendar').then((m) => ({ default: m.Calendar }))
+  import('./Calendar').then(
+    (m) => ({ default: m.Calendar }),
+    () => ({ default: CalendarUnavailable })
+  )
 )
+
+function CalendarUnavailable() {
+  return (
+    <div className="calendar">
+      <p className="error" role="alert">
+        The calendar could not load. Reload the webmail to try again.
+      </p>
+      <div className="toolbar">
+        <IconButton
+          label="Reload the webmail"
+          icon="refresh"
+          onClick={reload}
+        />
+      </div>
+    </div>
+  )
+}
 
 // A mailbox's folders and pages, each with an address of its own
 const PAGES = {

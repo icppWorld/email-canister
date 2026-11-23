@@ -144,6 +144,16 @@ export function invalidFields(f: EventFields): string {
   return ''
 }
 
+// Text as the backend takes it: no control characters but line breaks, which
+// iCalendar escapes, in notes; none at all in a one-line field
+// eslint-disable-next-line no-control-regex -- control characters are the point
+const CONTROLS = /[\u0000-\u001f\u007f]+/g
+// eslint-disable-next-line no-control-regex -- the same, but a line break
+const CONTROLS_BUT_LF = /[\u0000-\u0009\u000b-\u001f\u007f]+/g
+const oneLine = (s: string) => s.replace(CONTROLS, ' ').trim()
+const multiLine = (s: string) =>
+  s.replace(/\r\n?/g, '\n').replace(CONTROLS_BUT_LF, ' ').trim()
+
 function utcStamp(): ICAL.Time {
   return ICAL.Time.fromJSDate(new Date(), true)
 }
@@ -170,10 +180,11 @@ export function buildEvent(f: EventFields): EventRequest {
     dtstart.setParameter('tzid', zoneData.tzid)
     dtend.setParameter('tzid', zoneData.tzid)
   }
-  event.addPropertyWithValue('summary', f.title.trim())
-  if (f.location.trim())
-    event.addPropertyWithValue('location', f.location.trim())
-  if (f.notes.trim()) event.addPropertyWithValue('description', f.notes.trim())
+  event.addPropertyWithValue('summary', oneLine(f.title))
+  if (oneLine(f.location))
+    event.addPropertyWithValue('location', oneLine(f.location))
+  if (multiLine(f.notes))
+    event.addPropertyWithValue('description', multiLine(f.notes))
 
   let ends: bigint
   if (f.repeat) {
@@ -189,13 +200,12 @@ export function buildEvent(f: EventFields): EventRequest {
     }
     event.addPropertyWithValue('rrule', ICAL.Recur.fromData(rule))
     // The last occurrence starts on the until day at the latest
-    const afterLast = startOf(
-      { ...f, startDate: addDays(f.until, 1), startTime: '00:00' },
-      zone
-    )
     ends = f.until
       ? BigInt(
-          afterLast.toUnixTime() +
+          startOf(
+            { ...f, startDate: addDays(f.until, 1), startTime: '00:00' },
+            zone
+          ).toUnixTime() +
             (end.toUnixTime() - start.toUnixTime()) +
             DAY_MARGIN
         )

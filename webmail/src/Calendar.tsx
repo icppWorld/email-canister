@@ -136,7 +136,8 @@ export function Calendar({
     try {
       const found: CalendarEvent[] = []
       let cursor: [] | [bigint] = []
-      for (let pages = 0; pages < 50; ++pages) {
+      // Every page, however many: the backend's caps bound them
+      for (;;) {
         const page = await backend.mail_cal_list({
           from: seconds(grid.start),
           to: seconds(grid.end),
@@ -645,7 +646,14 @@ function SubscribeDialog({
                 label="Make a secret address"
                 icon="link"
                 disabled={busy}
-                onClick={() => act(() => backend.mail_cal_feed_reset())}
+                onClick={() => {
+                  if (
+                    window.confirm(
+                      `Share ${address}'s calendar? Anyone who has the secret address sees every event in it.`
+                    )
+                  )
+                    act(() => backend.mail_cal_feed_reset())
+                }}
               />
             </div>
           </>
@@ -675,29 +683,42 @@ function SubscribeDialog({
                   }
                 }}
               />
-              <a
-                className="link-button"
-                href={url.replace(/^https?:/, 'webcal:')}
-              >
-                Open in a calendar app
-              </a>
+              <IconButton
+                label="Open in a calendar app"
+                icon="calendar"
+                onClick={() => {
+                  window.location.href = url.replace(/^https?:/, 'webcal:')
+                }}
+              />
               <IconButton
                 label="New secret address: the old one stops working"
                 icon="refresh"
                 disabled={busy}
-                onClick={() => act(() => backend.mail_cal_feed_reset())}
+                onClick={() => {
+                  if (
+                    window.confirm(
+                      'Make a new secret address? Calendar apps subscribed to the old one stop getting this calendar.'
+                    )
+                  )
+                    act(() => backend.mail_cal_feed_reset())
+                }}
               />
               <IconButton
                 variant="danger"
                 label="Stop sharing: the address stops working"
                 icon="close"
                 disabled={busy}
-                onClick={() =>
-                  act(async () => {
-                    await backend.mail_cal_feed_stop()
-                    return null
-                  })
-                }
+                onClick={() => {
+                  if (
+                    window.confirm(
+                      'Stop sharing this calendar? Calendar apps subscribed to it stop getting it.'
+                    )
+                  )
+                    act(async () => {
+                      await backend.mail_cal_feed_stop()
+                      return null
+                    })
+                }}
               />
             </div>
             <p className="hint">

@@ -232,6 +232,11 @@ def test__a_long_list_comes_in_pages() -> None:
         ("a", vevent("a", extra="END:VEVENT\r\nBEGIN:VEVENT"), "another VEVENT"),
         ("a", vevent("a", "x\x07"), "CRLF"),
         ("a", vevent("a", "x" * 17_000), "too large"),
+        # A parser unfolds lines and reads names in any case
+        ("a", vevent("a", extra="END:VEV\r\n ENT\r\nBEGIN:VEVENT"), "another VEVENT"),
+        ("a", vevent("a", extra="end:vcalendar"), "another VCALENDAR"),
+        ("a", vevent("a", extra="BEGIN;X=1:VTimezone"), "another VTIMEZONE"),
+        ("a", vevent("a") + "\r\n X", "must be one VEVENT"),
     ],
 )
 def test__a_block_that_is_not_one_event_is_refused(
@@ -360,6 +365,17 @@ def test__the_feed_leaves_out_events_over_a_year_old() -> None:
         mail("mail_cal_delete", "alice", f'("{uid}")', USER_A)
 
 
+def test__a_removed_member_takes_no_address_with_them(users: Dict[str, str]) -> None:
+    assert "error" not in add_mailbox("crew", users[USER_A]).lower()
+    call("admin_add_member", f'("crew", principal "{users[USER_B]}", null)')
+    token = token_of(mail("mail_cal_feed_reset", "crew", "()", USER_B))
+    assert status(get_update(f"/cal/{token}.ics")) == 200
+    call("admin_remove_member", f'("crew", principal "{users[USER_B]}")')
+    assert status(get(f"/cal/{token}.ics")) == 404
+    assert status(get_update(f"/cal/{token}.ics")) == 404
+    assert "(null)" in mail("mail_cal_feed", "crew", "()", USER_A)
+
+
 def test__a_disabled_or_purged_mailbox_has_no_feed(users: Dict[str, str]) -> None:
     assert "error" not in add_mailbox("gone", users[USER_A]).lower()
     put("gone-1", local="gone")
@@ -368,7 +384,11 @@ def test__a_disabled_or_purged_mailbox_has_no_feed(users: Dict[str, str]) -> Non
 
     call("admin_set_disabled", '("gone", true)')
     assert status(get(f"/cal/{token}.ics")) == 404
+    # Enabled again, the mailbox has no address until a member makes one
     call("admin_set_disabled", '("gone", false)')
+    assert status(get_update(f"/cal/{token}.ics")) == 404
+    assert "(null)" in mail("mail_cal_feed", "gone", "()", USER_A)
+    token = token_of(mail("mail_cal_feed_reset", "gone", "()", USER_A))
     assert "UID:gone-1" in feed(token)
 
     purge("gone")
