@@ -938,18 +938,16 @@ test('a save or a stop that fails after its dialog closed shows on the calendar'
   const { context, page } = await signedIn(browser, USER_A)
   answer(page, true, true)
   await openCalendar(page)
-  // The next update call waits, then fails as a lost connection
+  // Update calls wait, then fail as a lost connection, retries included,
+  // until the route is taken away
+  const calls = /\/api\/v\d\/canister\/[^/]+\/call$/
   const failNext = async () => {
     let release = () => {}
     const gate = new Promise<void>((resolve) => (release = resolve))
-    await page.route(
-      /\/api\/v\d\/canister\/[^/]+\/call$/,
-      async (route) => {
-        await gate
-        await route.abort()
-      },
-      { times: 1 }
-    )
+    await page.route(calls, async (route) => {
+      await gate
+      await route.abort()
+    })
     return () => release()
   }
 
@@ -963,6 +961,7 @@ test('a save or a stop that fails after its dialog closed shows on the calendar'
   await expect(calendar.getByRole('alert')).toContainText(
     'The event was not changed'
   )
+  await page.unroute(calls)
   await expect(
     month(page).getByRole('button', { name: /Never saved/ })
   ).toHaveCount(0)
@@ -984,6 +983,7 @@ test('a save or a stop that fails after its dialog closed shows on the calendar'
   await expect(calendar.getByRole('alert')).toContainText(
     'The secret address was not changed'
   )
+  await page.unroute(calls)
   const alice = await asAlice()
   expect(await alice.mail_cal_feed('alice')).toHaveLength(1)
   await alice.mail_cal_feed_stop('alice')
