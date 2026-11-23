@@ -141,6 +141,7 @@ export function Calendar({
   const shown = useRef(editing)
   shown.current = editing
   const [sharing, setSharing] = useState(false)
+  const feed = useFeed(backend)
   // Raised after a change, so that the month shown then loads again
   const [changes, setChanges] = useState(0)
   const grid = useMemo(() => gridOf(month), [month])
@@ -337,6 +338,7 @@ export function Calendar({
       )}
       {sharing && (
         <SubscribeDialog
+          feed={feed}
           backend={backend}
           address={address}
           onClose={() => setSharing(false)}
@@ -649,41 +651,63 @@ function EventDialog({
   )
 }
 
+// The secret address's token, kept by the calendar rather than its dialog,
+// so that a change still running when the dialog closes reaches the next one
+function useFeed(backend: Mailbox) {
+  // undefined while it loads, null while the calendar is not shared
+  const [token, setToken] = useState<string | null | undefined>(undefined)
+  const [busy, setBusy] = useState(false)
+  // Counts the changes, so that a load older than a change is ignored
+  const changes = useRef(0)
+
+  const load = useCallback(async () => {
+    const seen = changes.current
+    const found = await backend.mail_cal_feed()
+    if (changes.current === seen) setToken(found[0] ?? null)
+  }, [backend])
+
+  const change = async (work: () => Promise<string | null>) => {
+    ++changes.current
+    setBusy(true)
+    try {
+      setToken(await work())
+    } finally {
+      setBusy(false)
+    }
+  }
+  return { token, busy, load, change }
+}
+
+type Feed = ReturnType<typeof useFeed>
+
 function SubscribeDialog({
+  feed,
   backend,
   address,
   onClose,
 }: {
+  feed: Feed
   backend: Mailbox
   address: string
   onClose: () => void
 }) {
-  // undefined while it loads, null while the calendar is not shared
-  const [token, setToken] = useState<string | null | undefined>(undefined)
-  const [busy, setBusy] = useState(false)
+  const { token, busy, load } = feed
   const [error, setError] = useState('')
   const [copied, setCopied] = useState(false)
 
   useEffect(() => {
     let current = true
-    backend
-      .mail_cal_feed()
-      .then((found) => {
-        if (current) setToken(found[0] ?? null)
-      })
-      .catch((e: unknown) => {
-        if (current) setError(errorText(e))
-      })
+    load().catch((e: unknown) => {
+      if (current) setError(errorText(e))
+    })
     return () => {
       current = false
     }
-  }, [backend])
+  }, [load])
 
   const act = async (work: () => Promise<string | null>) => {
-    setBusy(true)
     setCopied(false)
-    await attempt(async () => setToken(await work()), setError)
-    setBusy(false)
+    await attempt(() => feed.change(work), setError)
   }
 
   const { backend: canister, network } = deployment()

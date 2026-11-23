@@ -828,3 +828,43 @@ test('the form holds its fields while it saves', async ({ browser }) => {
   await expect(month(page).getByRole('button', { name: /Held/ })).toHaveCount(1)
   await context.close()
 })
+
+test('a new address made while the dialog was closed shows when it opens again', async ({
+  browser,
+}) => {
+  const { context, page } = await signedIn(browser, USER_A)
+  answer(page, true, true)
+  await openCalendar(page)
+  const subscribe = page.getByRole('button', {
+    name: 'Subscribe from a calendar app',
+  })
+  await subscribe.click()
+  await page.getByRole('button', { name: 'Make a secret address' }).click()
+  const address = page.getByLabel('Secret address', { exact: true })
+  await expect(address).toHaveValue(/\.ics$/)
+  const old = await address.inputValue()
+
+  // The renewal waits until the dialog has closed and opened again
+  let release = () => {}
+  const gate = new Promise<void>((resolve) => (release = resolve))
+  let held = 0
+  await page.route(/\/api\/v\d\/canister\/[^/]+\/call$/, async (route) => {
+    if (held++ === 0) await gate
+    await route.continue()
+  })
+  await page
+    .getByRole('button', {
+      name: 'New secret address: the old one stops working',
+    })
+    .click()
+  await page.keyboard.press('Escape')
+  await subscribe.click()
+  await expect(address).toHaveValue(old)
+  release()
+  await expect(address).not.toHaveValue(old)
+  const alice = await asAlice()
+  const [token] = await alice.mail_cal_feed('alice')
+  expect(await address.inputValue()).toContain(String(token))
+  await alice.mail_cal_feed_stop('alice')
+  await context.close()
+})
