@@ -31,6 +31,10 @@ export type Draft = {
 
 type HtmlMessage = { name: string; body: string }
 
+// The message is refused when larger than this; an HTML file is checked by its
+// size before it is read, so a far larger one is never read or shown
+const TOO_LARGE = `This message is too large to send. Attachments can total about 1.4 MB.`
+
 // At phone width the window always fills the screen
 type Size = 'normal' | 'minimised' | 'full'
 
@@ -86,14 +90,21 @@ export function Compose({
 
   const listed = mailboxes.some((m) => m.local === from)
   const htmlBody = html ? html.body : textToHtml(body)
-  // Shown the way the reader shows it, in its sandboxed frame
-  const preview = useMemo(
-    () => (html ? frameBody(html.body, []) : null),
+  // Shown the way the reader shows it, in its sandboxed frame, with its size,
+  // both worked out once: it cannot be edited, and typing in the other fields
+  // renders this again
+  const htmlView = useMemo(
+    () =>
+      html && {
+        name: html.name,
+        framed: frameBody(html.body, []),
+        bytes: new TextEncoder().encode(html.body).length,
+      },
     [html]
   )
   const total =
     files.reduce((sum, f) => sum + encodedSize(f), 0) +
-    new TextEncoder().encode(htmlBody).length +
+    (htmlView ? htmlView.bytes : new TextEncoder().encode(htmlBody).length) +
     new TextEncoder().encode(subject).length
   const tooLarge = total > MAX_ENCODED_BYTES
 
@@ -209,10 +220,10 @@ export function Compose({
               onChange={(e) => setSubject(e.target.value)}
             />
           </label>
-          {html && preview ? (
+          {htmlView ? (
             <>
               <p className="attached hint" data-testid="html-message">
-                HTML message: {html.name}
+                HTML message: {htmlView.name}
                 <IconButton
                   variant="bare"
                   label="Use plain text instead"
@@ -220,7 +231,7 @@ export function Compose({
                   onClick={() => setHtml(undefined)}
                 />
               </p>
-              <MessageBody framed={preview} />
+              <MessageBody framed={htmlView.framed} />
             </>
           ) : (
             <textarea
@@ -235,7 +246,7 @@ export function Compose({
                 if (body !== '' || !pasted) return
                 e.preventDefault()
                 setBody(e.clipboardData.getData('text/plain'))
-                setHtml({ name: 'Pasted HTML', body: htmlMessage(pasted) })
+                setHtml({ name: 'Pasted HTML', body: pasted })
               }}
             />
           )}
@@ -250,6 +261,7 @@ export function Compose({
               // Cleared, so the same file can be picked again after an edit
               e.target.value = ''
               if (!file) return
+              if (file.size > MAX_ENCODED_BYTES) return setError(TOO_LARGE)
               try {
                 const text = await file.text()
                 setHtml({ name: file.name, body: htmlMessage(text) })
@@ -308,8 +320,7 @@ export function Compose({
           )}
           {tooLarge && (
             <p className="error" role="alert">
-              This message is too large to send. Attachments can total about 1.4
-              MB.
+              {TOO_LARGE}
             </p>
           )}
           {error && (

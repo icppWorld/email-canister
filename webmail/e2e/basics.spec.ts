@@ -24,6 +24,7 @@ import {
   reader,
   roleColour,
   send,
+  sentMessage,
   sha256,
   signedIn,
   signInAgain,
@@ -1146,24 +1147,6 @@ test('a 1.4 MB attachment survives receiving and sending, by hash', async ({
   await context.close()
 })
 
-test('refuses an oversize attachment before sending', async ({ browser }) => {
-  const { context, page } = await signedIn(browser, USER_A)
-  await page.getByRole('button', { name: 'Compose' }).click()
-  await page
-    .getByRole('dialog')
-    .getByLabel('Attachments')
-    .setInputFiles({
-      name: 'x.bin',
-      mimeType: 'application/octet-stream',
-      buffer: Buffer.alloc(1_600_000),
-    })
-  await expect(page.getByRole('alert')).toContainText('too large')
-  await expect(
-    page.getByRole('button', { name: 'Send', exact: true })
-  ).toBeDisabled()
-  await context.close()
-})
-
 test('shows an unknown outcome and warns before sending again', async ({
   browser,
 }) => {
@@ -1227,18 +1210,6 @@ test('shows mail the gateway refused, with its reason, and sends it again', asyn
   await context.close()
 })
 
-// The newest of alice's sent messages with this subject, as the canister keeps it
-async function sentHtml(subject: string): Promise<string> {
-  const alice = await asAlice()
-  const { items } = await alice.mail_outbox_list('alice', {
-    cursor: [],
-    limit: 20n,
-  })
-  const sent = items.find((item) => item.subject === subject)
-  if (!sent) throw new Error(`nothing sent as ${subject}`)
-  return (await alice.mail_outbox_get('alice', sent.id)).html_body
-}
-
 test('an HTML file is sent as the message, as it is but for its saved-from mark, after a preview', async ({
   browser,
 }) => {
@@ -1277,7 +1248,7 @@ test('an HTML file is sent as the message, as it is but for its saved-from mark,
 
   await send(page)
   await expect(dialog).toHaveCount(0)
-  expect(await sentHtml('Newsletter from a file')).toBe(
+  expect((await sentMessage('Newsletter from a file'))?.html_body).toBe(
     `<!DOCTYPE html>\n${html}`
   )
   await viewSent(page)
@@ -1333,27 +1304,44 @@ test('HTML pasted into an empty message becomes the message, its text kept for p
   await paste()
   await send(page)
   await expect(dialog).toHaveCount(0)
-  expect(await sentHtml('Pasted newsletter')).toBe('<p><b>Bold</b> news</p>')
+  expect((await sentMessage('Pasted newsletter'))?.html_body).toBe(
+    '<p><b>Bold</b> news</p>'
+  )
   await context.close()
 })
 
-test('refuses an HTML file too large to send', async ({ browser }) => {
-  const { context, page } = await signedIn(browser, USER_A)
-  await page.getByRole('button', { name: 'Compose' }).click()
-  await page
-    .getByRole('dialog')
-    .getByLabel('HTML file')
-    .setInputFiles({
-      name: 'huge.html',
-      mimeType: 'text/html',
-      buffer: Buffer.from(`<p>${'x'.repeat(2_000_000)}</p>`),
-    })
-  await expect(page.getByRole('alert')).toContainText('too large')
-  await expect(
-    page.getByRole('button', { name: 'Send', exact: true })
-  ).toBeDisabled()
-  await context.close()
-})
+// The size is checked when the file is picked, before anything is sent. An
+// attachment stops the send; an HTML file is not read, and the message stays
+// the text.
+for (const [label, name] of [
+  ['Attachments', 'x.bin'],
+  ['HTML file', 'huge.html'],
+]) {
+  test(`refuses an oversize file before sending, as ${label}`, async ({
+    browser,
+  }) => {
+    const { context, page } = await signedIn(browser, USER_A)
+    await page.getByRole('button', { name: 'Compose' }).click()
+    await page
+      .getByRole('dialog')
+      .getByLabel(label, { exact: true })
+      .setInputFiles({
+        name,
+        mimeType: 'application/octet-stream',
+        buffer: Buffer.alloc(2_000_000, 'x'),
+      })
+    await expect(page.getByRole('alert')).toContainText('too large')
+    if (label === 'Attachments')
+      await expect(
+        page.getByRole('button', { name: 'Send', exact: true })
+      ).toBeDisabled()
+    else
+      await expect(
+        page.getByRole('textbox', { name: 'Message', exact: true })
+      ).toBeVisible()
+    await context.close()
+  })
+}
 
 test('sends to every Cc and Bcc address, however they are separated', async ({
   browser,

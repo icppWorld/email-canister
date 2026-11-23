@@ -230,6 +230,18 @@ export const asAlice = () =>
     throw error
   }))
 
+// The newest of alice's sent messages with this subject, as the canister
+// keeps it, or null while none is listed
+export async function sentMessage(subject: string) {
+  const alice = await asAlice()
+  const { items } = await alice.mail_outbox_list('alice', {
+    cursor: [],
+    limit: 20n,
+  })
+  const sent = items.find((item) => item.subject === subject)
+  return sent ? alice.mail_outbox_get('alice', sent.id) : null
+}
+
 // Opens Compose with a message to friend@example.org, for the test to add to
 // and send
 export async function compose(page: Page, subject: string): Promise<void> {

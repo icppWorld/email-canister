@@ -43,6 +43,7 @@ import {
   roleColour,
   search,
   send,
+  sentMessage,
   signedIn,
   spamFromReader,
   stub,
@@ -1357,20 +1358,12 @@ test('a file picked again after an edit is sent as it is now', async ({
     window.getByRole('list', { name: 'Attached files' }).getByRole('listitem')
   ).toHaveText(['notes.txt (1 KB)'])
   await send(page)
-  const alice = await asAlice()
   await expect
-    .poll(async () => {
-      const { items } = await alice.mail_outbox_list('alice', {
-        cursor: [],
-        limit: 20n,
-      })
-      const sent = items.find((m) => m.subject === 'Repicked kestrel')
-      if (!sent) return null
-      const message = await alice.mail_outbox_get('alice', sent.id)
-      return message.attachments.map((a) =>
+    .poll(async () =>
+      (await sentMessage('Repicked kestrel'))?.attachments.map((a) =>
         Buffer.from(a.content as Uint8Array).toString()
       )
-    })
+    )
     .toEqual(['n'.repeat(100)])
   await context.close()
 })
