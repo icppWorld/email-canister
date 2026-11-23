@@ -83,6 +83,10 @@ export function Compose({
   const picker = useRef<HTMLInputElement>(null)
   // The picker for an HTML file to send as the message
   const htmlPicker = useRef<HTMLInputElement>(null)
+  // The latest HTML file picked, by number: only it may become the message,
+  // and Send waits while it is read, so it never sends the one before
+  const picks = useRef(0)
+  const [reading, setReading] = useState(false)
 
   useEffect(() => {
     onChange({ from, to, cc, bcc, subject, body, files, html, clientId })
@@ -261,13 +265,31 @@ export function Compose({
               // Cleared, so the same file can be picked again after an edit
               e.target.value = ''
               if (!file) return
-              if (file.size > MAX_ENCODED_BYTES) return setError(TOO_LARGE)
+              const pick = ++picks.current
+              if (file.size > MAX_ENCODED_BYTES) {
+                setReading(false)
+                return setError(TOO_LARGE)
+              }
+              setReading(true)
               try {
-                const text = await file.text()
+                const bytes = await file.arrayBuffer()
+                if (pick !== picks.current) return
+                // UTF-8 only, as the message is sent: another encoding would
+                // lose its accents, so it is refused rather than guessed
+                const text = new TextDecoder('utf-8', { fatal: true }).decode(
+                  bytes
+                )
                 setHtml({ name: file.name, body: htmlMessage(text) })
                 setError('')
               } catch (e) {
-                setError(`Could not read ${file.name}: ${errorText(e)}`)
+                if (pick !== picks.current) return
+                setError(
+                  e instanceof TypeError
+                    ? `${file.name} is not UTF-8. Save it as UTF-8 and pick it again.`
+                    : `Could not read ${file.name}: ${errorText(e)}`
+                )
+              } finally {
+                if (pick === picks.current) setReading(false)
               }
             }}
           />
@@ -334,7 +356,7 @@ export function Compose({
               label={sending ? 'Sending…' : 'Send'}
               icon="send"
               onClick={send}
-              disabled={sending || tooLarge}
+              disabled={sending || tooLarge || reading}
             />
             <IconButton
               label="Attach"

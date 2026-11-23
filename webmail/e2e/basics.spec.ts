@@ -1259,6 +1259,71 @@ test('an HTML file is sent as the message, as it is but for its saved-from mark,
   await context.close()
 })
 
+test('of two HTML files picked, the later one is the message, and Send waits while one is read', async ({
+  browser,
+}) => {
+  const { context, page } = await signedIn(browser, USER_A)
+  // The first file's read is held until the test lets it finish
+  await page.evaluate(() => {
+    const read = File.prototype.arrayBuffer
+    let release = () => {}
+    const held = new Promise<void>((resolve) => (release = resolve))
+    Object.assign(window, { releaseRead: release })
+    File.prototype.arrayBuffer = async function (this: File) {
+      if (this.name === 'slow.html') await held
+      return read.call(this)
+    }
+  })
+  await compose(page, 'Two files')
+  const dialog = page.getByRole('dialog', { name: 'New message' })
+  const pick = (name: string) =>
+    dialog.getByLabel('HTML file').setInputFiles({
+      name,
+      mimeType: 'text/html',
+      buffer: Buffer.from(`<p>${name}</p>`),
+    })
+  await pick('slow.html')
+  await expect(
+    dialog.getByRole('button', { name: 'Send', exact: true })
+  ).toBeDisabled()
+  await pick('fast.html')
+  await expect(dialog.getByTestId('html-message')).toHaveText(
+    'HTML message: fast.html'
+  )
+  await page.evaluate(() =>
+    (window as unknown as { releaseRead: () => void }).releaseRead()
+  )
+  await page.waitForTimeout(300)
+  await expect(dialog.getByTestId('html-message')).toHaveText(
+    'HTML message: fast.html'
+  )
+  await expect(
+    dialog.getByRole('button', { name: 'Send', exact: true })
+  ).toBeEnabled()
+  await context.close()
+})
+
+test('an HTML file that is not UTF-8 is refused, not garbled', async ({
+  browser,
+}) => {
+  const { context, page } = await signedIn(browser, USER_A)
+  await compose(page, 'Latin-1')
+  const dialog = page.getByRole('dialog', { name: 'New message' })
+  await dialog.getByLabel('HTML file').setInputFiles({
+    name: 'cafe.html',
+    mimeType: 'text/html',
+    // "café" with the é as one Windows-1252 byte
+    buffer: Buffer.from([
+      0x3c, 0x70, 0x3e, 0x63, 0x61, 0x66, 0xe9, 0x3c, 0x2f, 0x70, 0x3e,
+    ]),
+  })
+  await expect(dialog.getByRole('alert')).toContainText(
+    'cafe.html is not UTF-8'
+  )
+  await expect(dialog.getByTestId('html-message')).toHaveCount(0)
+  await context.close()
+})
+
 test('HTML pasted into an empty message becomes the message, its text kept for plain text', async ({
   browser,
 }) => {
