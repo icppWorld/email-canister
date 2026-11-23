@@ -1259,7 +1259,7 @@ test('an HTML file is sent as the message, as it is but for its saved-from mark,
   await context.close()
 })
 
-test('only the latest choice of HTML is the message, and Send waits while a file is read', async ({
+test('only the latest HTML file picked is the message, which stays as it is while one is read', async ({
   browser,
 }) => {
   const { context, page } = await signedIn(browser, USER_A)
@@ -1294,27 +1294,25 @@ test('only the latest choice of HTML is the message, and Send waits while a file
       buffer: Buffer.from(`<p>${name}</p>`),
     })
 
-  // A paste while a file is read is the message
+  // While a file is read, the message stays as it is
+  const text = dialog.getByRole('textbox', { name: 'Message', exact: true })
   await pick('slow.html')
   await expect(send).toBeDisabled()
-  await dialog
-    .getByRole('textbox', { name: 'Message', exact: true })
-    .evaluate((textarea) => {
-      const data = new DataTransfer()
-      data.setData('text/html', '<p>pasted</p>')
-      textarea.dispatchEvent(
-        new ClipboardEvent('paste', {
-          clipboardData: data,
-          bubbles: true,
-          cancelable: true,
-        })
-      )
-    })
-  await expect(shown).toHaveText('HTML message: Pasted HTML')
-  await expect(send).toBeEnabled()
+  await expect(text).toHaveAttribute('readonly', '')
+  await text.evaluate((textarea) => {
+    const data = new DataTransfer()
+    data.setData('text/html', '<p>pasted</p>')
+    textarea.dispatchEvent(
+      new ClipboardEvent('paste', {
+        clipboardData: data,
+        bubbles: true,
+        cancelable: true,
+      })
+    )
+  })
   await release()
-  await page.waitForTimeout(300)
-  await expect(shown).toHaveText('HTML message: Pasted HTML')
+  await expect(shown).toHaveText('HTML message: slow.html')
+  await expect(send).toBeEnabled()
 
   // Of two files, the later one
   await pick('slow.html')

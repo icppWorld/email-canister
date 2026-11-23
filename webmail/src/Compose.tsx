@@ -83,16 +83,11 @@ export function Compose({
   const picker = useRef<HTMLInputElement>(null)
   // The picker for an HTML file to send as the message
   const htmlPicker = useRef<HTMLInputElement>(null)
-  // The latest HTML file picked, by number: only it may become the message,
-  // and Send waits while it is read, so it never sends the one before
+  // The latest HTML file picked, by number: only it may become the message.
+  // While it is read, the message stays as it is: the text cannot be edited,
+  // nothing pasted is taken, and Send and Use plain text instead wait.
   const picks = useRef(0)
   const [reading, setReading] = useState(false)
-  // A paste or Use plain text instead is newer than any file still being read
-  const choose = (next?: HtmlMessage) => {
-    picks.current += 1
-    setReading(false)
-    setHtml(next)
-  }
 
   useEffect(() => {
     onChange({ from, to, cc, bcc, subject, body, files, html, clientId })
@@ -238,7 +233,8 @@ export function Compose({
                   variant="bare"
                   label="Use plain text instead"
                   icon="close"
-                  onClick={() => choose(undefined)}
+                  onClick={() => setHtml(undefined)}
+                  disabled={reading}
                 />
               </p>
               <MessageBody framed={htmlView.framed} />
@@ -247,16 +243,17 @@ export function Compose({
             <textarea
               aria-label="Message"
               value={body}
+              readOnly={reading}
               onChange={(e) => setBody(e.target.value)}
               // HTML pasted into an empty message becomes the message, with
               // its text behind it; into a message with text, only its text
               // goes in, so nothing written is replaced
               onPaste={(e) => {
                 const pasted = e.clipboardData.getData('text/html')
-                if (body !== '' || !pasted) return
+                if (reading || body !== '' || !pasted) return
                 e.preventDefault()
                 setBody(e.clipboardData.getData('text/plain'))
-                choose({ name: 'Pasted HTML', body: pasted })
+                setHtml({ name: 'Pasted HTML', body: pasted })
               }}
             />
           )}
