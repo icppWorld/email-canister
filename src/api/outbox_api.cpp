@@ -61,10 +61,6 @@ void require_valid(const store::NewOutbox &m) {
   }
 }
 
-CandidTypeNat64 nat64(int64_t value) {
-  return CandidTypeNat64{static_cast<uint64_t>(value)};
-}
-
 CandidType summary_value(const store::OutboxSummary &s) {
   CandidTypeRecord r;
   r.append("id", nat64(s.id));
@@ -174,10 +170,8 @@ void mail_outbox_list() {
 
   std::optional<int64_t> from;
   if (cursor) from = static_cast<int64_t>(*cursor);
-  const store::OutboxPage page = store::outbox_list(
-      box, from,
-      static_cast<int64_t>(limit == 0 || limit > k_max_page ? k_max_page
-                                                            : limit));
+  const store::OutboxPage page =
+      store::outbox_list(box, from, page_limit(limit, k_max_page));
 
   std::vector<CandidType> items;
   for (const store::OutboxSummary &s : page.items)

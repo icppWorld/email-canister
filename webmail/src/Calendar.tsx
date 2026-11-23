@@ -2,14 +2,23 @@
 // and the secret address calendar apps subscribe to. Loaded only when opened,
 // with the calendar libraries.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import { tzlib_get_timezones as zoneList } from 'timezones-ical-library'
 
 import { errorText, type CalendarEvent, type Mailbox } from './api'
+import { attempt } from './batch'
 import { IconButton } from './Buttons'
 import {
   addDays,
   buildEvent,
+  dayKey,
   feedUrl,
   invalidFields,
   localZone,
@@ -21,9 +30,6 @@ import {
 } from './ical'
 import { deployment } from './settings'
 
-const pad = (n: number) => String(n).padStart(2, '0')
-const dayKey = (d: Date) =>
-  `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 const seconds = (d: Date) => BigInt(Math.floor(d.getTime() / 1000))
 
 // The six weeks shown for a month, from the Monday on or before its first day
@@ -94,6 +100,12 @@ function newFields(date: string): EventFields {
   }
 }
 
+// The first day of this month
+function thisMonth(): Date {
+  const now = new Date()
+  return new Date(now.getFullYear(), now.getMonth(), 1)
+}
+
 export function Calendar({
   backend,
   address,
@@ -101,11 +113,13 @@ export function Calendar({
   backend: Mailbox
   address: string
 }) {
-  const [month, setMonth] = useState(() => {
-    const now = new Date()
-    return new Date(now.getFullYear(), now.getMonth(), 1)
-  })
-  const [events, setEvents] = useState<CalendarEvent[] | null>(null)
+  const [month, setMonth] = useState(thisMonth)
+  // The events, with the grid they were loaded for: a month just left shows
+  // nothing rather than its events read against the new grid
+  const [loaded, setLoaded] = useState<{
+    grid: ReturnType<typeof gridOf>
+    items: CalendarEvent[]
+  } | null>(null)
   const [error, setError] = useState('')
   const [editing, setEditing] = useState<{
     fields: EventFields
@@ -113,6 +127,7 @@ export function Calendar({
   } | null>(null)
   const [sharing, setSharing] = useState(false)
   const grid = useMemo(() => gridOf(month), [month])
+  const events = loaded?.grid === grid ? loaded.items : null
 
   // Only the newest load shows
   const latest = useRef(0)
@@ -133,7 +148,7 @@ export function Calendar({
         if (cursor.length === 0) break
       }
       if (request !== latest.current) return
-      setEvents(found)
+      setLoaded({ grid, items: found })
       setError('')
     } catch (e) {
       if (request === latest.current) setError(errorText(e))
@@ -188,7 +203,14 @@ export function Calendar({
     </li>
   )
 
-  const inMonth = grid.days.filter((d) => d.getMonth() === month.getMonth())
+  const chips = (key: string) => (
+    <ul>
+      {(byDay.get(key) ?? []).map((o, i) => chip(o, `${o.fields.uid}/${i}`))}
+    </ul>
+  )
+  const agendaDays = grid.days.filter(
+    (d) => d.getMonth() === month.getMonth() && byDay.has(dayKey(d))
+  )
 
   return (
     <section className="calendar" aria-label="Calendar">
@@ -201,10 +223,7 @@ export function Calendar({
         <IconButton
           label="This month"
           icon="calendar"
-          onClick={() => {
-            const now = new Date()
-            setMonth(new Date(now.getFullYear(), now.getMonth(), 1))
-          }}
+          onClick={() => setMonth(thisMonth())}
         />
         <IconButton
           label="Next month"
@@ -218,10 +237,7 @@ export function Calendar({
           icon="plus"
           onClick={() =>
             create(
-              month.getMonth() === new Date().getMonth() &&
-                month.getFullYear() === new Date().getFullYear()
-                ? today
-                : dayKey(month)
+              month.getTime() === thisMonth().getTime() ? today : dayKey(month)
             )
           }
         />
@@ -257,32 +273,22 @@ export function Calendar({
               >
                 {d.getDate()}
               </button>
-              <ul>
-                {(byDay.get(key) ?? []).map((o, i) =>
-                  chip(o, `${o.fields.uid}/${i}`)
-                )}
-              </ul>
+              {chips(key)}
             </div>
           )
         })}
       </div>
       {/* At phone width, the month as a list of the days that have events */}
       <div className="agenda" aria-label="Events this month">
-        {events !== null && !inMonth.some((d) => byDay.has(dayKey(d))) && (
+        {events !== null && agendaDays.length === 0 && (
           <p className="hint">No events this month.</p>
         )}
-        {inMonth
-          .filter((d) => byDay.has(dayKey(d)))
-          .map((d) => (
-            <div key={dayKey(d)} className="agenda-day">
-              <h3>{dayTitle(d)}</h3>
-              <ul>
-                {(byDay.get(dayKey(d)) ?? []).map((o, i) =>
-                  chip(o, `${o.fields.uid}/${i}`)
-                )}
-              </ul>
-            </div>
-          ))}
+        {agendaDays.map((d) => (
+          <div key={dayKey(d)} className="agenda-day">
+            <h3>{dayTitle(d)}</h3>
+            {chips(dayKey(d))}
+          </div>
+        ))}
       </div>
       {editing && (
         <EventDialog
@@ -324,6 +330,41 @@ function zones(current: string): string[] {
   return zoneNames.includes(current) ? zoneNames : [current, ...zoneNames]
 }
 
+// A calendar dialog: its title, a Close, and Escape to close it
+function Dialog({
+  label,
+  title,
+  onClose,
+  children,
+}: {
+  label: string
+  title: string
+  onClose: () => void
+  children: ReactNode
+}) {
+  return (
+    <div
+      className="dialog event-dialog"
+      role="dialog"
+      aria-label={label}
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') onClose()
+      }}
+    >
+      <div className="compose-bar">
+        <h2>{title}</h2>
+        <IconButton
+          className="bare"
+          label="Close"
+          icon="close"
+          onClick={onClose}
+        />
+      </div>
+      {children}
+    </div>
+  )
+}
+
 function EventDialog({
   backend,
   fields: initial,
@@ -343,53 +384,48 @@ function EventDialog({
   const set = (change: Partial<EventFields>) =>
     setF((now) => ({ ...now, ...change }))
 
-  const save = async () => {
+  // The zone list is long: built again only when the zone changes
+  const zoneOptions = useMemo(
+    () =>
+      zones(f.tzid).map((z) => (
+        <option key={z} value={z}>
+          {z}
+        </option>
+      )),
+    [f.tzid]
+  )
+
+  // Runs a change, then closes; a refusal shows and the form stays
+  const run = (work: () => Promise<unknown>) => {
+    setBusy(true)
+    return attempt(
+      async () => {
+        await work()
+        onSaved()
+      },
+      (text) => {
+        setError(text)
+        if (text) setBusy(false)
+      }
+    )
+  }
+
+  const save = () => {
     const why = invalidFields(f)
     if (why) {
       setError(why)
       return
     }
-    setBusy(true)
-    try {
-      await backend.mail_cal_put(
+    run(() =>
+      backend.mail_cal_put(
         buildEvent({ ...f, sequence: isNew ? 0 : f.sequence + 1 })
       )
-      onSaved()
-    } catch (e) {
-      setError(errorText(e))
-      setBusy(false)
-    }
+    )
   }
 
-  const remove = async () => {
-    setBusy(true)
-    try {
-      await backend.mail_cal_delete(f.uid)
-      onSaved()
-    } catch (e) {
-      setError(errorText(e))
-      setBusy(false)
-    }
-  }
-
+  const label = isNew ? 'New event' : 'Event'
   return (
-    <div
-      className="dialog event-dialog"
-      role="dialog"
-      aria-label={isNew ? 'New event' : 'Event'}
-      onKeyDown={(e) => {
-        if (e.key === 'Escape') onClose()
-      }}
-    >
-      <div className="compose-bar">
-        <h2>{f.title.trim() || (isNew ? 'New event' : 'Event')}</h2>
-        <IconButton
-          className="bare"
-          label="Close"
-          icon="close"
-          onClick={onClose}
-        />
-      </div>
+    <Dialog label={label} title={f.title.trim() || label} onClose={onClose}>
       <form
         className="compose-body"
         onSubmit={(e) => {
@@ -474,11 +510,7 @@ function EventDialog({
               value={f.tzid}
               onChange={(e) => set({ tzid: e.target.value })}
             >
-              {zones(f.tzid).map((z) => (
-                <option key={z} value={z}>
-                  {z}
-                </option>
-              ))}
+              {zoneOptions}
             </select>
           </label>
         )}
@@ -542,7 +574,7 @@ function EventDialog({
               label={f.repeat ? 'Delete every time it repeats' : 'Delete'}
               icon="trash"
               disabled={busy}
-              onClick={remove}
+              onClick={() => run(() => backend.mail_cal_delete(f.uid))}
             />
           )}
         </div>
@@ -550,7 +582,7 @@ function EventDialog({
           <p className="hint">A change applies to every time it repeats.</p>
         )}
       </form>
-    </div>
+    </Dialog>
   )
 }
 
@@ -587,12 +619,7 @@ function SubscribeDialog({
   const act = async (work: () => Promise<string | null>) => {
     setBusy(true)
     setCopied(false)
-    try {
-      setToken(await work())
-      setError('')
-    } catch (e) {
-      setError(errorText(e))
-    }
+    await attempt(async () => setToken(await work()), setError)
     setBusy(false)
   }
 
@@ -600,23 +627,11 @@ function SubscribeDialog({
   const url = token ? feedUrl(canister, network, token) : ''
 
   return (
-    <div
-      className="dialog event-dialog"
-      role="dialog"
-      aria-label="Subscribe from a calendar app"
-      onKeyDown={(e) => {
-        if (e.key === 'Escape') onClose()
-      }}
+    <Dialog
+      label="Subscribe from a calendar app"
+      title={`Subscribe to ${address}`}
+      onClose={onClose}
     >
-      <div className="compose-bar">
-        <h2>Subscribe to {address}</h2>
-        <IconButton
-          className="bare"
-          label="Close"
-          icon="close"
-          onClick={onClose}
-        />
-      </div>
       <div className="compose-body">
         {token === null && (
           <>
@@ -698,6 +713,6 @@ function SubscribeDialog({
           </p>
         )}
       </div>
-    </div>
+    </Dialog>
   )
 }

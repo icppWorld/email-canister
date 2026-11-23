@@ -25,10 +25,6 @@ int64_t g_limit_ns = 7'200'000'000'000;
 // Fits a query's reply, with room for the rest of it
 const uint64_t k_max_chunk = 1'900'000;
 
-CandidTypeNat64 nat64(int64_t value) {
-  return CandidTypeNat64{static_cast<uint64_t>(value)};
-}
-
 } // namespace
 
 // Starts a download, or renews the one it names. A closed tab's download

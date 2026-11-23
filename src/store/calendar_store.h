@@ -37,10 +37,6 @@ struct TimeZone {
   std::string block;
 };
 
-// Why the block is not one event with that uid, or empty
-std::string invalid_event(const Event &event);
-std::string invalid_zone(const TimeZone &zone);
-
 struct EventPage {
   std::vector<Event> items;
   std::optional<int64_t> cursor; // absent when there is nothing more
@@ -52,21 +48,23 @@ std::optional<EventPage> list_events(const Mailbox &box, int64_t from,
                                      int64_t to, std::optional<int64_t> cursor,
                                      int64_t limit, size_t max_bytes);
 
-// Adds or replaces the event, and stores its zones. Returns why it was
-// refused, or nullopt when the database failed; empty when it is stored.
+// Adds or replaces the event, with the zones it names: the block must be one
+// VEVENT whose UID line is the uid, and each zone one VTIMEZONE whose TZID
+// line is its tzid. Returns why it was refused, or nullopt when the database
+// failed; empty when it is stored. A zone no event names any more is dropped.
 std::optional<std::string> put_event(const Mailbox &box, const Event &event,
                                      const std::vector<TimeZone> &zones);
 
 // Whether there was such an event, or nullopt when the database failed
 std::optional<bool> delete_event(const Mailbox &box, const std::string &uid);
 
-// The feed's secret token, empty when the calendar is not shared, or nullopt
-// when the database failed
-std::optional<std::string> feed_token(const Mailbox &box);
+// The token of the mailbox's feed, empty while it is not shared, or nullopt
+// when the registry failed
+std::optional<std::string> feed_token(int64_t mailbox);
 
-// Shares the calendar under `token`, or with an empty token stops sharing it.
-// Any earlier address stops working.
-bool set_feed_token(const Mailbox &box, const std::string &token);
+// Shares the mailbox's calendar under `token`, or with an empty token stops
+// sharing it. Any earlier address stops working.
+bool set_feed_token(int64_t mailbox, const std::string &token);
 
 // The enabled mailbox whose feed has this token: Found, with its id and local
 // part, Missing, or Failed
@@ -76,8 +74,5 @@ Lookup feed_mailbox(const std::string &token, int64_t &id, std::string &local);
 // after `now - k_feed_past_seconds`: the latest when they would not fit
 std::optional<std::string> feed(sqlite3 *file, const std::string &name,
                                 int64_t now_seconds);
-
-// The SHA-256 of a token, as the registry keeps it
-std::string token_hash(const std::string &token);
 
 } // namespace store

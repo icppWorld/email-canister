@@ -22,10 +22,6 @@ const uint64_t k_max_page = 200;
 const size_t k_page_bytes = 1'500'000; // under the 2 MB reply of a query
 const size_t k_token_bytes = 16;
 
-CandidTypeNat64 nat64(int64_t value) {
-  return CandidTypeNat64{static_cast<uint64_t>(value)};
-}
-
 CandidType event_value(const store::Event &e) {
   CandidTypeRecord r;
   r.append("uid", CandidTypeText{e.uid});
@@ -68,13 +64,6 @@ IC_HttpResponse plain(uint16_t status, const std::string &text) {
   return response;
 }
 
-std::string address_of(const std::string &local, IC_API &ic_api) {
-  std::string domain = store::domain();
-  if (domain.empty())
-    domain = ic_api.get_canister_self().get_text() + ".icp0.io";
-  return local + "@" + domain;
-}
-
 std::string hex(const std::vector<uint8_t> &bytes, size_t count) {
   static const char digits[] = "0123456789abcdef";
   std::string out;
@@ -99,7 +88,7 @@ IC_Async feed_reset_async() {
   const store::Mailbox box =
       require_writable_file(require_mailbox(ic_api, local));
   const std::string token = hex(*random, k_token_bytes);
-  if (!store::set_feed_token(box, token))
+  if (!store::set_feed_token(box.id, token))
     IC_API::trap("the address could not be stored");
   ic_api.to_wire(CandidTypeText{token});
 }
@@ -121,11 +110,9 @@ void mail_cal_list() {
   const store::Mailbox box = require_file(read_mailbox(ic_api, {in}));
   std::optional<int64_t> after;
   if (cursor) after = seconds(*cursor);
-  const auto page = store::list_events(
-      box, seconds(from), seconds(to), after,
-      static_cast<int64_t>(limit == 0 || limit > k_max_page ? k_max_page
-                                                            : limit),
-      k_page_bytes);
+  const auto page =
+      store::list_events(box, seconds(from), seconds(to), after,
+                         page_limit(limit, k_max_page), k_page_bytes);
   if (!page) IC_API::trap("the calendar cannot be read");
   std::vector<CandidType> items;
   for (const store::Event &e : page->items)
@@ -164,13 +151,6 @@ void mail_cal_put() {
   event.starts = seconds(starts);
   event.ends = seconds(ends);
   event.modified_ns = static_cast<int64_t>(IC_API::time());
-  std::string why = store::invalid_event(event);
-  if (zones.size() > store::k_max_zones_per_event)
-    why = "too many time zones in one event";
-  for (const store::TimeZone &z : zones) {
-    if (why.empty()) why = store::invalid_zone(z);
-  }
-  if (!why.empty()) IC_API::trap(why);
   const std::optional<std::string> refused =
       store::put_event(box, event, zones);
   if (!refused) IC_API::trap("the event could not be stored");
@@ -192,8 +172,8 @@ void mail_cal_delete() {
 // The token of the calendar's secret address, or null while it is not shared
 void mail_cal_feed() {
   IC_API ic_api(CanisterQuery{std::string(__func__)}, false);
-  const store::Mailbox box = require_file(read_mailbox(ic_api, {}));
-  const std::optional<std::string> token = store::feed_token(box);
+  const store::Entry entry = read_mailbox(ic_api, {});
+  const std::optional<std::string> token = store::feed_token(entry.id);
   if (!token) IC_API::trap("the calendar cannot be read");
   std::optional<std::string> shared;
   if (!token->empty()) shared = *token;
@@ -206,7 +186,7 @@ void mail_cal_feed_reset() { feed_reset_async(); }
 void mail_cal_feed_stop() {
   IC_API ic_api(CanisterUpdate{std::string(__func__)}, false);
   const store::Mailbox box = require_writable_file(read_mailbox(ic_api, {}));
-  if (!store::set_feed_token(box, ""))
+  if (!store::set_feed_token(box.id, ""))
     IC_API::trap("the address could not be removed");
   ic_api.to_wire();
 }
@@ -251,13 +231,12 @@ void http_request_update() {
     ic_api.to_wire(plain(404, "Not found\n"));
     return;
   }
-  sqlite3 *file =
-      found == store::Lookup::Found ? store::mailbox_file(id) : nullptr;
-  const std::optional<std::string> body =
-      file == nullptr
-          ? std::nullopt
-          : store::feed(file, address_of(local, ic_api),
-                        static_cast<int64_t>(IC_API::time() / 1'000'000'000));
+  std::optional<std::string> body;
+  if (found == store::Lookup::Found) {
+    if (sqlite3 *file = store::mailbox_file(id))
+      body = store::feed(file, local + "@" + mail_domain(ic_api),
+                         static_cast<int64_t>(IC_API::time() / 1'000'000'000));
+  }
   if (!body) {
     IC_HttpResponse response = plain(503, "Try again later\n");
     response.headers.push_back({"Retry-After", "60"});

@@ -6,6 +6,8 @@
 import ICAL from 'ical.js'
 import { tzlib_get_ical_block as icalBlock } from 'timezones-ical-library'
 
+import type { EventRequest, ZoneBlock } from './api'
+
 export type Repeat = '' | 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'YEARLY'
 
 // What the event form edits. Dates are YYYY-MM-DD and times HH:MM, in the
@@ -27,17 +29,6 @@ export type EventFields = {
   created: string // as written first, or ''
 }
 
-export type ZoneBlock = { tzid: string; block: string }
-
-// What the backend stores for an event
-export type StoredEvent = {
-  uid: string
-  vevent: string
-  starts: bigint
-  ends: bigint
-  vtimezones: ZoneBlock[]
-}
-
 export type Occurrence = {
   fields: EventFields
   start: Date
@@ -45,7 +36,7 @@ export type Occurrence = {
 }
 
 // The end of a repeat that never ends: the last second of the year 9999
-export const FOREVER = 253_402_300_799n
+const FOREVER = 253_402_300_799n
 
 // An all-day event's day is midnight to midnight wherever it is seen: its
 // span takes in the widest offsets, so a window's list finds it
@@ -59,7 +50,7 @@ export function localZone(): string {
 // The VTIMEZONE block of an IANA zone, under that name: the library keeps
 // one block for zones that are the same, such as Europe/Amsterdam and
 // Europe/Brussels. Null for UTC and for a zone it does not know.
-export function zoneBlock(name: string): ZoneBlock | null {
+function zoneBlock(name: string): ZoneBlock | null {
   if (name === 'UTC' || name === 'Etc/UTC') return null
   try {
     const found = icalBlock(name)
@@ -89,6 +80,10 @@ function zoneOf(tzid: string): ICAL.Timezone {
 }
 
 const pad = (n: number) => String(n).padStart(2, '0')
+
+// A local day as YYYY-MM-DD, as the form and the grid name days
+export const dayKey = (d: Date) =>
+  `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 
 function dateParts(date: string) {
   const [year, month, day] = date.split('-').map(Number)
@@ -154,7 +149,7 @@ function utcStamp(): ICAL.Time {
 }
 
 // The block the backend stores, and the span it covers in UTC seconds
-export function buildEvent(f: EventFields): StoredEvent {
+export function buildEvent(f: EventFields): EventRequest {
   const zoneData = f.allDay ? null : zoneBlock(f.tzid)
   const zone = zoneData ? zoneOf(zoneData.tzid) : ICAL.Timezone.utcTimezone
   const start = startOf(f, zone)
@@ -193,9 +188,14 @@ export function buildEvent(f: EventFields): StoredEvent {
           ).convertToZone(ICAL.Timezone.utcTimezone)
     }
     event.addPropertyWithValue('rrule', ICAL.Recur.fromData(rule))
+    // The last occurrence starts on the until day at the latest
+    const afterLast = startOf(
+      { ...f, startDate: addDays(f.until, 1), startTime: '00:00' },
+      zone
+    )
     ends = f.until
       ? BigInt(
-          unix(addDays(f.until, 1), zone, f.allDay) +
+          afterLast.toUnixTime() +
             (end.toUnixTime() - start.toUnixTime()) +
             DAY_MARGIN
         )
@@ -215,15 +215,6 @@ export function buildEvent(f: EventFields): StoredEvent {
   }
 }
 
-// Midnight starting the day, in the zone, as UTC seconds
-function unix(date: string, zone: ICAL.Timezone, allDay: boolean): number {
-  return (
-    allDay
-      ? ICAL.Time.fromData({ ...dateParts(date), isDate: true })
-      : ICAL.Time.fromData({ ...dateParts(date), hour: 0 }, zone)
-  ).toUnixTime()
-}
-
 function parseEvent(vevent: string): ICAL.Event | null {
   try {
     // Its zone first, so that its times read in it
@@ -239,10 +230,8 @@ function parseEvent(vevent: string): ICAL.Event | null {
   }
 }
 
-// The form's fields of a stored event, or null when it cannot be read
-export function readEvent(vevent: string): EventFields | null {
-  const event = parseEvent(vevent)
-  if (!event?.startDate) return null
+// The form's fields of a parsed event
+function fieldsOf(event: ICAL.Event): EventFields {
   const start = event.startDate
   const end = event.endDate ?? start
   const allDay = start.isDate
@@ -297,8 +286,8 @@ export function occurrences(
   max = 500
 ): Occurrence[] {
   const event = parseEvent(vevent)
-  const fields = readEvent(vevent)
-  if (!event || !fields) return []
+  if (!event?.startDate) return []
+  const fields = fieldsOf(event)
   const found: Occurrence[] = []
   const add = (start: Date, end: Date) => {
     // An event with no length still shows on its day
@@ -309,10 +298,17 @@ export function occurrences(
     add(shownDate(event.startDate), shownDate(event.endDate ?? event.startDate))
     return found
   }
+  // Occurrences that end before the window are passed over cheaply, by
+  // their start and the event's length, so an old repeat costs little
+  const length =
+    (event.endDate ?? event.startDate).toUnixTime() -
+    event.startDate.toUnixTime()
+  const fromSeconds = from.getTime() / 1000 - 14 * 3600
   const iterator = event.iterator()
-  for (let i = 0; i < 5000 && found.length < max; ++i) {
+  for (let i = 0; i < 100_000 && found.length < max; ++i) {
     const next = iterator.next()
     if (!next) break
+    if (next.toUnixTime() + length < fromSeconds) continue
     const details = event.getOccurrenceDetails(next)
     const start = shownDate(details.startDate)
     if (start >= to) break

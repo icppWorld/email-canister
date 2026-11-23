@@ -16,10 +16,6 @@ namespace {
 
 const uint64_t k_max_page = 100;
 
-CandidTypeNat64 nat64(int64_t value) {
-  return CandidTypeNat64{static_cast<uint64_t>(value)};
-}
-
 CandidType summary_value(const store::Summary &s) {
   CandidTypeRecord r;
   r.append("uid", nat64(s.uid));
@@ -49,11 +45,6 @@ void reply_page(IC_API &ic_api, const store::Page &page) {
   r.append("items", CandidTypeVecOf(summary_value(store::Summary{}), elements));
   r.append("cursor", CandidTypeOptNat64{cursor});
   ic_api.to_wire(r);
-}
-
-int64_t page_limit(uint64_t limit) {
-  return static_cast<int64_t>(limit == 0 || limit > k_max_page ? k_max_page
-                                                               : limit);
 }
 
 int64_t to_folder(uint64_t folder) {
@@ -103,9 +94,7 @@ CandidType mailbox_value(const store::Entry &e, const std::string &domain) {
 void mail_me() {
   IC_API ic_api(CanisterQuery{std::string(__func__)}, false);
   const std::string caller = ic_api.get_caller().get_text();
-  std::string domain = store::domain();
-  if (domain.empty())
-    domain = ic_api.get_canister_self().get_text() + ".icp0.io";
+  const std::string domain = mail_domain(ic_api);
   std::vector<CandidType> mailboxes;
   for (const store::Entry &e : store::member_mailboxes(caller))
     mailboxes.push_back(mailbox_value(e, domain));
@@ -131,7 +120,7 @@ void mail_list() {
   const store::Mailbox box = require_file(read_mailbox(ic_api, {in}));
   reply_page(ic_api,
              store::list_messages(box, to_folder(folder), to_cursor(cursor),
-                                  page_limit(limit)));
+                                  page_limit(limit, k_max_page)));
 }
 
 void mail_get() {
@@ -167,8 +156,9 @@ void mail_search() {
   in.append("cursor", CandidTypeOptNat64{&cursor});
   in.append("limit", CandidTypeNat64{&limit});
   const store::Mailbox box = require_file(read_mailbox(ic_api, {in}));
-  reply_page(ic_api, store::search(box, to_folder(folder), query,
-                                   to_cursor(cursor), page_limit(limit)));
+  reply_page(ic_api,
+             store::search(box, to_folder(folder), query, to_cursor(cursor),
+                           page_limit(limit, k_max_page)));
 }
 
 // Sets the flags in `set` and clears those in `clear` on each message; a uid

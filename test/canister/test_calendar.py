@@ -25,9 +25,10 @@ from .support import (
     call,
     icp,
     mail,
+    number,
     purge,
 )
-from .test_mailbox import NOBODY, USER_A, USER_B, principal_of
+from .test_mailbox import NOBODY, USER_A, USER_B, cursor_of, principal_of
 
 DAY = 86_400
 NOW = int(time.time())
@@ -48,7 +49,7 @@ def canister(network: str, identity: str, users: Dict[str, str]) -> None:
     assert "error" not in add_mailbox("bob", users[USER_B]).lower()
 
 
-def text(s: str) -> str:
+def candid_text(s: str) -> str:
     """A Candid text literal"""
     out = []
     for c in s:
@@ -106,12 +107,14 @@ def put(
 ) -> str:
     named = zones if zones is not None else [("Europe/Amsterdam", ZONE)]
     listed_zones = "; ".join(
-        f"record {{ tzid = {text(tzid)}; block = {text(z)} }}" for tzid, z in named
+        f"record {{ tzid = {candid_text(tzid)}; block = {candid_text(z)} }}"
+        for tzid, z in named
     )
     return mail(
         "mail_cal_put",
         local,
-        f"(record {{ uid = {text(uid)}; vevent = {text(block or vevent(uid))}; "
+        f"(record {{ uid = {candid_text(uid)}; "
+        f"vevent = {candid_text(block or vevent(uid))}; "
         f"starts = {starts} : nat64; ends = {ends} : nat64; "
         f"vtimezones = vec {{ {listed_zones} }} }})",
         user,
@@ -140,11 +143,6 @@ def uids_in(output: str) -> List[str]:
     return re.findall(r'\buid = "([^"]*)"', output)
 
 
-def cursor_of(output: str) -> Optional[int]:
-    hit = re.search(r"\bcursor = opt \(?([\d_]+)", output)
-    return int(hit.group(1).replace("_", "")) if hit else None
-
-
 def token_of(output: str) -> str:
     hit = re.search(r'"([0-9a-f]{32})"', output)
     assert hit, output
@@ -168,9 +166,7 @@ def get_update(url: str, method: str = "GET") -> str:
 
 
 def status(output: str) -> int:
-    hit = re.search(r"\bstatus_code = ([\d_]+)", output)
-    assert hit, output
-    return int(hit.group(1).replace("_", ""))
+    return number(output, "status_code")
 
 
 def feed(token: str) -> str:
@@ -270,6 +266,22 @@ def test__a_zone_that_is_not_its_block_is_refused(
 
 def test__too_many_zones_in_one_event_are_refused() -> None:
     assert "too many time zones" in put("zones", zones=[("Europe/Amsterdam", ZONE)] * 5)
+
+
+def test__a_zone_no_event_names_is_dropped() -> None:
+    token = token_of(mail("mail_cal_feed_reset", "alice", "()", USER_A))
+    put("zoned-1")
+    assert ZONE in feed(token)
+    # Changed to name no zone, the event leaves its zone unnamed
+    put("zoned-1", zones=[])
+    assert "BEGIN:VTIMEZONE" not in feed(token)
+    put("zoned-1")
+    put("zoned-2")
+    mail("mail_cal_delete", "alice", '("zoned-1")', USER_A)
+    assert ZONE in feed(token)  # zoned-2 still names it
+    mail("mail_cal_delete", "alice", '("zoned-2")', USER_A)
+    assert "BEGIN:VTIMEZONE" not in feed(token)
+    mail("mail_cal_feed_stop", "alice", "()", USER_A)
 
 
 def test__calendars_are_apart() -> None:
