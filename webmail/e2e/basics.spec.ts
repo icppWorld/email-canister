@@ -1227,6 +1227,134 @@ test('shows mail the gateway refused, with its reason, and sends it again', asyn
   await context.close()
 })
 
+// The newest of alice's sent messages with this subject, as the canister keeps it
+async function sentHtml(subject: string): Promise<string> {
+  const alice = await asAlice()
+  const { items } = await alice.mail_outbox_list('alice', {
+    cursor: [],
+    limit: 20n,
+  })
+  const sent = items.find((item) => item.subject === subject)
+  if (!sent) throw new Error(`nothing sent as ${subject}`)
+  return (await alice.mail_outbox_get('alice', sent.id)).html_body
+}
+
+test('an HTML file is sent as the message, as it is but for its saved-from mark, after a preview', async ({
+  browser,
+}) => {
+  const { context, page } = await signedIn(browser, USER_A)
+  await compose(page, 'Newsletter from a file')
+  const dialog = page.getByRole('dialog', { name: 'New message' })
+  const html =
+    '<html><head><style>.big{color:#123456}' +
+    '@media (max-width:620px){.big{font-size:30px}}</style></head>' +
+    '<body><p class="big">Countdown started</p>' +
+    '<script>parent.__xss = 1</script></body></html>'
+  const saved =
+    '<!DOCTYPE html>\n' +
+    '<!-- saved from url=(0038)https://saved.example/blobs/1234567890 -->\n' +
+    html
+  await dialog.getByLabel('HTML file').setInputFiles({
+    name: 'news.html',
+    mimeType: 'text/html',
+    buffer: Buffer.from(saved),
+  })
+  await expect(dialog.getByTestId('html-message')).toHaveText(
+    'HTML message: news.html'
+  )
+  await expect(dialog.getByRole('textbox', { name: 'Message' })).toHaveCount(0)
+  // The preview is the reader's own frame, with the file's style sheet
+  await expect(dialog.locator('iframe.body')).toHaveAttribute(
+    'sandbox',
+    SANDBOX
+  )
+  const preview = dialog.frameLocator('iframe.body').locator('p.big')
+  await expect(preview).toHaveText('Countdown started')
+  await expect(preview).toHaveCSS('color', 'rgb(18, 52, 86)')
+  expect(
+    await page.evaluate(() => (window as unknown as { __xss?: number }).__xss)
+  ).toBeUndefined()
+
+  await send(page)
+  await expect(dialog).toHaveCount(0)
+  expect(await sentHtml('Newsletter from a file')).toBe(
+    `<!DOCTYPE html>\n${html}`
+  )
+  await viewSent(page)
+  await page.getByRole('button', { name: /Newsletter from a file/ }).click()
+  await expect(page.frameLocator('iframe.body').locator('p.big')).toHaveText(
+    'Countdown started'
+  )
+  await context.close()
+})
+
+test('HTML pasted into an empty message becomes the message, its text kept for plain text', async ({
+  browser,
+}) => {
+  const { context, page } = await signedIn(browser, USER_A)
+  await compose(page, 'Pasted newsletter')
+  const dialog = page.getByRole('dialog', { name: 'New message' })
+  const message = dialog.getByRole('textbox', { name: 'Message', exact: true })
+  const paste = () =>
+    message.evaluate((textarea) => {
+      const data = new DataTransfer()
+      data.setData('text/html', '<p><b>Bold</b> news</p>')
+      data.setData('text/plain', 'Bold news')
+      textarea.dispatchEvent(
+        new ClipboardEvent('paste', {
+          clipboardData: data,
+          bubbles: true,
+          cancelable: true,
+        })
+      )
+    })
+
+  // Into a message with text, it stays text
+  await message.fill('Hello')
+  await paste()
+  await expect(dialog.getByTestId('html-message')).toHaveCount(0)
+  await expect(message).toHaveValue('Hello')
+
+  await message.fill('')
+  await paste()
+  await expect(dialog.getByTestId('html-message')).toHaveText(
+    'HTML message: Pasted HTML'
+  )
+  await expect(dialog.frameLocator('iframe.body').locator('b')).toHaveText(
+    'Bold'
+  )
+  await dialog
+    .getByRole('button', { name: 'Use plain text instead', exact: true })
+    .click()
+  await expect(message).toHaveValue('Bold news')
+
+  // Back to HTML, and sent as it was pasted
+  await message.fill('')
+  await paste()
+  await send(page)
+  await expect(dialog).toHaveCount(0)
+  expect(await sentHtml('Pasted newsletter')).toBe('<p><b>Bold</b> news</p>')
+  await context.close()
+})
+
+test('refuses an HTML file too large to send', async ({ browser }) => {
+  const { context, page } = await signedIn(browser, USER_A)
+  await page.getByRole('button', { name: 'Compose' }).click()
+  await page
+    .getByRole('dialog')
+    .getByLabel('HTML file')
+    .setInputFiles({
+      name: 'huge.html',
+      mimeType: 'text/html',
+      buffer: Buffer.from(`<p>${'x'.repeat(2_000_000)}</p>`),
+    })
+  await expect(page.getByRole('alert')).toContainText('too large')
+  await expect(
+    page.getByRole('button', { name: 'Send', exact: true })
+  ).toBeDisabled()
+  await context.close()
+})
+
 test('sends to every Cc and Bcc address, however they are separated', async ({
   browser,
 }) => {

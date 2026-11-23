@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 import {
   errorText,
@@ -9,7 +9,8 @@ import {
   type MailboxInfo,
 } from './api'
 import { IconButton } from './Buttons'
-import { textToHtml } from './mime'
+import { MessageBody } from './MessageBody'
+import { frameBody, htmlMessage, textToHtml } from './mime'
 
 // Held in memory only, so a draft survives signing in again but not a reload
 export type Draft = {
@@ -22,8 +23,13 @@ export type Draft = {
   subject?: string
   body?: string
   files?: File[]
+  // An HTML file, or HTML pasted, sent as the message in place of the text,
+  // which stays behind it for Use plain text instead
+  html?: HtmlMessage
   clientId?: string
 }
+
+type HtmlMessage = { name: string; body: string }
 
 // At phone width the window always fills the screen
 type Size = 'normal' | 'minimised' | 'full'
@@ -61,6 +67,7 @@ export function Compose({
   const [subject, setSubject] = useState(draft.subject ?? '')
   const [body, setBody] = useState(draft.body ?? '')
   const [files, setFiles] = useState<File[]>(draft.files ?? [])
+  const [html, setHtml] = useState<HtmlMessage | undefined>(draft.html)
   const [size, setSize] = useState<Size>('normal')
   const [sending, setSending] = useState(false)
   const [error, setError] = useState('')
@@ -70,16 +77,23 @@ export function Compose({
   const [clientId] = useState(() => draft.clientId ?? crypto.randomUUID())
   // The file picker, which Attach opens
   const picker = useRef<HTMLInputElement>(null)
+  // The picker for an HTML file to send as the message
+  const htmlPicker = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
-    onChange({ from, to, cc, bcc, subject, body, files, clientId })
-  }, [onChange, from, to, cc, bcc, subject, body, files, clientId])
+    onChange({ from, to, cc, bcc, subject, body, files, html, clientId })
+  }, [onChange, from, to, cc, bcc, subject, body, files, html, clientId])
 
   const listed = mailboxes.some((m) => m.local === from)
-  const html = textToHtml(body)
+  const htmlBody = html ? html.body : textToHtml(body)
+  // Shown the way the reader shows it, in its sandboxed frame
+  const preview = useMemo(
+    () => (html ? frameBody(html.body, []) : null),
+    [html]
+  )
   const total =
     files.reduce((sum, f) => sum + encodedSize(f), 0) +
-    new TextEncoder().encode(html).length +
+    new TextEncoder().encode(htmlBody).length +
     new TextEncoder().encode(subject).length
   const tooLarge = total > MAX_ENCODED_BYTES
 
@@ -100,7 +114,7 @@ export function Compose({
         cc: addresses(cc),
         bcc: addresses(bcc),
         subject,
-        html_body: html,
+        html_body: htmlBody,
         attachments,
       })
       onSent(from, clientId)
@@ -195,10 +209,55 @@ export function Compose({
               onChange={(e) => setSubject(e.target.value)}
             />
           </label>
-          <textarea
-            aria-label="Message"
-            value={body}
-            onChange={(e) => setBody(e.target.value)}
+          {html && preview ? (
+            <>
+              <p className="attached hint" data-testid="html-message">
+                HTML message: {html.name}
+                <IconButton
+                  variant="bare"
+                  label="Use plain text instead"
+                  icon="close"
+                  onClick={() => setHtml(undefined)}
+                />
+              </p>
+              <MessageBody framed={preview} />
+            </>
+          ) : (
+            <textarea
+              aria-label="Message"
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              // HTML pasted into an empty message becomes the message, with
+              // its text behind it; into a message with text, only its text
+              // goes in, so nothing written is replaced
+              onPaste={(e) => {
+                const pasted = e.clipboardData.getData('text/html')
+                if (body !== '' || !pasted) return
+                e.preventDefault()
+                setBody(e.clipboardData.getData('text/plain'))
+                setHtml({ name: 'Pasted HTML', body: htmlMessage(pasted) })
+              }}
+            />
+          )}
+          <input
+            ref={htmlPicker}
+            aria-label="HTML file"
+            type="file"
+            accept=".html,.htm,text/html"
+            hidden
+            onChange={async (e) => {
+              const file = e.target.files?.[0]
+              // Cleared, so the same file can be picked again after an edit
+              e.target.value = ''
+              if (!file) return
+              try {
+                const text = await file.text()
+                setHtml({ name: file.name, body: htmlMessage(text) })
+                setError('')
+              } catch (e) {
+                setError(`Could not read ${file.name}: ${errorText(e)}`)
+              }
+            }}
           />
           <input
             ref={picker}
@@ -270,6 +329,11 @@ export function Compose({
               label="Attach"
               icon="paperclip"
               onClick={() => picker.current?.click()}
+            />
+            <IconButton
+              label="Use an HTML file as the message"
+              icon="code"
+              onClick={() => htmlPicker.current?.click()}
             />
           </div>
         </div>

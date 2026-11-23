@@ -520,6 +520,16 @@ export function textToHtml(text: string): string {
   return `<div style="white-space:pre-wrap">${escapeHtml(text)}</div>`
 }
 
+// A browser marks a page it saves with the address it came from, at the top,
+// after the doctype. An HTML file sent as the message goes as it is, but
+// without that mark, which would show its recipients where it came from.
+const SAVED_FROM =
+  /^(\uFEFF?\s*(?:<!doctype[^>]*>\s*)?)<!-- saved from url=\(\d+\)[^\n>]*-->[ \t]*\r?\n?/i
+
+export function htmlMessage(html: string): string {
+  return html.replace(SAVED_FROM, '$1')
+}
+
 // Compared as written, so a Unicode From domain never matches its punycode
 // envelope: the "via" it gets is the one hint that a lookalike, such as a
 // Cyrillic "а" in a familiar name, is not the domain it seems.

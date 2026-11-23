@@ -811,6 +811,17 @@ iframe.body {
 .dialog.compose.full textarea {
   flex: 1;
 }
+/* An HTML message's preview, as tall as the text it stands in for */
+.dialog.compose .message-box {
+  flex: none;
+  min-height: 0;
+  height: 260px;
+}
+.dialog.compose.full .message-box {
+  flex: 1;
+  height: auto;
+  min-height: 200px;
+}
 .backdrop {
   position: fixed;
   inset: 0;

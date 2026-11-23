@@ -87,6 +87,7 @@ const PATHS = {
   admin: [SHIELD],
   checkMailbox: [SHIELD, 'm9 12 2 2 4-4'],
   check: ['M20 6 9 17l-5-5'],
+  code: ['m16 18 6-6-6-6', 'm8 6-6 6 6 6'],
   chevronDown: ['m6 9 6 6 6-6'],
   plus: ['M5 12h14', 'M12 5v14'],
   addMember: [...PERSON, 'M19 8v6', 'M22 11h-6'],
