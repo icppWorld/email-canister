@@ -1102,7 +1102,8 @@ th {
   padding: 2px 4px 4px;
   border-right: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
-  overflow: hidden;
+  /* A crowded day scrolls, so that every event stays in reach */
+  overflow-y: auto;
 }
 .month .day.other {
   background: var(--surface-muted);
@@ -1154,7 +1155,7 @@ th {
 .agenda-day h3 {
   margin: 12px 0 4px;
 }
-.agenda .event {
+.agenda button.event {
   font-size: 14px;
   padding: 6px 4px;
   border-bottom: 1px solid var(--border);

@@ -163,8 +163,12 @@ export function invalidFields(f: EventFields): string {
   if (!f.allDay && (!f.startTime || !f.endTime)) return 'Give the event a time.'
   if (f.endDate < f.startDate) return 'The event must end after it starts.'
   const zone = zoneOf(f.tzid)
-  if (endOf(f, zone).compare(startOf(f, zone)) < 0)
+  // A timed event ends after it starts (RFC 5545 3.6.1); an all-day one
+  // ends the day after its last
+  if (endOf(f, zone).compare(startOf(f, zone)) <= 0)
     return 'The event must end after it starts.'
+  if (startOf(f, zone).toUnixTime() < 0)
+    return 'The calendar holds events from 1970 on.'
   if (f.repeat && f.until && f.until < f.startDate)
     return 'The repeat must end after the event starts.'
   return ''
@@ -231,18 +235,27 @@ export function buildEvent(f: EventFields): EventRequest {
             zone
           ).convertToZone(ICAL.Timezone.utcTimezone)
     }
-    event.addPropertyWithValue('rrule', ICAL.Recur.fromData(rule))
-    // The last occurrence starts on the until day at the latest
-    ends = f.until
+    const recur = ICAL.Recur.fromData(rule)
+    event.addPropertyWithValue('rrule', recur)
+    // The last occurrence starts on the until day at the latest, or is the
+    // count's last
+    const last = recur.count ? lastStart(event, recur.count) : null
+    ends = last
       ? BigInt(
-          startOf(
-            { ...f, startDate: addDays(f.until, 1), startTime: '00:00' },
-            zone
-          ).toUnixTime() +
+          last.toUnixTime() +
             (end.toUnixTime() - start.toUnixTime()) +
             DAY_MARGIN
         )
-      : FOREVER
+      : f.until
+        ? BigInt(
+            startOf(
+              { ...f, startDate: addDays(f.until, 1), startTime: '00:00' },
+              zone
+            ).toUnixTime() +
+              (end.toUnixTime() - start.toUnixTime()) +
+              DAY_MARGIN
+          )
+        : FOREVER
   } else {
     ends = BigInt(end.toUnixTime() + (f.allDay ? DAY_MARGIN : 0))
   }
@@ -273,6 +286,19 @@ function parseEvent(vevent: string): ICAL.Event | null {
   }
 }
 
+// The start of a counted repeat's last occurrence: the form writes only
+// daily to yearly rules, whose count is reached in that many steps
+function lastStart(event: ICAL.Component, count: number): ICAL.Time | null {
+  const iterator = new ICAL.Event(event).iterator()
+  let last: ICAL.Time | null = null
+  for (let i = 0; i < count; ++i) {
+    const next = iterator.next()
+    if (!next) break
+    last = next
+  }
+  return last
+}
+
 // The form's fields of a parsed event
 function fieldsOf(event: ICAL.Event): EventFields {
   const start = event.startDate
@@ -283,10 +309,33 @@ function fieldsOf(event: ICAL.Event): EventFields {
     end = end.convertToZone(start.zone)
   const component = event.component
   const rule = component.getFirstPropertyValue('rrule') as ICAL.Recur | null
+  // Zones named anywhere but on the start, such as an end or a skipped date
+  // in another zone
+  const startZone = component.getFirstProperty('dtstart')?.getParameter('tzid')
+  const zones = [...component.toString().matchAll(/;TZID="?([^":;]+)"?[:;]/g)]
+  const lastUntil = rule?.until?.clone()
+  const untilAt =
+    lastUntil && !lastUntil.isDate && start.zone
+      ? lastUntil.convertToZone(start.zone)
+      : lastUntil
+  // A cutoff the form shows: a date, or the end of a day in the start's zone
+  const untilShown =
+    !untilAt ||
+    (allDay
+      ? untilAt.isDate
+      : !untilAt.isDate &&
+        untilAt.hour === 23 &&
+        untilAt.minute === 59 &&
+        untilAt.second === 59)
   const readOnly =
     component.hasProperty('rdate') ||
     component.getAllProperties('rrule').length > 1 ||
-    (rule !== null && !REPEATS.includes(rule.freq))
+    (rule !== null &&
+      (!REPEATS.includes(rule.freq) || Object.keys(rule.parts).length > 0)) ||
+    !untilShown ||
+    start.second !== 0 ||
+    (!allDay && (event.endDate ?? start).second !== 0) ||
+    zones.some((z) => z[1] !== startZone)
   const repeat = (rule?.freq ?? '') as Repeat
   let until = ''
   if (rule?.until) {
@@ -337,6 +386,8 @@ function fieldsOf(event: ICAL.Event): EventFields {
 // weekday a daily repeat never reaches, its iterator can search for ever, and
 // an hourly one would take too many steps to reach the window
 function safeRepeat(event: ICAL.Event): boolean {
+  // Extra dates may be periods, which the loop does not read: shown once
+  if (event.component.hasProperty('rdate')) return false
   return event.component.getAllProperties('rrule').every((p) => {
     const rule = p.getFirstValue() as ICAL.Recur
     return REPEATS.includes(rule.freq) && Object.keys(rule.parts).length === 0
@@ -348,12 +399,26 @@ function shownDate(t: ICAL.Time): Date {
   return t.isDate ? new Date(t.year, t.month - 1, t.day) : t.toJSDate()
 }
 
-// The event's occurrences that overlap [from, to), at most `max` of them
+// The event's occurrences that overlap [from, to), at most `max` of them; none
+// for an event that cannot be read, so that it alone is left out
 export function occurrences(
   vevent: string,
   from: Date,
   to: Date,
   max = 500
+): Occurrence[] {
+  try {
+    return occurrencesOf(vevent, from, to, max)
+  } catch {
+    return []
+  }
+}
+
+function occurrencesOf(
+  vevent: string,
+  from: Date,
+  to: Date,
+  max: number
 ): Occurrence[] {
   const event = parseEvent(vevent)
   if (!event?.startDate) return []

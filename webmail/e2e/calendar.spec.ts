@@ -301,6 +301,11 @@ test('an edit keeps the repeat parts the form does not show', async ({
   expect(saved?.vevent).toContain('SUMMARY:Fortnightly renamed')
   expect(saved?.vevent).toMatch(/RRULE:.*INTERVAL=2/)
   expect(saved?.vevent).toMatch(/RRULE:.*COUNT=3/)
+  // Its span ends with its third time, four weeks on, not never
+  const lastTime = new Date(
+    Date.UTC(now.getFullYear(), now.getMonth(), 3 + 28, 10)
+  )
+  expect(saved?.ends).toBe(BigInt(lastTime.getTime() / 1000 + 14 * 3600))
   await alice.mail_cal_delete('alice', 'fortnightly')
   await context.close()
 })
@@ -360,10 +365,12 @@ test('a save that ends late leaves a newer form and month alone', async ({
   )
   const { context, page } = await signedIn(browser, USER_A)
   await openCalendar(page)
-  // The next update call, the save, waits
+  // The next update call, the save, waits until the test lets it go
+  let release = () => {}
+  const gate = new Promise<void>((resolve) => (release = resolve))
   let held = 0
   await page.route(/\/api\/v\d\/canister\/[^/]+\/call$/, async (route) => {
-    if (held++ === 0) await new Promise((resolve) => setTimeout(resolve, 4000))
+    if (held++ === 0) await gate
     await route.continue()
   })
   const slow = month(page).getByRole('button', { name: /Slow/ })
@@ -377,6 +384,7 @@ test('a save that ends late leaves a newer form and month alone', async ({
   await page.getByRole('button', { name: 'Previous month' }).click()
   await slow.click()
   await dialog(page).getByLabel('Title').fill('Still typing')
+  release()
 
   const alice = await asAlice()
   await expect
@@ -519,5 +527,222 @@ test('an event the form cannot show is read-only, and can be deleted', async ({
   await dialog(page).getByRole('button', { name: 'Delete' }).click()
   await expect(dialog(page)).toBeHidden()
   await expect(hourly).toHaveCount(0)
+  await context.close()
+})
+
+test('a click on another event while one is open opens that one', async ({
+  browser,
+}) => {
+  // A Monday and a Tuesday: the left of the grid, clear of the open form
+  const eighth = new Date(now.getFullYear(), now.getMonth(), 8)
+  const monday = 8 + ((8 - eighth.getDay()) % 7)
+  for (const [uid, day] of [
+    ['first', monday],
+    ['second', monday + 1],
+  ] as const) {
+    await putRaw(
+      uid,
+      [
+        'DTSTAMP:20260101T000000Z',
+        `DTSTART:${ymd(0, day)}T120000Z`,
+        `DTEND:${ymd(0, day)}T130000Z`,
+        `SUMMARY:Pick ${uid}`,
+      ],
+      new Date(now.getFullYear(), now.getMonth(), day),
+      new Date(now.getFullYear(), now.getMonth(), day + 1)
+    )
+  }
+  const { context, page } = await signedIn(browser, USER_A)
+  await openCalendar(page)
+  await month(page)
+    .getByRole('button', { name: /Pick first/ })
+    .click()
+  await expect(dialog(page).getByLabel('Title')).toHaveValue('Pick first')
+  await month(page)
+    .getByRole('button', { name: /Pick second/ })
+    .click()
+  await expect(dialog(page).getByLabel('Title')).toHaveValue('Pick second')
+  const alice = await asAlice()
+  for (const uid of ['first', 'second'])
+    await alice.mail_cal_delete('alice', uid)
+  await context.close()
+})
+
+test('a dialog takes the focus, and Escape gives it back', async ({
+  browser,
+}) => {
+  const { context, page } = await signedIn(browser, USER_A)
+  await openCalendar(page)
+  const subscribe = page.getByRole('button', {
+    name: 'Subscribe from a calendar app',
+  })
+  await subscribe.click()
+  const shown = page.getByRole('dialog', {
+    name: 'Subscribe from a calendar app',
+  })
+  await expect(
+    shown.getByRole('button', { name: 'Make a secret address' })
+  ).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(shown).toBeHidden()
+  await expect(subscribe).toBeFocused()
+
+  await page.getByRole('button', { name: 'New event', exact: true }).click()
+  await expect(dialog(page).getByLabel('Title')).toBeFocused()
+  await page.keyboard.press('Escape')
+  await expect(dialog(page)).toBeHidden()
+  await context.close()
+})
+
+test('the form refuses an event with no length, or before 1970', async ({
+  browser,
+}) => {
+  const { context, page } = await signedIn(browser, USER_A)
+  await openCalendar(page)
+  await page.getByRole('button', { name: 'New event', exact: true }).click()
+  await dialog(page).getByLabel('Title').fill('No length')
+  await dialog(page).getByLabel('Start time').fill('09:00')
+  await dialog(page).getByLabel('End time').fill('09:00')
+  await dialog(page).getByRole('button', { name: 'Save' }).click()
+  await expect(dialog(page).getByRole('alert')).toHaveText(
+    'The event must end after it starts.'
+  )
+  await dialog(page).getByLabel('End time').fill('10:00')
+  await dialog(page).getByLabel('Start date').fill('1969-12-01')
+  await dialog(page).getByRole('button', { name: 'Save' }).click()
+  await expect(dialog(page).getByRole('alert')).toHaveText(
+    'The calendar holds events from 1970 on.'
+  )
+  await context.close()
+})
+
+test('a crowded day scrolls, and the phone list has its own rows', async ({
+  browser,
+}) => {
+  const { context, page } = await signedIn(browser, USER_A)
+  await openCalendar(page)
+  expect(
+    await month(page)
+      .locator('.day')
+      .first()
+      .evaluate((day) => getComputedStyle(day).overflowY)
+  ).toBe('auto')
+  await page.setViewportSize({ width: 390, height: 844 })
+  const row = page
+    .getByLabel('Events this month')
+    .getByRole('button', { name: /Weekly round/ })
+    .first()
+  expect(await row.evaluate((b) => getComputedStyle(b).fontSize)).toBe('14px')
+  await context.close()
+})
+
+test('an event that cannot be read leaves the others shown', async ({
+  browser,
+}) => {
+  await putRaw(
+    'bad-end',
+    [
+      'DTSTAMP:20260101T000000Z',
+      `DTSTART:${ymd(0, 14)}T090000Z`,
+      'DTEND:bad',
+      'SUMMARY:Bad end',
+    ],
+    new Date(now.getFullYear(), now.getMonth(), 14),
+    new Date(now.getFullYear(), now.getMonth(), 15)
+  )
+  await putRaw(
+    'period',
+    [
+      'DTSTAMP:20260101T000000Z',
+      `DTSTART:${ymd(0, 15)}T090000Z`,
+      `DTEND:${ymd(0, 15)}T100000Z`,
+      `RDATE;VALUE=PERIOD:${ymd(0, 16)}T090000Z/${ymd(0, 16)}T100000Z`,
+      'SUMMARY:Period',
+    ],
+    new Date(now.getFullYear(), now.getMonth(), 15),
+    new Date(now.getFullYear(), now.getMonth(), 17)
+  )
+  const { context, page } = await signedIn(browser, USER_A)
+  await openCalendar(page)
+  await expect
+    .poll(() =>
+      month(page)
+        .getByRole('button', { name: /Weekly round/ })
+        .count()
+    )
+    .toBeGreaterThanOrEqual(4)
+  await expect(month(page).getByRole('button', { name: /Period/ })).toHaveCount(
+    1
+  )
+  await expect(
+    month(page).getByRole('button', { name: /Bad end/ })
+  ).toHaveCount(0)
+  const alice = await asAlice()
+  for (const uid of ['bad-end', 'period'])
+    await alice.mail_cal_delete('alice', uid)
+  await context.close()
+})
+
+test('an event another app wrote beyond the form opens read-only', async ({
+  browser,
+}) => {
+  const cases: [string, number, string[]][] = [
+    [
+      'Seconds',
+      21,
+      [`DTSTART:${ymd(0, 21)}T090030Z`, `DTEND:${ymd(0, 21)}T100030Z`],
+    ],
+    [
+      'Cutoff',
+      22,
+      [
+        `DTSTART:${ymd(0, 22)}T090000Z`,
+        `DTEND:${ymd(0, 22)}T100000Z`,
+        `RRULE:FREQ=DAILY;UNTIL=${ymd(0, 23)}T080000Z`,
+      ],
+    ],
+    [
+      'Weekdays',
+      23,
+      [
+        `DTSTART:${ymd(0, 23)}T090000Z`,
+        `DTEND:${ymd(0, 23)}T100000Z`,
+        'RRULE:FREQ=WEEKLY;COUNT=2;BYDAY=MO,WE',
+      ],
+    ],
+    [
+      'Skip zone',
+      24,
+      [
+        `DTSTART;TZID=America/New_York:${ymd(0, 24)}T090000`,
+        `DTEND;TZID=America/New_York:${ymd(0, 24)}T100000`,
+        'RRULE:FREQ=DAILY;COUNT=3',
+        `EXDATE;TZID=America/Los_Angeles:${ymd(0, 25)}T060000`,
+      ],
+    ],
+  ]
+  for (const [title, day, lines] of cases) {
+    await putRaw(
+      title.replace(' ', '-').toLowerCase(),
+      ['DTSTAMP:20260101T000000Z', ...lines, `SUMMARY:${title}`],
+      new Date(now.getFullYear(), now.getMonth(), day),
+      new Date(now.getFullYear(), now.getMonth(), day + 3)
+    )
+  }
+  const { context, page } = await signedIn(browser, USER_A)
+  await openCalendar(page)
+  for (const [title] of cases) {
+    await month(page)
+      .getByRole('button', { name: new RegExp(title) })
+      .first()
+      .click()
+    await expect(dialog(page), title).toContainText(
+      'can be deleted here, not changed'
+    )
+    await dialog(page).getByRole('button', { name: 'Close' }).click()
+  }
+  const alice = await asAlice()
+  for (const [title] of cases)
+    await alice.mail_cal_delete('alice', title.replace(' ', '-').toLowerCase())
   await context.close()
 })

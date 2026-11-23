@@ -129,10 +129,14 @@ export function Calendar({
     items: CalendarEvent[]
   } | null>(null)
   const [error, setError] = useState('')
+  // Each opening of the form is its own, by `opened`, so that a click on
+  // another event while one is open starts a new form
   const [editing, setEditing] = useState<{
     fields: EventFields
     isNew: boolean
+    opened: number
   } | null>(null)
+  const openings = useRef(0)
   const [sharing, setSharing] = useState(false)
   // Raised after a change, so that the month shown then loads again
   const [changes, setChanges] = useState(0)
@@ -196,9 +200,17 @@ export function Calendar({
   const shift = (months: number) =>
     setMonth((m) => new Date(m.getFullYear(), m.getMonth() + months, 1))
   const open = (o: Occurrence) =>
-    setEditing({ fields: { ...o.fields }, isNew: false })
+    setEditing({
+      fields: { ...o.fields },
+      isNew: false,
+      opened: ++openings.current,
+    })
   const create = (date: string) =>
-    setEditing({ fields: newFields(date), isNew: true })
+    setEditing({
+      fields: newFields(date),
+      isNew: true,
+      opened: ++openings.current,
+    })
 
   const chip = (o: Occurrence, key: string) => (
     <li key={key}>
@@ -303,6 +315,7 @@ export function Calendar({
       </div>
       {editing && (
         <EventDialog
+          key={editing.opened}
           backend={backend}
           fields={editing.fields}
           isNew={editing.isNew}
@@ -355,8 +368,25 @@ function Dialog({
   onClose: () => void
   children: ReactNode
 }) {
+  // The focus moves into the dialog, so that Escape reaches it, and back to
+  // where it was when the dialog closes
+  const box = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const before = document.activeElement
+    // The first control, or the dialog itself while its content loads
+    const first = box.current?.querySelector<HTMLElement>(
+      'input:not(:disabled), select:not(:disabled), textarea:not(:disabled), .compose-body button:not(:disabled)'
+    )
+    const target = first ?? box.current
+    target?.focus()
+    return () => {
+      if (before instanceof HTMLElement && before.isConnected) before.focus()
+    }
+  }, [])
   return (
     <div
+      ref={box}
+      tabIndex={-1}
       className="dialog event-dialog"
       role="dialog"
       aria-label={label}
@@ -458,7 +488,6 @@ function EventDialog({
             <input
               aria-label="Title"
               value={f.title}
-              autoFocus
               onChange={(e) => set({ title: e.target.value })}
             />
           </label>
