@@ -372,7 +372,7 @@ export function Compose({
               onClick={() => picker.current?.click()}
             />
             <IconButton
-              label="Use an HTML file as the message"
+              label="Use an HTML page instead of text"
               icon="code"
               onClick={() => htmlPicker.current?.click()}
             />
