@@ -295,8 +295,15 @@ def test__a_zone_no_event_names_is_dropped() -> None:
     token = token_of(mail("mail_cal_feed_reset", "alice", "()", USER_A))
     put("zoned-1")
     assert ZONE in feed(token)
-    # Changed to name no zone, the event leaves its zone unnamed
-    put("zoned-1", zones=[])
+    # Changed to UTC times, the event names no zone any more
+    utc = vevent("zoned-1").replace(
+        "DTSTART;TZID=Europe/Amsterdam:20261124T093000", "DTSTART:20261124T083000Z"
+    )
+    utc = utc.replace(
+        "DTEND;TZID=Europe/Amsterdam:20261124T110000", "DTEND:20261124T100000Z"
+    )
+    assert "TZID" not in utc
+    put("zoned-1", utc, zones=[])
     assert "BEGIN:VTIMEZONE" not in feed(token)
     put("zoned-1")
     put("zoned-2")
