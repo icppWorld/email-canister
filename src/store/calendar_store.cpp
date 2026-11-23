@@ -95,18 +95,35 @@ std::string invalid_block(std::string_view block, std::string_view component,
       lines.back() != "END:" + std::string(component) ||
       raw.back() != lines.back())
     return "the block must be one " + std::string(component);
-  bool has_id = false;
+  // Subcomponents, such as a VALARM, must nest; the id is read only on the
+  // block's own component, once
+  const std::string id_name = upper(id_line.substr(0, id_line.find(':')));
+  std::vector<std::string> open;
+  int ids = 0;
   for (size_t i = 1; i + 1 < lines.size(); ++i) {
-    for (std::string_view keyword : {"BEGIN", "END"}) {
-      const std::string named = component_of(lines[i], keyword);
-      for (std::string_view outer : k_outer) {
-        if (named == outer)
-          return "the block holds another " + std::string(outer);
-      }
+    const std::string begins = component_of(lines[i], "BEGIN");
+    const std::string ends = component_of(lines[i], "END");
+    for (std::string_view outer : k_outer) {
+      if (begins == outer || ends == outer)
+        return "the block holds another " + std::string(outer);
     }
-    if (lines[i] == id_line) has_id = true;
+    if (!begins.empty()) {
+      open.push_back(begins);
+    } else if (!ends.empty()) {
+      if (open.empty() || open.back() != ends)
+        return "the block's components do not nest";
+      open.pop_back();
+    } else if (open.empty() &&
+               upper(lines[i].substr(0, lines[i].find_first_of(":;"))) ==
+                   id_name) {
+      if (lines[i] != id_line) return "the block has another " + id_name;
+      ++ids;
+    }
   }
-  if (!has_id) return "the block has no " + id_line;
+  if (!open.empty()) return "the block's components do not nest";
+  if (ids != 1)
+    return ids == 0 ? "the block has no " + id_line
+                    : "the block has more than one " + id_name;
   return "";
 }
 

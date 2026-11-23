@@ -30,7 +30,25 @@ export type EventFields = {
   // The stored repeat's parts the form does not show, such as an interval
   // or a count, kept while the repeat stays the same
   kept: { freq: string; parts: Record<string, unknown> } | null
+  // The stored block, whose other properties and alarms a save keeps, or ''
+  source: string
 }
+
+// The properties the form writes; a save keeps every other one
+const OWNED = [
+  'uid',
+  'dtstamp',
+  'created',
+  'last-modified',
+  'sequence',
+  'dtstart',
+  'dtend',
+  'duration',
+  'summary',
+  'location',
+  'description',
+  'rrule',
+]
 
 export type Occurrence = {
   fields: EventFields
@@ -169,7 +187,10 @@ export function buildEvent(f: EventFields): EventRequest {
   const start = startOf(f, zone)
   const end = endOf(f, zone)
 
-  const event = new ICAL.Component('vevent')
+  const event =
+    (f.source && parseEvent(f.source)?.component) ||
+    new ICAL.Component('vevent')
+  for (const name of OWNED) event.removeAllProperties(name)
   event.addPropertyWithValue('uid', f.uid)
   event.addPropertyWithValue('dtstamp', utcStamp())
   event.addPropertyWithValue(
@@ -236,7 +257,7 @@ export function buildEvent(f: EventFields): EventRequest {
 function parseEvent(vevent: string): ICAL.Event | null {
   try {
     // Its zone first, so that its times read in it
-    const tzid = /;TZID=([^:;]+)[:;]/.exec(vevent)?.[1]
+    const tzid = /;TZID="?([^":;]+)"?[:;]/.exec(vevent)?.[1]
     if (tzid) zoneOf(tzid)
     const calendar = new ICAL.Component(
       ICAL.parse(`BEGIN:VCALENDAR\r\n${vevent}\r\nEND:VCALENDAR`)
@@ -298,7 +319,18 @@ function fieldsOf(event: ICAL.Event): EventFields {
     sequence: event.sequence ?? 0,
     created: created ? created.toString() : '',
     kept,
+    source: event.component.toString(),
   }
+}
+
+// A repeat ical.js expands safely: with BY parts, such as a weekday a daily
+// repeat never reaches, its iterator can search for ever
+function safeRepeat(event: ICAL.Event): boolean {
+  return event.component
+    .getAllProperties('rrule')
+    .every(
+      (p) => Object.keys((p.getFirstValue() as ICAL.Recur).parts).length === 0
+    )
 }
 
 // A local Date at the time, or at local midnight of an all-day date
@@ -322,7 +354,8 @@ export function occurrences(
     const last = end > start ? end : new Date(start.getTime() + 1)
     if (start < to && last > from) found.push({ fields, start, end })
   }
-  if (!event.isRecurring()) {
+  // A repeat that is not safe shows once, at its start
+  if (!event.isRecurring() || !safeRepeat(event)) {
     add(shownDate(event.startDate), shownDate(event.endDate ?? event.startDate))
     return found
   }

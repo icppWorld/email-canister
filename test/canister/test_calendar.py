@@ -223,7 +223,8 @@ def test__a_long_list_comes_in_pages() -> None:
 @pytest.mark.parametrize(
     "uid,block,why",
     [
-        ("a", vevent("b"), "has no UID:a"),
+        ("a", vevent("b"), "another UID"),
+        ("a", vevent("a").replace("UID:a\r\n", ""), "has no UID:a"),
         ("a b", vevent("a b"), "the uid must be"),
         ("a", vevent("a").replace("\r\n", "\n"), "CRLF"),
         ("a", vevent("a") + "\r\n", "must be one VEVENT"),
@@ -237,6 +238,11 @@ def test__a_long_list_comes_in_pages() -> None:
         ("a", vevent("a", extra="end:vcalendar"), "another VCALENDAR"),
         ("a", vevent("a", extra="BEGIN;X=1:VTimezone"), "another VTIMEZONE"),
         ("a", vevent("a") + "\r\n X", "must be one VEVENT"),
+        ("a", vevent("a", extra="BEGIN:VALARM"), "do not nest"),
+        ("a", vevent("a", extra="END:VALARM"), "do not nest"),
+        ("a", vevent("a", extra="BEGIN:VALARM\r\nEND:VTODO"), "do not nest"),
+        ("a", vevent("b", extra="BEGIN:VALARM\r\nUID:a\r\nEND:VALARM"), "another UID"),
+        ("a", vevent("a", extra="UID:a"), "more than one UID"),
     ],
 )
 def test__a_block_that_is_not_one_event_is_refused(
@@ -246,6 +252,13 @@ def test__a_block_that_is_not_one_event_is_refused(
     assert uid not in uids_in(listed())
 
 
+def test__an_event_may_hold_an_alarm() -> None:
+    alarm = "BEGIN:VALARM\r\nACTION:DISPLAY\r\nTRIGGER:-PT15M\r\nEND:VALARM"
+    assert put("alarmed", vevent("alarmed", extra=alarm)) == "()"
+    assert "alarmed" in uids_in(listed())
+    mail("mail_cal_delete", "alice", '("alarmed")', USER_A)
+
+
 def test__an_event_must_end_after_it_starts() -> None:
     assert "end after it starts" in put("late", starts=NOW, ends=NOW - 1)
 
@@ -253,7 +266,7 @@ def test__an_event_must_end_after_it_starts() -> None:
 @pytest.mark.parametrize(
     "tzid,zone,why",
     [
-        ("Europe/Paris", ZONE, "has no TZID:Europe/Paris"),
+        ("Europe/Paris", ZONE, "another TZID"),
         ("Amster dam", ZONE, "IANA name"),
         (
             "Europe/Amsterdam",

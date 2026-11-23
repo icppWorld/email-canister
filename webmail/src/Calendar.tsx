@@ -103,6 +103,7 @@ function newFields(date: string): EventFields {
     sequence: 0,
     created: '',
     kept: null,
+    source: '',
   }
 }
 
@@ -307,8 +308,8 @@ export function Calendar({
           onClose={() => setEditing(null)}
           onSaved={() => {
             // A save that ends late closes only its own form
-            const uid = editing.fields.uid
-            setEditing((now) => (now?.fields.uid === uid ? null : now))
+            const saved = editing
+            setEditing((now) => (now === saved ? null : now))
             setChanges((n) => n + 1)
           }}
         />
