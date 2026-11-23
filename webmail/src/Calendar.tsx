@@ -67,13 +67,18 @@ const WEEKDAYS = Array.from({ length: 7 }, (_, i) =>
 
 // The days an occurrence shows on, as day keys: an all-day event's dates,
 // a timed one's local days
-function daysOf(o: Occurrence): string[] {
+function daysOf(o: Occurrence, grid: { start: Date; end: Date }): string[] {
   const keys: string[] = []
-  const last = Math.max(o.start.getTime(), o.end.getTime() - 1)
-  const y = o.start.getFullYear()
-  const m = o.start.getMonth()
-  const d = o.start.getDate()
-  for (let i = 0; i < 62; ++i) {
+  // Only the grid's days, however long the event
+  const last = Math.min(
+    Math.max(o.start.getTime(), o.end.getTime() - 1),
+    grid.end.getTime() - 1
+  )
+  const first = o.start > grid.start ? o.start : grid.start
+  const y = first.getFullYear()
+  const m = first.getMonth()
+  const d = first.getDate()
+  for (let i = 0; i < 42; ++i) {
     const day = new Date(y, m, d + i)
     if (day.getTime() > last) break
     keys.push(dayKey(day))
@@ -97,6 +102,7 @@ function newFields(date: string): EventFields {
     until: '',
     sequence: 0,
     created: '',
+    kept: null,
   }
 }
 
@@ -126,6 +132,8 @@ export function Calendar({
     isNew: boolean
   } | null>(null)
   const [sharing, setSharing] = useState(false)
+  // Raised after a change, so that the month shown then loads again
+  const [changes, setChanges] = useState(0)
   const grid = useMemo(() => gridOf(month), [month])
   const events = loaded?.grid === grid ? loaded.items : null
 
@@ -158,13 +166,13 @@ export function Calendar({
 
   useEffect(() => {
     load()
-  }, [load])
+  }, [load, changes])
 
   const byDay = useMemo(() => {
     const days = new Map<string, Occurrence[]>()
     for (const e of events ?? []) {
       for (const o of occurrences(e.vevent, grid.start, grid.end)) {
-        for (const key of daysOf(o)) {
+        for (const key of daysOf(o, grid)) {
           const list = days.get(key) ?? []
           list.push(o)
           days.set(key, list)
@@ -298,8 +306,10 @@ export function Calendar({
           isNew={editing.isNew}
           onClose={() => setEditing(null)}
           onSaved={() => {
-            setEditing(null)
-            load()
+            // A save that ends late closes only its own form
+            const uid = editing.fields.uid
+            setEditing((now) => (now?.fields.uid === uid ? null : now))
+            setChanges((n) => n + 1)
           }}
         />
       )}

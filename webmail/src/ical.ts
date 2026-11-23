@@ -27,6 +27,9 @@ export type EventFields = {
   until: string // the last day a repeat may fall on, or ''
   sequence: number // raised on each change, so subscribers take the new one
   created: string // as written first, or ''
+  // The stored repeat's parts the form does not show, such as an interval
+  // or a count, kept while the repeat stays the same
+  kept: { freq: string; parts: Record<string, unknown> } | null
 }
 
 export type Occurrence = {
@@ -136,6 +139,7 @@ export function invalidFields(f: EventFields): string {
   if (!f.title.trim()) return 'Give the event a title.'
   if (!f.startDate || !f.endDate) return 'Give the event a date.'
   if (!f.allDay && (!f.startTime || !f.endTime)) return 'Give the event a time.'
+  if (f.endDate < f.startDate) return 'The event must end after it starts.'
   const zone = zoneOf(f.tzid)
   if (endOf(f, zone).compare(startOf(f, zone)) < 0)
     return 'The event must end after it starts.'
@@ -188,8 +192,12 @@ export function buildEvent(f: EventFields): EventRequest {
 
   let ends: bigint
   if (f.repeat) {
-    const rule: Record<string, unknown> = { freq: f.repeat }
+    const rule: Record<string, unknown> = {
+      ...(f.kept?.freq === f.repeat ? f.kept.parts : {}),
+      freq: f.repeat,
+    }
     if (f.until) {
+      delete rule.count // a repeat ends by a date or a count, not both
       // Through the whole last day, in the event's own zone
       rule.until = f.allDay
         ? ICAL.Time.fromData({ ...dateParts(f.until), isDate: true })
@@ -257,6 +265,15 @@ function fieldsOf(event: ICAL.Event): EventFields {
       until = dateOf(last)
     }
   }
+  let kept: EventFields['kept'] = null
+  if (rule) {
+    const {
+      freq,
+      until: _until,
+      ...parts
+    } = rule.toJSON() as Record<string, unknown>
+    kept = { freq: String(freq), parts }
+  }
   const created = component.getFirstPropertyValue('created') as ICAL.Time | null
   const lastDay = allDay ? end.clone() : end
   if (allDay) lastDay.adjust(-1, 0, 0, 0)
@@ -280,6 +297,7 @@ function fieldsOf(event: ICAL.Event): EventFields {
     until,
     sequence: event.sequence ?? 0,
     created: created ? created.toString() : '',
+    kept,
   }
 }
 

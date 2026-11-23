@@ -238,3 +238,150 @@ test('a calendar that cannot load leaves the webmail working', async ({
   await expect(page.getByRole('button', { name: 'Compose' })).toBeVisible()
   await context.close()
 })
+
+// A date of this month, or of one some months on, as iCalendar writes it
+function ymd(months: number, day: number): string {
+  const d = new Date(now.getFullYear(), now.getMonth() + months, day)
+  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`
+}
+
+// Stores an event as another calendar app would have written it
+async function putRaw(uid: string, lines: string[], from: Date, to: Date) {
+  const alice = await asAlice()
+  await alice.mail_cal_put('alice', {
+    uid,
+    vevent: ['BEGIN:VEVENT', `UID:${uid}`, ...lines, 'END:VEVENT'].join('\r\n'),
+    starts: BigInt(Math.floor(from.getTime() / 1000) - 14 * 3600),
+    ends: BigInt(Math.floor(to.getTime() / 1000) + 14 * 3600),
+    vtimezones: [],
+  })
+}
+
+test('an edit keeps the repeat parts the form does not show', async ({
+  browser,
+}) => {
+  await putRaw(
+    'fortnightly',
+    [
+      'DTSTAMP:20260101T000000Z',
+      `DTSTART:${ymd(0, 3)}T090000Z`,
+      `DTEND:${ymd(0, 3)}T100000Z`,
+      'RRULE:FREQ=WEEKLY;INTERVAL=2;COUNT=3',
+      'SUMMARY:Fortnightly',
+    ],
+    new Date(now.getFullYear(), now.getMonth(), 2),
+    new Date(now.getFullYear(), now.getMonth() + 2, 1)
+  )
+  const { context, page } = await signedIn(browser, USER_A)
+  await openCalendar(page)
+  await month(page)
+    .getByRole('button', { name: /Fortnightly/ })
+    .first()
+    .click()
+  await dialog(page).getByLabel('Title').fill('Fortnightly renamed')
+  await dialog(page).getByRole('button', { name: 'Save' }).click()
+  await expect(dialog(page)).toBeHidden()
+  const alice = await asAlice()
+  const page1 = await alice.mail_cal_list('alice', {
+    from: 0n,
+    to: 253_402_300_799n,
+    cursor: [],
+    limit: 100n,
+  })
+  const saved = page1.items.find((e) => e.uid === 'fortnightly')
+  expect(saved?.vevent).toContain('SUMMARY:Fortnightly renamed')
+  expect(saved?.vevent).toMatch(/RRULE:.*INTERVAL=2/)
+  expect(saved?.vevent).toMatch(/RRULE:.*COUNT=3/)
+  await alice.mail_cal_delete('alice', 'fortnightly')
+  await context.close()
+})
+
+test('an all-day event cannot end before it starts', async ({ browser }) => {
+  const { context, page } = await signedIn(browser, USER_A)
+  await openCalendar(page)
+  await page.getByRole('button', { name: 'New event', exact: true }).click()
+  await dialog(page).getByLabel('Title').fill('Backwards')
+  await dialog(page).getByLabel('All day').check()
+  await dialog(page).getByLabel('Start date').fill(third.replace(/03$/, '10'))
+  await dialog(page).getByLabel('End date').fill(third.replace(/03$/, '09'))
+  await dialog(page).getByRole('button', { name: 'Save' }).click()
+  await expect(dialog(page).getByRole('alert')).toHaveText(
+    'The event must end after it starts.'
+  )
+  await context.close()
+})
+
+test('an event longer than two months shows on every day of the grid', async ({
+  browser,
+}) => {
+  await putRaw(
+    'season',
+    [
+      'DTSTAMP:20260101T000000Z',
+      `DTSTART;VALUE=DATE:${ymd(-4, 1)}`,
+      `DTEND;VALUE=DATE:${ymd(4, 1)}`,
+      'SUMMARY:Season',
+    ],
+    new Date(now.getFullYear(), now.getMonth() - 4, 1),
+    new Date(now.getFullYear(), now.getMonth() + 4, 1)
+  )
+  const { context, page } = await signedIn(browser, USER_A)
+  await openCalendar(page)
+  await expect(
+    month(page).locator('.event.all-day', { hasText: 'Season' })
+  ).toHaveCount(42)
+  const alice = await asAlice()
+  await alice.mail_cal_delete('alice', 'season')
+  await context.close()
+})
+
+test('a save that ends late leaves a newer form and month alone', async ({
+  browser,
+}) => {
+  await putRaw(
+    'next-month',
+    [
+      'DTSTAMP:20260101T000000Z',
+      `DTSTART:${ymd(1, 15)}T090000Z`,
+      `DTEND:${ymd(1, 15)}T100000Z`,
+      'SUMMARY:Next month',
+    ],
+    new Date(now.getFullYear(), now.getMonth() + 1, 15),
+    new Date(now.getFullYear(), now.getMonth() + 1, 16)
+  )
+  const { context, page } = await signedIn(browser, USER_A)
+  await openCalendar(page)
+  // The next update call, the save, waits
+  let held = 0
+  await page.route(/\/api\/v\d\/canister\/[^/]+\/call$/, async (route) => {
+    if (held++ === 0) await new Promise((resolve) => setTimeout(resolve, 4000))
+    await route.continue()
+  })
+  await page.getByRole('button', { name: 'New event', exact: true }).click()
+  await dialog(page).getByLabel('Title').fill('Slow save')
+  await dialog(page).getByRole('button', { name: 'Save' }).click()
+  // Closed while it saves; another form opened, and another month shown
+  await dialog(page).getByRole('button', { name: 'Close' }).click()
+  await page.getByRole('button', { name: 'Next month' }).click()
+  await page.getByRole('button', { name: 'New event', exact: true }).click()
+  await dialog(page).getByLabel('Title').fill('Still typing')
+
+  const alice = await asAlice()
+  await expect
+    .poll(async () => {
+      const found = await alice.mail_cal_list('alice', {
+        from: 0n,
+        to: 253_402_300_799n,
+        cursor: [],
+        limit: 100n,
+      })
+      return found.items.some((e) => e.vevent.includes('SUMMARY:Slow save'))
+    })
+    .toBe(true)
+  await page.waitForTimeout(1000) // the late save's own refresh
+  await expect(dialog(page).getByLabel('Title')).toHaveValue('Still typing')
+  await expect(
+    month(page).getByRole('button', { name: /Next month/ })
+  ).toHaveCount(1)
+  await context.close()
+})
