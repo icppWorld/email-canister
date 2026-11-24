@@ -10,7 +10,6 @@ import {
   useRef,
   useState,
 } from 'react'
-import { tzlib_get_timezones as zoneList } from 'timezones-ical-library'
 
 import { errorText, type CalendarEvent, type Mailbox } from './api'
 import { attempt } from './batch'
@@ -21,12 +20,10 @@ import {
   dayKey,
   feedUrl,
   invalidFields,
-  localZone,
   newUid,
-  occurrences,
+  occurrence,
   type EventFields,
   type Occurrence,
-  type Repeat,
 } from './ical'
 import { deployment } from './settings'
 
@@ -98,13 +95,9 @@ function newFields(date: string): EventFields {
     startTime: '09:00',
     endDate: date,
     endTime: '10:00',
-    tzid: localZone(),
-    repeat: '',
-    until: '',
     sequence: 0,
     created: '',
-    kept: null,
-    source: '',
+    stored: null,
     readOnly: false,
   }
 }
@@ -118,12 +111,9 @@ function thisMonth(): Date {
 export function Calendar({
   backend,
   address,
-  active = true,
 }: {
   backend: Mailbox
   address: string
-  // False while it is kept hidden behind another page or mailbox
-  active?: boolean
 }) {
   const [month, setMonth] = useState(thisMonth)
   // The events, with the grid and the change they were loaded for: a month
@@ -134,18 +124,11 @@ export function Calendar({
     changes: number
   } | null>(null)
   const [error, setError] = useState('')
-  // Each opening of the form is its own, by `opened`, so that a click on
-  // another event while one is open starts a new form
   const [editing, setEditing] = useState<{
     fields: EventFields
     isNew: boolean
-    opened: number
   } | null>(null)
-  const openings = useRef(0)
   const [sharing, setSharing] = useState(false)
-  // A save, delete or address change is running: its dialog stays open until
-  // it ends, and no other opens, so that its outcome always shows there
-  const [busy, setBusy] = useState(false)
   // Raised after a change, so that the month shown then loads again
   const [changes, setChanges] = useState(0)
   const grid = useMemo(() => gridOf(month), [month])
@@ -185,29 +168,15 @@ export function Calendar({
     load()
   }, [load])
 
-  // Shown again: others may have changed it meanwhile, so it loads again as
-  // after a change, its events not opening until then; and an open Subscribe
-  // dialog starts over, to show the address as it is now, unless a change of
-  // its own is running
-  const [shownAgain, setShownAgain] = useState(0)
-  const wasActive = useRef(active)
-  useEffect(() => {
-    if (active && !wasActive.current) {
-      setChanges((n) => n + 1)
-      if (!busy) setShownAgain((n) => n + 1)
-    }
-    wasActive.current = active
-  }, [active, busy])
-
   const byDay = useMemo(() => {
     const days = new Map<string, Occurrence[]>()
     for (const e of events ?? []) {
-      for (const o of occurrences(e.vevent, grid.start, grid.end)) {
-        for (const key of daysOf(o, grid)) {
-          const list = days.get(key) ?? []
-          list.push(o)
-          days.set(key, list)
-        }
+      const o = occurrence(e.vevent, grid.start, grid.end)
+      if (!o) continue
+      for (const key of daysOf(o, grid)) {
+        const list = days.get(key) ?? []
+        list.push(o)
+        days.set(key, list)
       }
     }
     // All-day events first, then by time
@@ -225,23 +194,15 @@ export function Calendar({
   const shift = (months: number) =>
     setMonth((m) => new Date(m.getFullYear(), m.getMonth() + months, 1))
   const open = (o: Occurrence) =>
-    setEditing({
-      fields: { ...o.fields },
-      isNew: false,
-      opened: ++openings.current,
-    })
+    setEditing({ fields: { ...o.fields }, isNew: false })
   const create = (date: string) =>
-    setEditing({
-      fields: newFields(date),
-      isNew: true,
-      opened: ++openings.current,
-    })
+    setEditing({ fields: newFields(date), isNew: true })
 
   const chip = (o: Occurrence, key: string) => (
     <li key={key}>
       <button
         className={o.fields.allDay ? 'event all-day' : 'event'}
-        disabled={busy || stale}
+        disabled={stale}
         onClick={() => open(o)}
       >
         {!o.fields.allDay && (
@@ -284,7 +245,6 @@ export function Calendar({
           variant="primary"
           label="New event"
           icon="plus"
-          disabled={busy}
           onClick={() =>
             create(
               month.getTime() === thisMonth().getTime() ? today : dayKey(month)
@@ -294,7 +254,6 @@ export function Calendar({
         <IconButton
           label="Subscribe from a calendar app"
           icon="link"
-          disabled={busy}
           onClick={() => setSharing(true)}
         />
       </div>
@@ -323,7 +282,6 @@ export function Calendar({
                 className="bare day-number"
                 aria-label={`New event on ${dayTitle(d)}`}
                 title="New event"
-                disabled={busy}
                 onClick={() => create(key)}
               >
                 {d.getDate()}
@@ -347,12 +305,9 @@ export function Calendar({
       </div>
       {editing && (
         <EventDialog
-          key={editing.opened}
           backend={backend}
           fields={editing.fields}
           isNew={editing.isNew}
-          busy={busy}
-          setBusy={setBusy}
           onClose={() => setEditing(null)}
           onSaved={(movedTo) => {
             setChanges((n) => n + 1)
@@ -366,11 +321,8 @@ export function Calendar({
       )}
       {sharing && (
         <SubscribeDialog
-          key={shownAgain}
           backend={backend}
           address={address}
-          busy={busy}
-          setBusy={setBusy}
           onClose={() => setSharing(false)}
         />
       )}
@@ -378,25 +330,10 @@ export function Calendar({
   )
 }
 
-const REPEATS: [Repeat, string][] = [
-  ['', 'Does not repeat'],
-  ['DAILY', 'Every day'],
-  ['WEEKLY', 'Every week'],
-  ['MONTHLY', 'Every month'],
-  ['YEARLY', 'Every year'],
-]
-
-let zoneNames: string[] | null = null
-function zones(current: string): string[] {
-  if (!zoneNames) {
-    const listed = zoneList()
-    zoneNames = Array.isArray(listed) ? listed : []
-  }
-  return zoneNames.includes(current) ? zoneNames : [current, ...zoneNames]
-}
-
-// A calendar dialog: its title, a Close, and Escape to close it, both of
-// which wait while its change runs
+// A calendar dialog, modal: while it is open nothing else in the webmail can
+// be used, so a change it runs ends here. Its Close, and Escape, wait while
+// that change runs. The browser does not close it by itself (closedby), and
+// if one still does, the calendar takes it as a Close.
 function Dialog({
   label,
   title,
@@ -410,11 +347,28 @@ function Dialog({
   onClose: () => void
   children: ReactNode
 }) {
-  // The focus moves into the dialog, so that Escape reaches it, and back to
-  // where it was when the dialog closes
-  const box = useRef<HTMLDivElement>(null)
+  // The focus moves into the dialog, and back to where it was when the
+  // dialog closes
+  const box = useRef<HTMLDialogElement>(null)
+  // Escape anywhere in the page, as the focus may be outside the dialog,
+  // such as after its button was disabled
+  const escape = useRef(() => {})
+  escape.current = () => {
+    if (!busy) onClose()
+  }
+  useEffect(() => {
+    const keys = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      e.preventDefault()
+      escape.current()
+    }
+    document.addEventListener('keydown', keys)
+    return () => document.removeEventListener('keydown', keys)
+  }, [])
   useEffect(() => {
     const before = document.activeElement
+    box.current?.setAttribute('closedby', 'none')
+    box.current?.showModal()
     // The first control, or the dialog itself while its content loads
     const first = box.current?.querySelector<HTMLElement>(
       'input:not(:disabled), select:not(:disabled), textarea:not(:disabled), .compose-body button:not(:disabled)'
@@ -426,15 +380,14 @@ function Dialog({
     }
   }, [])
   return (
-    <div
+    <dialog
       ref={box}
       tabIndex={-1}
       className="dialog event-dialog"
-      role="dialog"
       aria-label={label}
-      onKeyDown={(e) => {
-        if (e.key === 'Escape' && !busy) onClose()
-      }}
+      onCancel={(e) => e.preventDefault()}
+      // Closed by the browser after all: the calendar's state follows
+      onClose={onClose}
     >
       <div className="compose-bar">
         <h2>{title}</h2>
@@ -447,7 +400,7 @@ function Dialog({
         />
       </div>
       {children}
-    </div>
+    </dialog>
   )
 }
 
@@ -455,35 +408,22 @@ function EventDialog({
   backend,
   fields: initial,
   isNew,
-  busy,
-  setBusy,
   onClose,
   onSaved,
 }: {
   backend: Mailbox
   fields: EventFields
   isNew: boolean
-  busy: boolean
-  setBusy: (busy: boolean) => void
   onClose: () => void
   // With the start date when a save moved the event, so that its month shows
   onSaved: (movedTo?: string) => void
 }) {
   const [f, setF] = useState(initial)
   const [error, setError] = useState('')
+  // A save or delete is running
+  const [busy, setBusy] = useState(false)
   const set = (change: Partial<EventFields>) =>
     setF((now) => ({ ...now, ...change }))
-
-  // The zone list is long: built again only when the zone changes
-  const zoneOptions = useMemo(
-    () =>
-      zones(f.tzid).map((z) => (
-        <option key={z} value={z}>
-          {z}
-        </option>
-      )),
-    [f.tzid]
-  )
 
   // Runs a change, then closes; a refusal shows and the form stays
   const run = async (work: () => Promise<unknown>, movedTo?: string) => {
@@ -603,43 +543,6 @@ function EventDialog({
               )}
             </span>
           </label>
-          {!f.allDay && (
-            <label>
-              Time zone
-              <select
-                aria-label="Time zone"
-                value={f.tzid}
-                onChange={(e) => set({ tzid: e.target.value })}
-              >
-                {zoneOptions}
-              </select>
-            </label>
-          )}
-          <label>
-            Repeats
-            <select
-              aria-label="Repeats"
-              value={f.repeat}
-              onChange={(e) => set({ repeat: e.target.value as Repeat })}
-            >
-              {REPEATS.map(([value, text]) => (
-                <option key={value} value={value}>
-                  {text}
-                </option>
-              ))}
-            </select>
-          </label>
-          {f.repeat && (
-            <label>
-              Until
-              <input
-                aria-label="Repeat until"
-                type="date"
-                value={f.until}
-                onChange={(e) => set({ until: e.target.value })}
-              />
-            </label>
-          )}
           <label>
             Where
             <input
@@ -675,16 +578,13 @@ function EventDialog({
           {!isNew && (
             <IconButton
               variant="danger"
-              label={f.repeat ? 'Delete every time it repeats' : 'Delete'}
+              label="Delete"
               icon="trash"
               disabled={busy}
               onClick={() => run(() => backend.mail_cal_delete(f.uid))}
             />
           )}
         </div>
-        {f.repeat && !isNew && (
-          <p className="hint">A change applies to every time it repeats.</p>
-        )}
       </form>
     </Dialog>
   )
@@ -693,19 +593,17 @@ function EventDialog({
 function SubscribeDialog({
   backend,
   address,
-  busy,
-  setBusy,
   onClose,
 }: {
   backend: Mailbox
   address: string
-  busy: boolean
-  setBusy: (busy: boolean) => void
   onClose: () => void
 }) {
   // undefined while it loads, null while the calendar is not shared
   const [token, setToken] = useState<string | null | undefined>(undefined)
   const [error, setError] = useState('')
+  // A change of the address is running
+  const [busy, setBusy] = useState(false)
   // The address last copied: "Copied" shows only while it is the one shown
   const [copied, setCopied] = useState('')
 
@@ -724,7 +622,6 @@ function SubscribeDialog({
     }
   }, [backend])
 
-  // The dialog stays open while a change runs, so its outcome shows here
   const act = async (work: () => Promise<string | null>) => {
     setBusy(true)
     await attempt(async () => setToken(await work()), setError)
@@ -769,8 +666,8 @@ function SubscribeDialog({
         {token && (
           <>
             <p>
-              Add this address to a calendar app as a calendar &ldquo;from
-              URL&rdquo;, or open it in one.
+              Copy this address, and add it to a calendar app as a calendar
+              &ldquo;from URL&rdquo;.
             </p>
             <input
               aria-label="Secret address"
@@ -790,13 +687,6 @@ function SubscribeDialog({
                   } catch {
                     setError('Copy it from the box above.')
                   }
-                }}
-              />
-              <IconButton
-                label="Open in a calendar app"
-                icon="calendar"
-                onClick={() => {
-                  window.location.href = url.replace(/^https?:/, 'webcal:')
                 }}
               />
               <IconButton
