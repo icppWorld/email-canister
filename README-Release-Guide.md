@@ -13,14 +13,14 @@ A release is a zip that a deployment vendors: the backend wasm built reproducibl
 1. On a branch, set `version.txt` to the new version, without the `v`, and the same version in `webmail/package.json` (`npm version --no-git-tag-version X.Y.Z` in `webmail/`, with a release candidate written `X.Y.Z-rcN`) and wherever `docs/how-it-works.html` names the release. `make test-python` fails while they differ.
 2. Copy `docs/release-notes/TEMPLATE.md` to `docs/release-notes/vX.Y.Z.md` and fill in every section. Write "None" where nothing changed, so a reader knows it was considered.
 3. Check locally with `scripts/check-neutral.sh`.
-4. Push the branch as `release/vX.Y.Z` and open a pull request. On such a branch CI also runs `reproducible-build`: it builds the wasm and the webmail in Docker, writes their hashes to its run summary, and packs the zip, listing its files in the job log. Put the hashes in the upgrade notes; a later commit that changes the code or the webmail changes them. Complete the reviews in [Contributing](README.md#contributing), and merge once CI is green.
+4. Push the branch as `release/vX.Y.Z` and open a pull request. On such a branch CI also runs `reproducible-build`: it builds the wasm and the webmail in Docker, prints their hashes in its log and run summary, and packs the zip, listing its files in the job log. Put the hashes in the upgrade notes. A later commit that changes the code or the webmail changes them, and so does a change merged to main meanwhile: then update the branch from main and take the hashes from the new run. Complete the reviews in [Contributing](README.md#contributing), and merge once CI is green.
 
    To build locally as well, `make docker-build-base docker-build` gives the same hashes in `out/`. The wasm build compiles many files in parallel and peaks at about 2.5 GB of memory in Docker; give Docker 4 GB or more. With too little, it stops with exit status 137.
 5. Wait for the `cicd` workflow on the merge commit to pass, then start the release:
    ```bash
    gh workflow run release.yml -f tag=vX.Y.Z
    ```
-   The workflow refuses to run unless the tag matches `version.txt`, the release notes exist, it runs on `main`, and `cicd` passed on that commit.
+   The workflow refuses to run unless the tag matches `version.txt`, the release notes exist, it runs on `main`, and `cicd` passed on that commit. It refuses to publish when the release notes do not name the wasm sha256 it built.
 6. Check the published release:
    - the title carries the wasm sha256;
    - the zip, the bare wasm and its `.sha256` are attached;
@@ -33,7 +33,7 @@ A release is a zip that a deployment vendors: the backend wasm built reproducibl
 1. Builds the toolchain image from `docker/Dockerfile.base`, pinned by digest, without the build cache.
 2. Builds the wasm and the webmail in it (`make docker-build`).
 3. Packs `out/email-canister_vX.Y.Z.zip` (`make release-zip`), which fails if the staged files mention any name on the denylist.
-4. Writes the description: the release notes, the commits since the previous tag, and the two hashes.
+4. Checks that the release notes name the wasm sha256 it built, and writes the description: the release notes, the commits since the previous tag, and the two hashes.
 5. Tags the commit and publishes the release.
 
 ## If something goes wrong

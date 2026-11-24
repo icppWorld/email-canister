@@ -275,7 +275,8 @@ jobs:
   # `build` and `native`; main and release pull requests get this one, and a
   # manual run when asked for. A release's notes take their hashes from it.
   reproducible-build:
-    if: github.event_name == 'push' || inputs.reproducible-build || startsWith(github.head_ref, 'release/')
+    # A release pull request from a fork gets no secrets, so it cannot pack the zip
+    if: github.event_name == 'push' || inputs.reproducible-build || (startsWith(github.head_ref, 'release/') && github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -288,6 +289,8 @@ jobs:
           echo "wasm    $(cat out/email-canister.wasm.sha256)" | tee -a "$GITHUB_STEP_SUMMARY"
           echo "webmail $(cat out/webmail/dist.sha256)" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: the release zip, as the release workflow packs it
+        env:
+          NEUTRAL_DENYLIST_TEXT: ${{ secrets.NEUTRAL_DENYLIST_TEXT }}
         run: |
           make release-zip
           unzip -Z1 out/email-canister_v"$(cat version.txt)".zip
