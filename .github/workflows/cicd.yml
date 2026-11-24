@@ -272,9 +272,10 @@ jobs:
           retention-days: 7
 
   # Slow: it builds the whole toolchain image. Pull requests get the builds in
-  # `build` and `native`; main gets this one, and a manual run when asked for.
+  # `build` and `native`; main and release pull requests get this one, and a
+  # manual run when asked for. A release's notes take their hashes from it.
   reproducible-build:
-    if: github.event_name == 'push' || inputs.reproducible-build
+    if: github.event_name == 'push' || inputs.reproducible-build || startsWith(github.head_ref, 'release/')
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -286,6 +287,10 @@ jobs:
         run: |
           echo "wasm    $(cat out/email-canister.wasm.sha256)" | tee -a "$GITHUB_STEP_SUMMARY"
           echo "webmail $(cat out/webmail/dist.sha256)" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: the release zip, as the release workflow packs it
+        run: |
+          make release-zip
+          unzip -Z1 out/email-canister_v"$(cat version.txt)".zip
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: build

@@ -12,15 +12,10 @@ A release is a zip that a deployment vendors: the backend wasm built reproducibl
 
 1. On a branch, set `version.txt` to the new version, without the `v`, and the same version in `webmail/package.json` (`npm version --no-git-tag-version X.Y.Z` in `webmail/`, with a release candidate written `X.Y.Z-rcN`) and wherever `docs/how-it-works.html` names the release. `make test-python` fails while they differ.
 2. Copy `docs/release-notes/TEMPLATE.md` to `docs/release-notes/vX.Y.Z.md` and fill in every section. Write "None" where nothing changed, so a reader knows it was considered.
-3. Check locally:
-   ```bash
-   scripts/check-neutral.sh
-   make test
-   make docker-build-base docker-build    # twice: the two wasm sha256 must match
-   make release-zip
-   ```
-   The wasm build compiles many files in parallel and peaks at about 2.5 GB of memory in Docker; give Docker 4 GB or more. With too little, it stops with exit status 137.
-4. Open a pull request and complete the reviews in [Contributing](README.md#contributing). Merge it once CI is green.
+3. Check locally with `scripts/check-neutral.sh`.
+4. Push the branch as `release/vX.Y.Z` and open a pull request. On such a branch CI also runs `reproducible-build`: it builds the wasm and the webmail in Docker, writes their hashes to its run summary, and packs the zip, listing its files in the job log. Put the hashes in the upgrade notes; a later commit that changes the code or the webmail changes them. Complete the reviews in [Contributing](README.md#contributing), and merge once CI is green.
+
+   To build locally as well, `make docker-build-base docker-build` gives the same hashes in `out/`. The wasm build compiles many files in parallel and peaks at about 2.5 GB of memory in Docker; give Docker 4 GB or more. With too little, it stops with exit status 137.
 5. Wait for the `cicd` workflow on the merge commit to pass, then start the release:
    ```bash
    gh workflow run release.yml -f tag=vX.Y.Z
@@ -29,7 +24,7 @@ A release is a zip that a deployment vendors: the backend wasm built reproducibl
 6. Check the published release:
    - the title carries the wasm sha256;
    - the zip, the bare wasm and its `.sha256` are attached;
-   - the sha256 in the title matches your local `out/email-canister.wasm.sha256` from step 3, and any wasm sha256 the upgrade notes name.
+   - the sha256 in the title matches the one from the pull request's `reproducible-build` job and the one the upgrade notes name: the release workflow built it again, separately.
 7. Upgrade a test deployment from the release, as in [docs/setup-guide.md](docs/setup-guide.md), before the production ones.
 8. Upgrade every deployment you maintain, each through its deployment repo's update steps, redeploying only what the upgrade notes say changed. When the release changes `bridge/`, also copy the new bridge files into the domain's Caffeine app, keep its `relayCaller`, make any change to the app's actor that the upgrade notes ask for, check the copy, and deploy the app.
 
