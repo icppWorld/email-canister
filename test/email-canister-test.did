@@ -272,8 +272,10 @@ service : () -> {
     "mail_cal_feed_reset" : (text) -> (text); // a new address; the old one stops
     "mail_cal_feed_stop" : (text) -> (); // stops sharing
 
-    // The calendar feeds, GET or HEAD /cal/<token>.ics. An unknown path or address
-    // is 404, another method on a live address 405, a busy mailbox 503.
+    // The calendar feeds, GET or HEAD /cal/<token>.ics. http_request answers an
+    // unknown path or address with 404 and another method with 405, and otherwise
+    // upgrades: http_request_update then serves the feed, or 503 while the
+    // mailbox is busy. Both answer 404 for an unknown address.
     "http_request" : (HttpRequest) -> (HttpResponse) query;
     "http_request_update" : (HttpUpdateRequest) -> (HttpResponse);
 
