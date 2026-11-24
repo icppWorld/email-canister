@@ -507,7 +507,6 @@ export function newUid(): string {
   return crypto.randomUUID()
 }
 
-// The address of a calendar's feed on the backend canister
 // The address to hand a calendar app: webcals keeps TLS on the token, where
 // many apps fetch a plain webcal address over http; the local network has no
 // TLS to keep
@@ -515,6 +514,7 @@ export function subscribeUrl(url: string): string {
   return url.replace(/^https:/, 'webcals:').replace(/^http:/, 'webcal:')
 }
 
+// The address of a calendar's feed on the backend canister
 export function feedUrl(backend: string, network: string, token: string) {
   if (network === 'ic') return `https://${backend}.icp0.io/cal/${token}.ics`
   const { protocol, port } = window.location

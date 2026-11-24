@@ -20,11 +20,11 @@ import {
   buildEvent,
   dayKey,
   feedUrl,
-  subscribeUrl,
   invalidFields,
   localZone,
   newUid,
   occurrences,
+  subscribeUrl,
   type EventFields,
   type Occurrence,
   type Repeat,
@@ -796,6 +796,7 @@ function SubscribeDialog({
               <IconButton
                 label="Open in a calendar app"
                 icon="calendar"
+                disabled={busy}
                 onClick={() => {
                   window.location.href = subscribeUrl(url)
                 }}
