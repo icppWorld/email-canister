@@ -436,6 +436,19 @@ test('the form refuses an event with no length, or before 1970', async ({
   await expect(dialog(page).getByRole('alert')).toHaveText(
     'The calendar holds events from 1970 on.'
   )
+  // The year 75, not 1975
+  await dialog(page).getByLabel('Start date').fill('0075-03-01')
+  await dialog(page).getByRole('button', { name: 'Save' }).click()
+  await expect(dialog(page).getByRole('alert')).toHaveText(
+    'The calendar holds events from 1970 on.'
+  )
+  await expect(dialog(page).getByLabel('End date')).toHaveValue('0075-03-01')
+  // The first day of 1970, all day, wherever the browser is
+  await dialog(page).getByLabel('All day').check()
+  await dialog(page).getByLabel('Start date').fill('1970-01-01')
+  await dialog(page).getByLabel('End date').fill('1970-01-01')
+  await dialog(page).getByRole('button', { name: 'Save' }).click()
+  await expect(dialog(page)).toBeHidden()
   await context.close()
 })
 
@@ -570,6 +583,38 @@ test('an event another app wrote beyond the form opens read-only', async ({
         'RRULE:FREQ=WEEKLY;COUNT=2;BYDAY=MO,WE',
       ],
     ],
+    // Each property as the form writes it: once, and without parameters
+    [
+      'Language',
+      17,
+      [
+        `DTSTART:${ymd(0, 17)}T090000Z`,
+        `DTEND:${ymd(0, 17)}T100000Z`,
+        'DESCRIPTION;LANGUAGE=en:Notes',
+      ],
+    ],
+    [
+      'Two notes',
+      18,
+      [
+        `DTSTART:${ymd(0, 18)}T090000Z`,
+        `DTEND:${ymd(0, 18)}T100000Z`,
+        'DESCRIPTION:One',
+        'DESCRIPTION:Two',
+      ],
+    ],
+    // A created date the form could not write back
+    [
+      'Created day',
+      19,
+      [
+        `DTSTART:${ymd(0, 19)}T090000Z`,
+        `DTEND:${ymd(0, 19)}T100000Z`,
+        'CREATED;VALUE=DATE:20260101',
+      ],
+    ],
+    // No end: the form would have to make one up
+    ['No end', 20, [`DTSTART:${ymd(0, 20)}T090000Z`]],
     [
       'Skip zone',
       24,
@@ -768,6 +813,9 @@ test('a dialog is modal, and stays open while its change runs', async ({
   await expect(
     dialog(page).getByRole('button', { name: 'Close' })
   ).toBeDisabled()
+  // Also with the focus outside it, where the browser would close it on a
+  // second Escape
+  await page.evaluate(() => (document.activeElement as HTMLElement)?.blur())
   await page.keyboard.press('Escape')
   await page.keyboard.press('Escape')
   await expect(dialog(page)).toBeVisible()
@@ -1002,5 +1050,20 @@ test('the address is offered only to copy', async ({ browser }) => {
   await expect(
     page.getByRole('button', { name: 'Copy the address' })
   ).toBeEnabled()
+  await context.close()
+})
+
+test('Escape closes a dialog whose focus is outside it, and another opens', async ({
+  browser,
+}) => {
+  const { context, page } = await signedIn(browser, USER_A)
+  await openCalendar(page)
+  await page.getByRole('button', { name: 'New event', exact: true }).click()
+  await page.evaluate(() => (document.activeElement as HTMLElement)?.blur())
+  await page.keyboard.press('Escape')
+  await expect(dialog(page)).toHaveCount(0)
+  await page.getByRole('button', { name: 'New event', exact: true }).click()
+  await expect(dialog(page)).toBeVisible()
+  await expect(dialog(page).getByLabel('Title')).toBeFocused()
   await context.close()
 })

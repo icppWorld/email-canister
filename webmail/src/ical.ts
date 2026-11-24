@@ -61,11 +61,14 @@ export const dayKey = (d: Date) =>
 
 const timeKey = (d: Date) => `${pad(d.getHours())}:${pad(d.getMinutes())}`
 
-// A local Date at a form's date, and time if given
+// A local Date at a form's date, and time if given. The year is set on its
+// own: the Date constructor reads 0 to 99 as 1900 to 1999.
 function localDate(date: string, time = '00:00'): Date {
   const [year, month, day] = date.split('-').map(Number)
   const [hour, minute] = time.split(':').map(Number)
-  return new Date(year, month - 1, day, hour, minute)
+  const d = new Date(2000, 0, 1, hour, minute)
+  d.setFullYear(year, month - 1, day)
+  return d
 }
 
 // A day later or earlier, as YYYY-MM-DD
@@ -95,7 +98,10 @@ export function invalidFields(f: EventFields): string {
   // A timed event ends after it starts (RFC 5545 3.6.1); an all-day one
   // ends the day after its last
   if (end <= start) return 'The event must end after it starts.'
-  if (start.getTime() < 0) return 'The calendar holds events from 1970 on.'
+  // By the date for an all-day event, whose midnight may fall before 1970 in
+  // UTC; the backend counts its span from 1970
+  if (f.allDay ? f.startDate < '1970-01-01' : start.getTime() < 0)
+    return 'The calendar holds events from 1970 on.'
   return ''
 }
 
@@ -148,16 +154,25 @@ export function buildEvent(f: EventFields): EventRequest {
   }
 }
 
-// Only what the form writes, with times in UTC or as dates
+// Only what the form writes, as it writes it: each property once and without
+// parameters, a start and an end both in UTC or both dates, and a created
+// time in UTC
 function editable(event: ICAL.Event): boolean {
   const component = event.component
   if (component.getAllSubcomponents().length > 0) return false
-  if (component.getAllProperties().some((p) => !WRITTEN.has(p.name)))
-    return false
-  const times = [event.startDate, event.endDate]
-  return times.every(
+  const seen = new Set<string>()
+  for (const p of component.getAllProperties()) {
+    if (!WRITTEN.has(p.name) || seen.has(p.name)) return false
+    seen.add(p.name)
+    // A date's VALUE=DATE is the only parameter the form writes
+    const parameters = Object.keys(p.toJSON()[1] as object)
+    if (parameters.some((name) => name !== 'value')) return false
+  }
+  if (!seen.has('dtend')) return false
+  const created = component.getFirstPropertyValue('created') as ICAL.Time | null
+  if (created && (created.isDate || created.zone?.tzid !== 'UTC')) return false
+  return [event.startDate, event.endDate].every(
     (t) =>
-      t !== null &&
       (t.isDate || (t.zone?.tzid === 'UTC' && t.second === 0)) &&
       t.isDate === event.startDate.isDate
   )

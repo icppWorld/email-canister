@@ -330,8 +330,9 @@ export function Calendar({
 }
 
 // A calendar dialog, modal: while it is open nothing else in the webmail can
-// be used, so a change it runs always ends here. Its Close, and Escape, wait
-// while that change runs.
+// be used, so a change it runs ends here. Its Close, and Escape, wait while
+// that change runs. The browser does not close it by itself (closedby), and
+// if one still does, the calendar takes it as a Close.
 function Dialog({
   label,
   title,
@@ -348,8 +349,24 @@ function Dialog({
   // The focus moves into the dialog, and back to where it was when the
   // dialog closes
   const box = useRef<HTMLDialogElement>(null)
+  // Escape anywhere in the page, as the focus may be outside the dialog,
+  // such as after its button was disabled
+  const escape = useRef(() => {})
+  escape.current = () => {
+    if (!busy) onClose()
+  }
+  useEffect(() => {
+    const keys = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      e.preventDefault()
+      escape.current()
+    }
+    document.addEventListener('keydown', keys)
+    return () => document.removeEventListener('keydown', keys)
+  }, [])
   useEffect(() => {
     const before = document.activeElement
+    box.current?.setAttribute('closedby', 'none')
     box.current?.showModal()
     // The first control, or the dialog itself while its content loads
     const first = box.current?.querySelector<HTMLElement>(
@@ -367,14 +384,9 @@ function Dialog({
       tabIndex={-1}
       className="dialog event-dialog"
       aria-label={label}
-      // Escape closes only through onClose, so the dialog never closes by
-      // itself while its change runs
-      onKeyDown={(e) => {
-        if (e.key !== 'Escape') return
-        e.preventDefault()
-        if (!busy) onClose()
-      }}
       onCancel={(e) => e.preventDefault()}
+      // Closed by the browser after all: the calendar's state follows
+      onClose={onClose}
     >
       <div className="compose-bar">
         <h2>{title}</h2>
