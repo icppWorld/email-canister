@@ -23,6 +23,10 @@ export type EventFields = {
   endTime: string
   sequence: number // raised on each change, so subscribers take the new one
   created: string // as written first, or ''
+  // A stored timed event's start and end, in ms: kept where the form's date
+  // and time still name them, as a local time the clocks go back over names
+  // two instants
+  stored: { start: number; end: number } | null
   // Written by another app with more than the form shows: it can be deleted
   // here, not changed
   readOnly: boolean
@@ -78,14 +82,24 @@ export function addDays(date: string, days: number): string {
   return dayKey(d)
 }
 
+// The stored instant if the form's date and time still name it, else the
+// local time
+function instant(date: string, time: string, stored?: number): Date {
+  if (stored !== undefined) {
+    const d = new Date(stored)
+    if (dayKey(d) === date && timeKey(d) === time) return d
+  }
+  return localDate(date, time)
+}
+
 // The event's start and end: local times, or midnights of an all-day
 // event's first day and of the day after its last
 function spanOf(f: EventFields): { start: Date; end: Date } {
   return f.allDay
     ? { start: localDate(f.startDate), end: localDate(addDays(f.endDate, 1)) }
     : {
-        start: localDate(f.startDate, f.startTime),
-        end: localDate(f.endDate, f.endTime),
+        start: instant(f.startDate, f.startTime, f.stored?.start),
+        end: instant(f.endDate, f.endTime, f.stored?.end),
       }
 }
 
@@ -226,6 +240,7 @@ export function occurrence(
         endTime: allDay ? '' : timeKey(end),
         sequence: event.sequence ?? 0,
         created: created ? created.toString() : '',
+        stored: allDay ? null : { start: start.getTime(), end: end.getTime() },
         readOnly: !editable(event),
       },
     }

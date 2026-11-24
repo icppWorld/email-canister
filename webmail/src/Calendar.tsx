@@ -97,6 +97,7 @@ function newFields(date: string): EventFields {
     endTime: '10:00',
     sequence: 0,
     created: '',
+    stored: null,
     readOnly: false,
   }
 }

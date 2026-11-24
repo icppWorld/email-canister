@@ -1067,3 +1067,53 @@ test('Escape closes a dialog whose focus is outside it, and another opens', asyn
   await expect(dialog(page).getByLabel('Title')).toBeFocused()
   await context.close()
 })
+
+test('an event in the hour the clocks go back keeps its time when saved', async ({
+  browser,
+}) => {
+  // In New York the clocks go back on the first Sunday of November, from
+  // 06:00 UTC: 06:30 UTC shows as 01:30, which also names 05:30 UTC
+  const year = now.getMonth() === 11 ? now.getFullYear() + 1 : now.getFullYear()
+  const first = new Date(Date.UTC(year, 10, 1))
+  const sunday = 1 + ((7 - first.getUTCDay()) % 7)
+  const day = `${year}11${String(sunday).padStart(2, '0')}`
+  await putRaw(
+    'fall-back',
+    [
+      'DTSTAMP:20260101T000000Z',
+      `DTSTART:${day}T063000Z`,
+      `DTEND:${day}T073000Z`,
+      'SUMMARY:Fall back',
+    ],
+    new Date(Date.UTC(year, 10, sunday, 6, 30)),
+    new Date(Date.UTC(year, 10, sunday, 7, 30))
+  )
+  const { context, page } = await signedIn(browser, USER_A, {
+    timezoneId: 'America/New_York',
+  })
+  await openCalendar(page)
+  const months = (year - now.getFullYear()) * 12 + 10 - now.getMonth()
+  for (let i = 0; i < months; i++)
+    await page.getByRole('button', { name: 'Next month' }).click()
+  for (let i = 0; i > months; i--)
+    await page.getByRole('button', { name: 'Previous month' }).click()
+  await month(page)
+    .getByRole('button', { name: /Fall back/ })
+    .click()
+  await expect(dialog(page).getByLabel('Start time')).toHaveValue('01:30')
+  await dialog(page).getByLabel('Title').fill('Fall back renamed')
+  await dialog(page).getByRole('button', { name: 'Save' }).click()
+  await expect(dialog(page)).toBeHidden()
+  const alice = await asAlice()
+  const found = await alice.mail_cal_list('alice', {
+    from: 0n,
+    to: 253_402_300_799n,
+    cursor: [],
+    limit: 100n,
+  })
+  const saved = found.items.find((e) => e.uid === 'fall-back')?.vevent ?? ''
+  expect(saved).toContain('SUMMARY:Fall back renamed')
+  expect(saved).toContain(`DTSTART:${day}T063000Z`)
+  expect(saved).toContain(`DTEND:${day}T073000Z`)
+  await context.close()
+})
