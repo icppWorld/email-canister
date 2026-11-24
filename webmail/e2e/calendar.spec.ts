@@ -31,6 +31,8 @@ test.beforeEach(async () => {
     limit: 500n,
   })
   for (const e of all.items) await alice.mail_cal_delete('alice', e.uid)
+  // Not shared, also after a test that failed while it was
+  await alice.mail_cal_feed_stop('alice')
 })
 
 const pad = (n: number) => String(n).padStart(2, '0')
@@ -1327,7 +1329,7 @@ test('an open Subscribe dialog shows the address as it is when shown again', asy
   await context.close()
 })
 
-test('the address is offered only to copy, as https', async ({ browser }) => {
+test('the address is offered only to copy', async ({ browser }) => {
   const { context, page } = await signedIn(browser, USER_A)
   answer(page, true)
   await openCalendar(page)
@@ -1335,8 +1337,9 @@ test('the address is offered only to copy, as https', async ({ browser }) => {
     .getByRole('button', { name: 'Subscribe from a calendar app' })
     .click()
   await page.getByRole('button', { name: 'Make a secret address' }).click()
+  // The feed's own address: https on the IC, http on this local network
   await expect(page.getByLabel('Secret address', { exact: true })).toHaveValue(
-    /^https?:\/\/.*\.ics$/
+    new RegExp(`^http://${env.backend}\\.localhost:\\d+/cal/[^/]+\\.ics$`)
   )
   // No webcal link: many apps fetch one over plain http, which would show
   // the token to the network
