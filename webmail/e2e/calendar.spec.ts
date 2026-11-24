@@ -6,6 +6,7 @@
 import { expect, type Page, test } from '@playwright/test'
 import ICAL from 'ical.js'
 
+import { subscribeUrl } from '../src/ical'
 import { env } from './local'
 import {
   answer,
@@ -1325,6 +1326,16 @@ test('an open Subscribe dialog shows the address as it is when shown again', asy
   await expect(address).toHaveValue(new RegExp(`/cal/${token}\\.ics$`))
   await alice.mail_cal_feed_stop('alice')
   await context.close()
+})
+
+test('a calendar app is handed the address with TLS kept', () => {
+  expect(subscribeUrl('https://a.icp0.io/cal/t.ics')).toBe(
+    'webcals://a.icp0.io/cal/t.ics'
+  )
+  // The local network has no TLS
+  expect(subscribeUrl('http://a.localhost:8000/cal/t.ics')).toBe(
+    'webcal://a.localhost:8000/cal/t.ics'
+  )
 })
 
 // Last in the file: alice joins a second mailbox here

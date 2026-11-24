@@ -20,6 +20,7 @@ import {
   buildEvent,
   dayKey,
   feedUrl,
+  subscribeUrl,
   invalidFields,
   localZone,
   newUid,
@@ -796,7 +797,7 @@ function SubscribeDialog({
                 label="Open in a calendar app"
                 icon="calendar"
                 onClick={() => {
-                  window.location.href = url.replace(/^https?:/, 'webcal:')
+                  window.location.href = subscribeUrl(url)
                 }}
               />
               <IconButton
