@@ -820,12 +820,14 @@ test('a dialog is modal, and stays open while its change runs', async ({
   await page.keyboard.press('Escape')
   await expect(dialog(page)).toBeVisible()
   expect(await dialog(page).evaluate((d) => d.matches(':modal'))).toBe(true)
-  expect(
-    await page.evaluate(
-      ([x, y]) => document.elementFromPoint(x, y)?.closest('dialog') !== null,
-      [(inbox?.x ?? 0) + 4, (inbox?.y ?? 0) + 4]
-    )
-  ).toBe(true)
+  // A click where the Inbox is reaches only the dialog's backdrop
+  expect(inbox).not.toBeNull()
+  await page.mouse.click(
+    (inbox?.x ?? 0) + (inbox?.width ?? 0) / 2,
+    (inbox?.y ?? 0) + (inbox?.height ?? 0) / 2
+  )
+  await expect(page.getByRole('region', { name: 'Calendar' })).toBeVisible()
+  await expect(dialog(page)).toBeVisible()
   // The month's reload after the save waits too: until it is in, the old
   // event shows but does not open, as its form would hold the old fields
   const queries = /\/api\/v\d\/canister\/[^/]+\/query$/
