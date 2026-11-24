@@ -790,8 +790,10 @@ const textButtons = (page: Page) =>
     buttons
       .filter(
         (button) =>
-          !button.closest('.menu-items, li.message-row, .attachments') &&
-          !button.matches('nav button[aria-current]')
+          // The calendar's events and days are its content, like rows
+          !button.closest(
+            '.menu-items, li.message-row, .attachments, .month .day, .agenda'
+          ) && !button.matches('nav button[aria-current]')
       )
       .filter(
         (button) =>
@@ -864,6 +866,29 @@ test('every button is an icon, with its name as its tooltip', async ({
   await messageRow(page, 'Iconic tern').click()
   await expect(page.getByTestId('outbox-state')).not.toHaveText('')
   await allIcons('Sent')
+
+  // The calendar, its event form, and its secret address
+  await folder(page, 'Calendar')
+  await expect(page.getByRole('region', { name: 'Calendar' })).toBeVisible()
+  await allIcons('the calendar')
+  await page.getByRole('button', { name: 'New event', exact: true }).click()
+  const form = page.getByRole('dialog', { name: 'New event' })
+  await expect(form).toBeVisible()
+  await allIcons('the event form')
+  await form.getByRole('button', { name: 'Close' }).click()
+  await page
+    .getByRole('button', { name: 'Subscribe from a calendar app' })
+    .click()
+  answer(page, true)
+  await page.getByRole('button', { name: 'Make a secret address' }).click()
+  await expect(page.getByLabel('Secret address', { exact: true })).toHaveValue(
+    /\.ics$/
+  )
+  await allIcons('the calendar address')
+  await page
+    .getByRole('dialog', { name: 'Subscribe from a calendar app' })
+    .getByRole('button', { name: 'Close' })
+    .click()
 
   // The compose window
   await page.getByRole('button', { name: 'Compose' }).click()

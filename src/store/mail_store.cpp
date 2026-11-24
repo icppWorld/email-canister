@@ -843,9 +843,12 @@ int64_t purge_step(int64_t mailbox) {
                    "needs_repair = '', clean_due = 0 WHERE id = ?");
     // Its members go with it: a new mailbox at the address starts without
     db::Stmt members(db::control(), "DELETE FROM members WHERE mailbox_id = ?");
+    // Its calendar's address stops working at once
+    db::Stmt feeds(db::control(), "DELETE FROM feeds WHERE mailbox_id = ?");
     if (!control || !clear_queue(mailbox) || !reset ||
         !reset.integer(1, mailbox).done() || !members ||
-        !members.integer(1, mailbox).done() || !control.commit()) {
+        !members.integer(1, mailbox).done() || !feeds ||
+        !feeds.integer(1, mailbox).done() || !control.commit()) {
       return -1;
     }
   }

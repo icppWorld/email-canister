@@ -72,6 +72,11 @@ int64_t g_upgraded_at = 0;
 
 namespace store {
 
+bool stop_feed(int64_t mailbox) {
+  db::Stmt clear(db::control(), "DELETE FROM feeds WHERE mailbox_id = ?");
+  return clear && clear.integer(1, mailbox).done();
+}
+
 std::string create_mailbox(const std::string &local, int64_t quota_bytes,
                            int64_t now_seconds) {
   if (!valid_local(local)) return "invalid address";
@@ -163,6 +168,8 @@ std::string remove_member(const std::string &local,
   if (!remove || !remove.integer(1, entry.id).text(2, principal).done())
     return "could not remove the member";
   if (db::changes(db::control()) != 1) return "not a member of this mailbox";
+  // A member may have copied the calendar's secret address: it stops working
+  if (!stop_feed(entry.id)) return "could not end the calendar's address";
   if (downloading_for(entry, principal) &&
       !export_thaw(entry.id, principal, entry.export_started_ns))
     return "could not end the member's download";
@@ -233,10 +240,16 @@ std::string set_disabled(const std::string &local, bool disabled) {
   if (!find_entry(local, entry) || entry.vacant) return "no such entry";
   if (entry.purging && !disabled)
     return "the entry is being purged: finish the purge first";
+  db::Transaction write(db::control());
   db::Stmt update(db::control(),
                   "UPDATE mailboxes SET disabled = ? WHERE id = ?");
-  return update &&
-                 update.integer(1, disabled ? 1 : 0).integer(2, entry.id).done()
+  // A disabled mailbox's calendar address ends, and is not back when it is
+  // enabled again
+  return write && update &&
+                 update.integer(1, disabled ? 1 : 0)
+                     .integer(2, entry.id)
+                     .done() &&
+                 (!disabled || stop_feed(entry.id)) && write.commit()
              ? ""
              : "could not store the change";
 }

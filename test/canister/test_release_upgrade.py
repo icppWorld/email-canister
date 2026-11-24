@@ -1,8 +1,9 @@
 """An upgrade from the last release keeps the mail, on a local replica: the
 release's wasm, from GitHub and checked by its sha256, takes mail, and is then
 upgraded to this build, which takes control.db to its schema, and whose pump
-takes each mailbox file to schema 4. The mail, its folders and flags, and the
-blocks stay, and the pump cleans out expired mail with the upgraded registry.
+takes each mailbox file to schema 5. The mail, its folders and flags, and the
+blocks stay, the pump cleans out expired mail with the upgraded registry, and
+the mailbox gains a calendar.
 
 $ make build-test
 $ icp network start -d
@@ -114,6 +115,28 @@ def test__an_upgrade_from_the_last_release_keeps_the_mail(
     assert unread(USER_A, "alice") == 1
     assert "tern@birds.example" in mail("mail_blocked", "alice", "()", USER_A)
     assert 'result = "ok"' in call("admin_check", '("alice", null)')
+    # Schema 5's calendar, and control.db's version 3: its feed
+    event = "BEGIN:VEVENT\\r\\nUID:kept\\r\\nSUMMARY:Kept tern\\r\\nEND:VEVENT"
+    assert (
+        mail(
+            "mail_cal_put",
+            "alice",
+            f'(record {{ uid = "kept"; vevent = "{event}"; starts = 0 : nat64; '
+            "ends = 1 : nat64; vtimezones = vec {} })",
+            USER_A,
+        )
+        == "()"
+    )
+    assert "Kept tern" in mail(
+        "mail_cal_list",
+        "alice",
+        "(record { from = 0 : nat64; to = 2 : nat64; cursor = null; "
+        "limit = 10 : nat64 })",
+        USER_A,
+    )
+    assert re.search(
+        r'"[0-9a-f]{32}"', mail("mail_cal_feed_reset", "alice", "()", USER_A)
+    )
 
     # control.db's version 2: new mail finds the mail past its 30 days in
     # Trash, and has the pump delete it. The block still holds.

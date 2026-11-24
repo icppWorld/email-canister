@@ -240,6 +240,28 @@ ALTER TABLE messages ADD COLUMN sender_address TEXT NOT NULL DEFAULT ''; -- set 
     R"sql(
 CREATE INDEX messages_inbox ON messages(uid) WHERE folder = 0;
 )sql",
+    // Version 5: the calendar. Each event is the VEVENT block the webmail
+    // wrote, with the span it covers in UTC seconds for a window's list;
+    // zones holds the VTIMEZONE blocks the events name, and event_zones
+    // which event names which, so that a zone no event names is dropped.
+    R"sql(
+CREATE TABLE events(
+  id INTEGER PRIMARY KEY, -- the cursor of a page
+  uid TEXT NOT NULL UNIQUE,
+  vevent TEXT NOT NULL,
+  starts INTEGER NOT NULL,
+  ends INTEGER NOT NULL, -- far ahead for a repeat that never ends
+  modified_ns INTEGER NOT NULL
+);
+CREATE INDEX events_by_end ON events(ends);
+CREATE TABLE zones(tzid TEXT PRIMARY KEY, block TEXT NOT NULL) WITHOUT ROWID;
+CREATE TABLE event_zones(
+  event_id INTEGER NOT NULL,
+  tzid TEXT NOT NULL,
+  PRIMARY KEY(event_id, tzid)
+) WITHOUT ROWID;
+CREATE INDEX event_zones_by_zone ON event_zones(tzid);
+)sql",
 };
 
 // The changes to control.db after version 1: step i takes it from version
@@ -250,6 +272,12 @@ const std::vector<const char *> k_control_steps = {
     R"sql(
 ALTER TABLE mailboxes ADD COLUMN clean_due INTEGER NOT NULL DEFAULT 0; -- marks since the last cleanup: expired Trash and Spam mail may wait for the pump
 CREATE INDEX mailboxes_clean_due ON mailboxes(id) WHERE clean_due > 0;
+)sql",
+    // Version 3: the calendars shared by a secret address, by its token, so
+    // that a feed request opens only its own mailbox's file. The token is
+    // kept here only, so a downloaded mailbox file carries no live address.
+    R"sql(
+CREATE TABLE feeds(mailbox_id INTEGER PRIMARY KEY, token TEXT NOT NULL UNIQUE);
 )sql",
 };
 

@@ -93,6 +93,18 @@ MAILBOX_CALLS = {
     "mail_export_freeze": "(null)",
     "mail_export_thaw": "(0 : nat64)",
     "mail_export_chunk": "(record { offset = 0 : nat64; length = 10 : nat64 })",
+    "mail_cal_list": (
+        "(record { from = 0 : nat64; to = 1 : nat64; cursor = null; "
+        "limit = 10 : nat64 })"
+    ),
+    "mail_cal_put": (
+        '(record { uid = "x"; vevent = "BEGIN:VEVENT\\r\\nUID:x\\r\\nEND:VEVENT"; '
+        "starts = 0 : nat64; ends = 0 : nat64; vtimezones = vec {} })"
+    ),
+    "mail_cal_delete": '("x")',
+    "mail_cal_feed": "()",
+    "mail_cal_feed_reset": "()",
+    "mail_cal_feed_stop": "()",
 }
 
 

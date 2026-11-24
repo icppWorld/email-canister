@@ -13,6 +13,25 @@
 
 #include "allowlist.h"
 #include "ic_api.h"
+#include "mail_store.h"
+
+inline CandidTypeNat64 nat64(int64_t value) {
+  return CandidTypeNat64{static_cast<uint64_t>(value)};
+}
+
+// A page's size as the caller asked, where 0 or too many means `max`
+inline int64_t page_limit(uint64_t limit, uint64_t max) {
+  return static_cast<int64_t>(limit == 0 || limit > max ? max : limit);
+}
+
+// The domain of this canister's addresses: the one an admin set, or else its
+// own icp0.io name
+inline std::string mail_domain(IC_API &ic_api) {
+  std::string domain = store::domain();
+  if (domain.empty())
+    domain = ic_api.get_canister_self().get_text() + ".icp0.io";
+  return domain;
+}
 
 inline std::string lower(std::string s) {
   std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) {

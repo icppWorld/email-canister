@@ -200,6 +200,9 @@ std::string export_freeze(int64_t mailbox, const std::string &principal,
 bool export_thaw(int64_t mailbox, const std::string &principal,
                  int64_t started_ns);
 
+// Ends the mailbox's calendar address, if it has one
+bool stop_feed(int64_t mailbox);
+
 // A write to a mailbox's file and to the registry, which commit together.
 // Declare it before the write's statements, so that they finish first.
 class MailboxWrite {
