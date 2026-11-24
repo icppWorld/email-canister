@@ -1162,9 +1162,21 @@ th {
   padding: 6px 4px;
   border-bottom: 1px solid var(--border);
 }
-.dialog.event-dialog {
+/* A modal dialog element, placed as the compose window is */
+dialog.dialog.event-dialog {
+  inset: auto 18px 18px auto;
+  margin: 0;
+  max-width: none;
+  color: inherit;
   padding: 0;
   gap: 0;
+}
+/* Hidden for the moment before it opens as a modal */
+dialog.event-dialog:not([open]) {
+  display: none;
+}
+dialog.event-dialog::backdrop {
+  background: rgb(0 0 0 / 25%);
 }
 .dialog label.check {
   display: flex;
@@ -1189,7 +1201,7 @@ th {
   .agenda {
     display: block;
   }
-  .dialog.event-dialog {
+  dialog.dialog.event-dialog {
     inset: 0;
     width: auto;
     max-height: none;

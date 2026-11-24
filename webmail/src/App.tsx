@@ -41,22 +41,6 @@ const Calendar = lazy(() =>
   )
 )
 
-// A mailbox's calendar, with a mailbox handle of its own that lasts
-function CalendarOf({
-  backend,
-  local,
-  address,
-  active,
-}: {
-  backend: Backend
-  local: string
-  address: string
-  active: boolean
-}) {
-  const box = useMemo(() => mailbox(backend, local), [backend, local])
-  return <Calendar backend={box} address={address} active={active} />
-}
-
 function CalendarUnavailable() {
   return (
     <div className="calendar">
@@ -242,16 +226,6 @@ export function App() {
     [backend, local]
   )
   const current = box !== null ? view : 'admin'
-  // The mailboxes whose calendar was opened: each stays, hidden, while another
-  // page or mailbox shows, so that a save still running there ends where its
-  // form is
-  const [calendars, setCalendars] = useState<string[]>([])
-  if (
-    current === 'calendar' &&
-    local !== undefined &&
-    !calendars.includes(local)
-  )
-    setCalendars([...calendars, local])
   const download = useDownload(box, shown?.address ?? '', backend)
 
   // The webmail's Reload asks first while a message is being written or a copy
@@ -665,27 +639,11 @@ export function App() {
             refresh={refresh}
           />
         )}
-        {backend &&
-          calendars.map((l) => {
-            const kept = member(l)
-            if (!kept) return null
-            const active = current === 'calendar' && l === local
-            return (
-              // Hidden, not gone, while another page or mailbox shows
-              <div key={l} style={{ display: active ? 'contents' : 'none' }}>
-                <Suspense
-                  fallback={<p className="hint">Loading the calendar…</p>}
-                >
-                  <CalendarOf
-                    backend={backend}
-                    local={l}
-                    address={kept.address}
-                    active={active}
-                  />
-                </Suspense>
-              </div>
-            )
-          })}
+        {current === 'calendar' && box && shown && (
+          <Suspense fallback={<p className="hint">Loading the calendar…</p>}>
+            <Calendar key={local} backend={box} address={shown.address} />
+          </Suspense>
+        )}
         {current === 'admin' && <AdminPanel backend={backend} />}
       </div>
       {draft && backend && (
