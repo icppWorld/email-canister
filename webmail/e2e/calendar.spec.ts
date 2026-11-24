@@ -1253,6 +1253,17 @@ test('Copied shows only for the address copied, and not during a change', async 
 test('a calendar shown again loads what changed while it was hidden', async ({
   browser,
 }) => {
+  await putRaw(
+    'before',
+    [
+      'DTSTAMP:20260101T000000Z',
+      `DTSTART:${ymd(0, 10)}T090000Z`,
+      `DTEND:${ymd(0, 10)}T100000Z`,
+      'SUMMARY:Before',
+    ],
+    new Date(now.getFullYear(), now.getMonth(), 10),
+    new Date(now.getFullYear(), now.getMonth(), 11)
+  )
   const { context, page } = await signedIn(browser, USER_A)
   await openCalendar(page)
   await page.getByRole('button', { name: 'Inbox', exact: true }).click()
@@ -1268,10 +1279,27 @@ test('a calendar shown again loads what changed while it was hidden', async ({
     new Date(now.getFullYear(), now.getMonth(), 11),
     new Date(now.getFullYear(), now.getMonth(), 12)
   )
+  // Until the month has loaded again, the events shown do not open
+  const queries = /\/api\/v\d\/canister\/[^/]+\/query$/
+  let reload = () => {}
+  const reloaded = new Promise<void>((resolve) => (reload = resolve))
+  await page.route(queries, async (route) => {
+    if (route.request().postDataBuffer()?.includes('mail_cal_list'))
+      await reloaded
+    await route.continue()
+  })
   await openCalendar(page)
+  await expect(
+    month(page).getByRole('button', { name: /Before/ })
+  ).toBeDisabled()
+  reload()
   await expect(
     month(page).getByRole('button', { name: /Meanwhile/ })
   ).toHaveCount(1)
+  await expect(
+    month(page).getByRole('button', { name: /Before/ })
+  ).toBeEnabled()
+  await page.unroute(queries)
   await context.close()
 })
 

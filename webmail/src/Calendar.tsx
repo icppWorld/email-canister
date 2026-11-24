@@ -185,12 +185,13 @@ export function Calendar({
     load()
   }, [load])
 
-  // Shown again: others may have changed it meanwhile
+  // Shown again: others may have changed it meanwhile, so it loads again as
+  // after a change, its events not opening until then
   const wasActive = useRef(active)
   useEffect(() => {
-    if (active && !wasActive.current) load()
+    if (active && !wasActive.current) setChanges((n) => n + 1)
     wasActive.current = active
-  }, [active, load])
+  }, [active])
 
   const byDay = useMemo(() => {
     const days = new Map<string, Occurrence[]>()
