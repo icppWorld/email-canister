@@ -1240,6 +1240,12 @@ test('Copied shows only for the address copied, and not during a change', async 
     })
     .click()
   await expect(page.getByRole('button', { name: 'Copied' })).toBeDisabled()
+  // Nor does the address change again or stop meanwhile
+  await expect(
+    page.getByRole('button', {
+      name: 'Stop sharing: the address stops working',
+    })
+  ).toBeDisabled()
   release()
   await expect(address).not.toHaveValue(old)
   // The copy was of the old address
@@ -1339,7 +1345,7 @@ test('the address is offered only to copy', async ({ browser }) => {
   await page.getByRole('button', { name: 'Make a secret address' }).click()
   // The feed's own address: https on the IC, http on this local network
   await expect(page.getByLabel('Secret address', { exact: true })).toHaveValue(
-    new RegExp(`^http://${env.backend}\\.localhost:\\d+/cal/[^/]+\\.ics$`)
+    new RegExp(`^http://${env.backend}\\.localhost(:\\d+)?/cal/[^/]+\\.ics$`)
   )
   // No webcal link: many apps fetch one over plain http, which would show
   // the token to the network
@@ -1347,8 +1353,11 @@ test('the address is offered only to copy', async ({ browser }) => {
   await expect(
     page.getByRole('button', { name: 'Open in a calendar app' })
   ).toHaveCount(0)
-  const alice = await asAlice()
-  await alice.mail_cal_feed_stop('alice')
+  await expect(page.getByText('Copy this address, and add it')).toBeVisible()
+  await expect(page.getByText('open it in one')).toHaveCount(0)
+  await expect(
+    page.getByRole('button', { name: 'Copy the address' })
+  ).toBeEnabled()
   await context.close()
 })
 

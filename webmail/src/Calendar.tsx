@@ -769,8 +769,8 @@ function SubscribeDialog({
         {token && (
           <>
             <p>
-              Add this address to a calendar app as a calendar &ldquo;from
-              URL&rdquo;, or open it in one.
+              Copy this address, and add it to a calendar app as a calendar
+              &ldquo;from URL&rdquo;.
             </p>
             <input
               aria-label="Secret address"
