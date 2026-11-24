@@ -7,7 +7,14 @@ import { expect, type Page, test } from '@playwright/test'
 import ICAL from 'ical.js'
 
 import { env } from './local'
-import { answer, asAlice, freshBackend, signedIn, USER_A } from './support'
+import {
+  answer,
+  asAlice,
+  freshBackend,
+  joinTeam,
+  signedIn,
+  USER_A,
+} from './support'
 
 test.describe.configure({ mode: 'serial' })
 
@@ -1240,5 +1247,59 @@ test('Copied shows only for the address copied, and not during a change', async 
   await page.unroute(calls)
   const alice = await asAlice()
   await alice.mail_cal_feed_stop('alice')
+  await context.close()
+})
+
+test('a calendar shown again loads what changed while it was hidden', async ({
+  browser,
+}) => {
+  const { context, page } = await signedIn(browser, USER_A)
+  await openCalendar(page)
+  await page.getByRole('button', { name: 'Inbox', exact: true }).click()
+  // Another member adds an event meanwhile
+  await putRaw(
+    'meanwhile',
+    [
+      'DTSTAMP:20260101T000000Z',
+      `DTSTART:${ymd(0, 11)}T090000Z`,
+      `DTEND:${ymd(0, 11)}T100000Z`,
+      'SUMMARY:Meanwhile',
+    ],
+    new Date(now.getFullYear(), now.getMonth(), 11),
+    new Date(now.getFullYear(), now.getMonth(), 12)
+  )
+  await openCalendar(page)
+  await expect(
+    month(page).getByRole('button', { name: /Meanwhile/ })
+  ).toHaveCount(1)
+  await context.close()
+})
+
+// Last in the file: alice joins a second mailbox here
+test('a save still running when another mailbox opens ends in its form', async ({
+  browser,
+}) => {
+  joinTeam(USER_A)
+  const { context, page } = await signedIn(browser, USER_A)
+  await page.getByRole('button', { name: 'alice', exact: true }).click()
+  await openCalendar(page)
+  const calls = /\/api\/v\d\/canister\/[^/]+\/call$/
+  let release = () => {}
+  const gate = new Promise<void>((resolve) => (release = resolve))
+  await page.route(calls, async (route) => {
+    await gate
+    await route.abort()
+  })
+  await page.getByRole('button', { name: 'New event', exact: true }).click()
+  await dialog(page).getByLabel('Title').fill('Other mailbox')
+  await dialog(page).getByRole('button', { name: 'Save' }).click()
+  await page.getByRole('button', { name: 'team', exact: true }).click()
+  release()
+  await page.getByRole('button', { name: 'alice', exact: true }).click()
+  await openCalendar(page)
+  await expect(dialog(page).getByRole('alert')).toBeVisible()
+  await expect(dialog(page).getByLabel('Title')).toHaveValue('Other mailbox')
+  await page.unroute(calls)
+  await dialog(page).getByRole('button', { name: 'Close' }).click()
   await context.close()
 })

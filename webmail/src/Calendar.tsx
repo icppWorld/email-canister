@@ -118,9 +118,12 @@ function thisMonth(): Date {
 export function Calendar({
   backend,
   address,
+  active = true,
 }: {
   backend: Mailbox
   address: string
+  // False while it is kept hidden behind another page or mailbox
+  active?: boolean
 }) {
   const [month, setMonth] = useState(thisMonth)
   // The events, with the grid and the change they were loaded for: a month
@@ -181,6 +184,13 @@ export function Calendar({
   useEffect(() => {
     load()
   }, [load])
+
+  // Shown again: others may have changed it meanwhile
+  const wasActive = useRef(active)
+  useEffect(() => {
+    if (active && !wasActive.current) load()
+    wasActive.current = active
+  }, [active, load])
 
   const byDay = useMemo(() => {
     const days = new Map<string, Occurrence[]>()
