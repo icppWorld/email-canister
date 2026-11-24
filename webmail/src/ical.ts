@@ -59,9 +59,10 @@ const DAY_MARGIN = 14 * 3600
 
 const pad = (n: number) => String(n).padStart(2, '0')
 
-// A local day as YYYY-MM-DD, as the form and the grid name days
+// A local day as YYYY-MM-DD, as the form and the grid name days: the year in
+// four digits, as a date input gives it
 export const dayKey = (d: Date) =>
-  `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+  `${String(d.getFullYear()).padStart(4, '0')}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 
 const timeKey = (d: Date) => `${pad(d.getHours())}:${pad(d.getMinutes())}`
 
