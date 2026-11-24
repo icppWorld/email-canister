@@ -74,7 +74,9 @@ jobs:
           wasm=$(cat out/email-canister.wasm.sha256)
           webmail=$(cat out/webmail/dist.sha256)
           # The notes took their hashes from the pull request's build: this one must agree
-          grep -qF "$wasm" "docs/release-notes/$TAG.md" || { echo "docs/release-notes/$TAG.md does not name the wasm built here, $wasm" >&2; exit 1; }
+          for hash in "$wasm" "$webmail"; do
+            grep -qF "$hash" "docs/release-notes/$TAG.md" || { echo "docs/release-notes/$TAG.md does not name $hash, built here" >&2; exit 1; }
+          done
           echo "WASM_SHA256=$wasm" >>"$GITHUB_ENV"
           {
             cat "docs/release-notes/$TAG.md"
