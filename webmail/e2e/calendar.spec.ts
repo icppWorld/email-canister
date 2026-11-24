@@ -1117,3 +1117,33 @@ test('an event in the hour the clocks go back keeps its time when saved', async 
   expect(saved).toContain(`DTEND:${day}T073000Z`)
   await context.close()
 })
+
+test('a time the clocks skip is refused, not saved as another', async ({
+  browser,
+}) => {
+  // In New York the clocks go forward on the second Sunday of March, from
+  // 02:00 to 03:00
+  const year = now.getFullYear() + 1
+  const first = new Date(Date.UTC(year, 2, 1))
+  const sunday = 8 + ((7 - first.getUTCDay()) % 7)
+  const date = `${year}-03-${String(sunday).padStart(2, '0')}`
+  const { context, page } = await signedIn(browser, USER_A, {
+    timezoneId: 'America/New_York',
+  })
+  await openCalendar(page)
+  await page.getByRole('button', { name: 'New event', exact: true }).click()
+  await dialog(page).getByLabel('Title').fill('Skipped')
+  await dialog(page).getByLabel('Start date').fill(date)
+  await dialog(page).getByLabel('End date').fill(date)
+  await dialog(page).getByLabel('Start time').fill('02:30')
+  await dialog(page).getByLabel('End time').fill('04:00')
+  await dialog(page).getByRole('button', { name: 'Save' }).click()
+  await expect(dialog(page).getByRole('alert')).toHaveText(
+    'That time does not exist on that day here: the clocks skip it.'
+  )
+  // An hour later is fine
+  await dialog(page).getByLabel('Start time').fill('03:30')
+  await dialog(page).getByRole('button', { name: 'Save' }).click()
+  await expect(dialog(page)).toBeHidden()
+  await context.close()
+})

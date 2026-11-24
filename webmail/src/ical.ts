@@ -109,6 +109,15 @@ export function invalidFields(f: EventFields): string {
   if (!f.startDate || !f.endDate) return 'Give the event a date.'
   if (!f.allDay && (!f.startTime || !f.endTime)) return 'Give the event a time.'
   const { start, end } = spanOf(f)
+  // A time the clocks skip, going forward, would be saved as another
+  if (
+    !f.allDay &&
+    (dayKey(start) !== f.startDate ||
+      timeKey(start) !== f.startTime ||
+      dayKey(end) !== f.endDate ||
+      timeKey(end) !== f.endTime)
+  )
+    return 'That time does not exist on that day here: the clocks skip it.'
   // A timed event ends after it starts (RFC 5545 3.6.1); an all-day one
   // ends the day after its last
   if (end <= start) return 'The event must end after it starts.'
