@@ -73,6 +73,10 @@ jobs:
           git tag "$TAG" "$GITHUB_SHA"
           wasm=$(cat out/email-canister.wasm.sha256)
           webmail=$(cat out/webmail/dist.sha256)
+          # The notes took their hashes from the pull request's build: this one must agree
+          for hash in "$wasm" "$webmail"; do
+            grep -qF "$hash" "docs/release-notes/$TAG.md" || { echo "docs/release-notes/$TAG.md does not name $hash, built here" >&2; exit 1; }
+          done
           echo "WASM_SHA256=$wasm" >>"$GITHUB_ENV"
           {
             cat "docs/release-notes/$TAG.md"

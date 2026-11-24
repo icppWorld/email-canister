@@ -14,7 +14,7 @@ None, or each changed method with old and new signature.
 
 ## Upgrade notes
 
-How to upgrade an existing deployment: whether to stop the canister first (always for the backend), any migration, and anything to do after.
+How to upgrade an existing deployment: whether to stop the canister first (always for the backend), any migration, and anything to do after. Name the wasm sha256 and the webmail's unbranded `dist` hash, from the release pull request's `reproducible-build` job: the release workflow refuses to publish without them.
 
 ## Webmail and settings changes
 
