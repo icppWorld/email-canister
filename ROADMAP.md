@@ -25,7 +25,8 @@ email-canister grows in small releases, driven by running it for real mailboxes.
 - A quieter reader (v0.8.0): remote images load only after the reader's Show images, for that message; a message's `<link>`, `<meta>`, `<template>` and frame elements are left out of the reader, which closes ways an opened message could signal its sender; a reload after a deploy shows the new webmail.
 - A stricter reader (v0.9.0): links in a message open in a new tab, for a full web address only; names, addresses, subjects, previews and file names shown with a visible character in place of a control character or a mark that reverses text; a message goes through an allow-list of HTML before it is shown; fixes from an audit of what an opened message, its sender or another site can learn about the reader.
 - A reader for the phone (v0.10.0): the webmail names its release and offers a Reload in the header menu, and shows a banner when a newer one is deployed, as a phone can keep an old webmail; Reload asks first while a message is being written or a copy downloading; a message laid out wider than the reader shrunk to fit it, as phone mail apps do.
-- A calendar per mailbox (v0.12.0): one-off events, timed in UTC or all-day, that every member sees and changes, and a secret address at which any calendar app that subscribes by URL follows it as an iCalendar file.
+- An HTML file as the message (v0.11.0): Compose sends an HTML file, or HTML pasted into an empty message, as it is, with a preview.
+- A calendar per mailbox (v0.12.0): one-off events, entered in the browser's time zone and stored in UTC, or all-day, that every member sees and changes, and a secret address at which any calendar app that subscribes by URL follows it as an iCalendar file.
 
 ## Next
 

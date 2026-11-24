@@ -374,11 +374,11 @@ footer { color: var(--muted); font-size: 13.5px; border-top: 1px solid var(--lin
       <span class="eyebrow">Storage</span>
       <h2>One SQLite database per mailbox</h2>
       <div class="prose">
-        <p>Each mailbox has its own SQLite database, a file in a small file system on the canister's stable memory. Beside them, <code>control.db</code> holds the settings, the registry of mailboxes with their members, the queue of incoming mail and the work still to do. Stable memory survives upgrades, so the mail does too. A search, a check, a download and a purge each touch only one mailbox's file, so their cost grows with that mailbox, not with the whole canister. Bodies are rows in the database rather than one file per message: one file per message was measured at about 36 KB of overhead each, which turned an 85 MB database into 1.44 GB of memory.</p>
+        <p>Each mailbox has its own SQLite database, a file in a small file system on the canister's stable memory. Beside them, <code>control.db</code> holds the settings, the registry of mailboxes with their members and their calendars' secret addresses, the queue of incoming mail and the work still to do. Stable memory survives upgrades, so the mail does too. A search, a check, a download and a purge each touch only one mailbox's file, so their cost grows with that mailbox, not with the whole canister. Bodies are rows in the database rather than one file per message: one file per message was measured at about 36 KB of overhead each, which turned an 85 MB database into 1.44 GB of memory.</p>
       </div>
       <figure>
         <div class="diagram">
-          <svg viewBox="0 0 900 230" role="img" aria-label="Stable memory holds a custom virtual file system with control.db and one SQLite file per mailbox. control.db holds the registry of mailboxes and the queue of incoming mail. Each mailbox file holds its messages, bodies, full-text index and outbox.">
+          <svg viewBox="0 0 900 230" role="img" aria-label="Stable memory holds a custom virtual file system with control.db and one SQLite file per mailbox. control.db holds the registry of mailboxes, with their calendars' secret addresses, and the queue of incoming mail. Each mailbox file holds its messages, bodies, full-text index, outbox and calendar.">
             <rect class="zone" x="10" y="10" width="880" height="210" rx="6"/>
             <text class="t-m" x="26" y="32">STABLE MEMORY · kept across upgrades, up to hundreds of GiB per canister</text>
             <rect class="zone" x="28" y="44" width="844" height="160" rx="6"/>
@@ -534,7 +534,7 @@ footer { color: var(--muted); font-size: 13.5px; border-top: 1px solid var(--lin
             <text class="t-bad" x="600" y="70">no content</text>
           </svg>
         </div>
-        <figcaption>The only path into a mailbox is being one of its members. Admin methods create mailboxes and manage members and quotas, but return no subjects, senders or bodies.</figcaption>
+        <figcaption>The only path into a mailbox is being one of its members. Admin methods create mailboxes and manage members and quotas, but return no subjects, senders or bodies. One exception reads without signing in: a calendar a member has shared, whose secret address serves its events to anyone who has it, until a member makes a new one or stops sharing.</figcaption>
       </figure>
       <div class="prose">
         <ul>
@@ -558,7 +558,7 @@ footer { color: var(--muted); font-size: 13.5px; border-top: 1px solid var(--lin
             <dt>Runs in</dt><dd>Its own canister, one per domain.</dd>
             <dt>Code</dt><dd>C++20 compiled to wasm, from the repository's <code>src/</code>. It links libetpan for MIME parsing and SQLite with FTS5. The release ships the compiled wasm.</dd>
             <dt>Does</dt><dd>Receives mail from the SMTP gateway, stores and indexes it in one SQLite file per mailbox, serves the mailbox API and each member's download of a mailbox to the webmail, serves each calendar shared at a secret address as an iCalendar file, sends through the relay bridge, and enforces every access rule.</dd>
-            <dt>Interfaces</dt><dd>Candid, described in <code>email-canister.did</code>: SMTP methods, <code>mail_*</code> methods for the mailboxes a user is a member of, <code>admin_*</code> methods for controllers, and timers that call <code>ingest_*</code> methods and <code>outbox_pump</code> on itself.</dd>
+            <dt>Interfaces</dt><dd>Candid, described in <code>email-canister.did</code>: SMTP methods, <code>mail_*</code> methods for the mailboxes a user is a member of, the calendars included, <code>admin_*</code> methods for controllers, <code>http_request</code> and <code>http_request_update</code>, open to anyone, which serve a shared calendar at its secret address, and timers that call <code>ingest_*</code> methods and <code>outbox_pump</code> on itself.</dd>
             <dt>Limits</dt><dd>One domain per canister. 40B instructions per update call and 5B per query bound every operation; see <a href="#limits">Measured limits</a>. Stop the canister before upgrading; timers are re-armed afterwards from <code>control.db</code>. An upgrade keeps the mail: the ingest timer takes each mailbox file to the release's schema, one at a time. A canister that runs v0.1.x cannot be upgraded to a later release: it is reinstalled, which erases its mail.</dd>
           </dl>
         </div>
