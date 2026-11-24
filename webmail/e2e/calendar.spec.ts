@@ -1238,10 +1238,6 @@ test('Copied shows only for the address copied, and not during a change', async 
     })
     .click()
   await expect(page.getByRole('button', { name: 'Copied' })).toBeDisabled()
-  // Nor is the address that is being replaced handed to a calendar app
-  await expect(
-    page.getByRole('button', { name: 'Open in a calendar app' })
-  ).toBeDisabled()
   release()
   await expect(address).not.toHaveValue(old)
   // The copy was of the old address
@@ -1327,6 +1323,28 @@ test('an open Subscribe dialog shows the address as it is when shown again', asy
   await openCalendar(page)
   await expect(address).not.toHaveValue(old)
   await expect(address).toHaveValue(new RegExp(`/cal/${token}\\.ics$`))
+  await alice.mail_cal_feed_stop('alice')
+  await context.close()
+})
+
+test('the address is offered only to copy, as https', async ({ browser }) => {
+  const { context, page } = await signedIn(browser, USER_A)
+  answer(page, true)
+  await openCalendar(page)
+  await page
+    .getByRole('button', { name: 'Subscribe from a calendar app' })
+    .click()
+  await page.getByRole('button', { name: 'Make a secret address' }).click()
+  await expect(page.getByLabel('Secret address', { exact: true })).toHaveValue(
+    /^https?:\/\/.*\.ics$/
+  )
+  // No webcal link: many apps fetch one over plain http, which would show
+  // the token to the network
+  await expect(page.locator('a[href^="webcal"]')).toHaveCount(0)
+  await expect(
+    page.getByRole('button', { name: 'Open in a calendar app' })
+  ).toHaveCount(0)
+  const alice = await asAlice()
   await alice.mail_cal_feed_stop('alice')
   await context.close()
 })
