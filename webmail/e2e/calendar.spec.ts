@@ -1303,6 +1303,30 @@ test('a calendar shown again loads what changed while it was hidden', async ({
   await context.close()
 })
 
+test('an open Subscribe dialog shows the address as it is when shown again', async ({
+  browser,
+}) => {
+  const { context, page } = await signedIn(browser, USER_A)
+  answer(page, true)
+  await openCalendar(page)
+  await page
+    .getByRole('button', { name: 'Subscribe from a calendar app' })
+    .click()
+  await page.getByRole('button', { name: 'Make a secret address' }).click()
+  const address = page.getByLabel('Secret address', { exact: true })
+  await expect(address).toHaveValue(/\.ics$/)
+  const old = await address.inputValue()
+  await page.getByRole('button', { name: 'Inbox', exact: true }).click()
+  // Another member makes a new address meanwhile
+  const alice = await asAlice()
+  const token = await alice.mail_cal_feed_reset('alice')
+  await openCalendar(page)
+  await expect(address).not.toHaveValue(old)
+  await expect(address).toHaveValue(new RegExp(`/cal/${token}\\.ics$`))
+  await alice.mail_cal_feed_stop('alice')
+  await context.close()
+})
+
 // Last in the file: alice joins a second mailbox here
 test('a save still running when another mailbox opens ends in its form', async ({
   browser,

@@ -186,12 +186,18 @@ export function Calendar({
   }, [load])
 
   // Shown again: others may have changed it meanwhile, so it loads again as
-  // after a change, its events not opening until then
+  // after a change, its events not opening until then; and an open Subscribe
+  // dialog starts over, to show the address as it is now, unless a change of
+  // its own is running
+  const [shownAgain, setShownAgain] = useState(0)
   const wasActive = useRef(active)
   useEffect(() => {
-    if (active && !wasActive.current) setChanges((n) => n + 1)
+    if (active && !wasActive.current) {
+      setChanges((n) => n + 1)
+      if (!busy) setShownAgain((n) => n + 1)
+    }
     wasActive.current = active
-  }, [active])
+  }, [active, busy])
 
   const byDay = useMemo(() => {
     const days = new Map<string, Occurrence[]>()
@@ -360,6 +366,7 @@ export function Calendar({
       )}
       {sharing && (
         <SubscribeDialog
+          key={shownAgain}
           backend={backend}
           address={address}
           busy={busy}
