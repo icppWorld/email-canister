@@ -34,9 +34,9 @@ SYSTEM_FUNCTIONS = {
     "canister_pre_upgrade",
     "canister_global_timer",
 }
-# Every system function the IC knows
+# Every system function the IC accepts; it refuses canister_start, a name it
+# reserves
 KNOWN_SYSTEM_FUNCTIONS = SYSTEM_FUNCTIONS | {
-    "canister_start",
     "canister_heartbeat",
     "canister_inspect_message",
     "canister_on_low_wasm_memory",

@@ -100,8 +100,8 @@ def reinstall(identity: str, wasm: Path) -> None:
         str(wasm),
         identity=identity,
     )
-    # A replica with the IC's export limit refuses the release's wasm: then
-    # strip its exports to memory and canister_ ones before installing it
+    # A replica with the IC's export limit refuses the release's wasm, and the
+    # test fails: the wasm would first need its exports stripped
     assert done.returncode == 0, done.stdout + done.stderr
     call("admin_set_domain", f'("{DOMAIN}")')
     assert "error" not in add_mailbox("alice", principal_of(USER_A)).lower()
