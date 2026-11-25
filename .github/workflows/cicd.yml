@@ -152,6 +152,9 @@ jobs:
         run: make build-all build-relay-stub
       - name: native tests
         run: make test-native
+      # The production build is only here: each module exports exactly its entry points
+      - name: the wasm exports
+        run: make test-wasm-exports
       # Also when a native test failed, but only once every library folder holds
       # the stamp the Makefile writes after a build of it succeeds
       - name: the built libraries are complete

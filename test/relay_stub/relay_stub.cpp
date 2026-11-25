@@ -111,7 +111,7 @@ IC_Async relay_send_async() {
     // The mail went out, and the caller never learns: the state above commits
     // at this await, and the trap below turns the reply into a reject
     IC_CallResult<IC_CallReply> committed = co_await IC_Call::unbounded_wait(
-        ic_api.get_canister_self(), "stub_commit");
+        ic_api.get_canister_self(), "stub_commit", IC_TrustedCallee{});
     (void)committed;
     IC_API::trap("the reply was lost");
   }

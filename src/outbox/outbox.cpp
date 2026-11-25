@@ -144,8 +144,11 @@ IC_Async outbox_pump_async() {
   }
   outbox::crash_at("before_call");
 
-  // unbounded_wait, because a bounded call cannot carry 1 MiB or more. The
-  // claim is committed here: from now on the message counts as possibly sent.
+  // unbounded_wait: a subnet short of memory for best-effort messages drops
+  // the largest first, so a large bounded call is the more likely to end in
+  // SysUnknown, with no way to know whether it ran. The bridge is the
+  // domain's own app, set by the admin, so it is trusted. The claim is
+  // committed here: from now on the message counts as possibly sent.
   store::Outcome outcome = store::Outcome::Retry;
   std::string detail;
   const std::string bridge = store::bridge();
@@ -154,7 +157,7 @@ IC_Async outbox_pump_async() {
   } else {
     IC_CallResult<IC_CallReply> result =
         co_await IC_Call::unbounded_wait(CandidTypePrincipal{bridge},
-                                         "relaySend")
+                                         "relaySend", IC_TrustedCallee{})
             .with_arg(request_value(request));
     outbox::crash_at("after_call");
     if (result) {
