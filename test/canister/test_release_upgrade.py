@@ -11,6 +11,9 @@ From v0.12.0, the release the deployments run, nothing is migrated, but the
 toolchain may change under the files: the mail, the calendar and its secret
 address stay.
 
+Both releases export over 2000 items. A replica with the IC's limit of 1100
+exports refuses them, so on such a replica these tests skip.
+
 $ make build-test
 $ icp network start -d
 $ pytest --network=local --identity=$TEST_IDENTITY test/canister/test_release_upgrade.py
@@ -36,8 +39,8 @@ from .support import (
     add_mailbox,
     call,
     deliver,
-    icp,
     mail,
+    run_icp,
     wait_until,
     wait_until_drained,
 )
@@ -86,7 +89,7 @@ def last_release_wasm(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 
 def reinstall(identity: str, wasm: Path) -> None:
-    icp(
+    done = run_icp(
         "canister",
         "install",
         CANISTER_NAME,
@@ -97,6 +100,10 @@ def reinstall(identity: str, wasm: Path) -> None:
         str(wasm),
         identity=identity,
     )
+    output = done.stdout + done.stderr
+    if done.returncode and "exported items" in output:
+        pytest.skip(f"this replica refuses the release's wasm: {output[-200:]}")
+    assert done.returncode == 0, output
     call("admin_set_domain", f'("{DOMAIN}")')
     assert "error" not in add_mailbox("alice", principal_of(USER_A)).lower()
 

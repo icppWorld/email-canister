@@ -58,7 +58,7 @@ webmail:
 	node webmail/brand/brand.mjs --dist webmail/dist --out build/webmail --backend $(BACKEND) --network $(NETWORK) \
 	  $(if $(ORIGIN),--origin $(ORIGIN)) $(if $(BRAND),--brand $(BRAND))
 
-test: test-python test-native test-domain test-canister test-e2e
+test: test-python test-native test-wasm-exports test-domain test-canister test-e2e
 
 # Needs no replica
 test-python:
@@ -73,6 +73,10 @@ NATIVE_COMPILER := clang --version;
 test-native:
 	$(call with_libraries,build-library-native,$(NATIVE_LIBRARY_INPUTS),icpp build-native --config icpp-test.toml,$(NATIVE_COMPILER))
 	./build-native/mockic.exe
+
+# Needs no replica, only the builds: make build-all build-relay-stub
+test-wasm-exports:
+	pytest test/test_wasm_exports.py
 
 # Needs no replica: domain/domain.mjs, with Node's own test runner
 test-domain:
