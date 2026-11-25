@@ -12,7 +12,7 @@ toolchain may change under the files: the mail, the calendar and its secret
 address stay.
 
 Both releases export over 2000 items. A replica with the IC's limit of 1100
-exports refuses them, so on such a replica these tests skip.
+exports refuses them, and these tests then fail.
 
 $ make build-test
 $ icp network start -d
@@ -100,10 +100,9 @@ def reinstall(identity: str, wasm: Path) -> None:
         str(wasm),
         identity=identity,
     )
-    output = done.stdout + done.stderr
-    if done.returncode and "exported items" in output:
-        pytest.skip(f"this replica refuses the release's wasm: {output[-200:]}")
-    assert done.returncode == 0, output
+    # A replica with the IC's export limit refuses the release's wasm: then
+    # strip its exports to memory and canister_ ones before installing it
+    assert done.returncode == 0, done.stdout + done.stderr
     call("admin_set_domain", f'("{DOMAIN}")')
     assert "error" not in add_mailbox("alice", principal_of(USER_A)).lower()
 

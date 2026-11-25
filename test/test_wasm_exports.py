@@ -34,6 +34,13 @@ SYSTEM_FUNCTIONS = {
     "canister_pre_upgrade",
     "canister_global_timer",
 }
+# Every system function the IC knows
+KNOWN_SYSTEM_FUNCTIONS = SYSTEM_FUNCTIONS | {
+    "canister_start",
+    "canister_heartbeat",
+    "canister_inspect_message",
+    "canister_on_low_wasm_memory",
+}
 
 # Each module, its .did, and the system functions it must export
 MODULES = [
@@ -107,14 +114,22 @@ def test__a_module_exports_exactly_its_entry_points(
     stray = sorted(
         name
         for name, kind in found
-        if not (kind == MEMORY or (kind == FUNCTION and name.startswith("canister_")))
+        if not (
+            kind == MEMORY
+            or (
+                kind == FUNCTION
+                and (name in KNOWN_SYSTEM_FUNCTIONS or name.startswith(METHOD_TYPES))
+            )
+        )
     )
     assert not stray, f"{len(stray)} stray exports, such as {stray[:5]}"
     assert system <= functions, f"missing {sorted(system - functions)}"
-    methods = {
+    methods = [
         name[len(prefix) :]
         for name in functions
         for prefix in METHOD_TYPES
         if name.startswith(prefix)
-    }
-    assert methods - RUNTIME_METHODS == did_methods(did)
+    ]
+    twice = sorted({name for name in methods if methods.count(name) > 1})
+    assert not twice, f"exported under two call types: {twice}"
+    assert set(methods) - RUNTIME_METHODS == did_methods(did)
