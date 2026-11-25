@@ -56,21 +56,12 @@ c_paths = ["shims/charconv.c", "shims/charset_tables.c"]
 c_include_dirs = ["vendor/libetpan/libetpan", "shims", "shims/libetpan"]
 c_compile_flags_defaults = ["-O3", "-fno-exceptions", "-fvisibility=hidden", "-DNDEBUG", "-DICPP_VERBOSE=0"]
 
-# SQLite as the canister has it, for the native tests: the same flags, and the
-# same file system calls through sqlite_vfs.c. test/test_build_config.py checks
-# that the flags agree.
+# SQLite as the canister has it, for the native tests: the flags of the
+# [[build-library]] sqlite3 table above, and the same file system calls through
+# sqlite_vfs.c. test/test_build_config.py checks that it adds none of its own.
 [[build-library-native]]
 lib_name = "sqlite3"
-c_compile_flags = [
-    "-DSQLITE_OS_OTHER=1",
-    "-DSQLITE_THREADSAFE=0",
-    "-DSQLITE_OMIT_WAL",
-    "-DSQLITE_ENABLE_FTS5",
-    "-DSQLITE_OMIT_LOAD_EXTENSION",
-    "-DSQLITE_DEFAULT_MEMSTATUS=0",
-    "-DSQLITE_TEMP_STORE=3",
-    "-DSQLITE_DQS=0",
-]
+inherit_compile_flags = true
 
 # A native executable on the Mock IC, for the tests in native/:
 #   make test-native
