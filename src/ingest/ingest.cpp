@@ -189,9 +189,11 @@ IC_Async ingest_pump_async() {
     const auto ran = [&ic_api](const IC_CallError &error) {
       return ingest::may_have_run(error, running(ic_api));
     };
+    // Calls to this canister itself: unbounded_wait, acknowledged as trusted
     if (work == Work::Upgrade) {
       IC_CallResult<IC_CallReply> result =
-          co_await IC_Call::unbounded_wait(self, "ingest_upgrade_file")
+          co_await IC_Call::unbounded_wait(self, "ingest_upgrade_file",
+                                           IC_TrustedCallee{})
               .with_arg(CandidTypeNat64{static_cast<uint64_t>(mailbox)});
       // A step that traps again and again holds the mailbox for repair. A
       // call that did not run the upgrade is tried again later.
@@ -208,7 +210,8 @@ IC_Async ingest_pump_async() {
       args.append(CandidTypeNat64{static_cast<uint64_t>(mailbox)});
       args.append(CandidTypeNat64{static_cast<uint64_t>(id)});
       IC_CallResult<IC_CallReply> result =
-          co_await IC_Call::unbounded_wait(self, "ingest_process")
+          co_await IC_Call::unbounded_wait(self, "ingest_process",
+                                           IC_TrustedCallee{})
               .with_args(args);
       if (!result) {
         const bool attempted = ran(result.error());
@@ -217,13 +220,15 @@ IC_Async ingest_pump_async() {
                                     attempted);
       } else if (store::merge_due(mailbox, k_merge_every)) {
         IC_CallResult<IC_CallReply> merged =
-            co_await IC_Call::unbounded_wait(self, "ingest_merge")
+            co_await IC_Call::unbounded_wait(self, "ingest_merge",
+                                             IC_TrustedCallee{})
                 .with_arg(CandidTypeNat64{static_cast<uint64_t>(mailbox)});
         (void)merged; // the next merge makes up for a failed one
       }
     } else if (work == Work::Clean) {
       IC_CallResult<IC_CallReply> result =
-          co_await IC_Call::unbounded_wait(self, "ingest_clean")
+          co_await IC_Call::unbounded_wait(self, "ingest_clean",
+                                           IC_TrustedCallee{})
               .with_arg(CandidTypeNat64{static_cast<uint64_t>(mailbox)});
       // One that failed after it ran waits for the next mark, so a message
       // that cannot be deleted never makes the pump loop; a mark made during
@@ -234,7 +239,8 @@ IC_Async ingest_pump_async() {
       }
     } else {
       IC_CallResult<IC_CallReply> result =
-          co_await IC_Call::unbounded_wait(self, "ingest_move")
+          co_await IC_Call::unbounded_wait(self, "ingest_move",
+                                           IC_TrustedCallee{})
               .with_arg(CandidTypeNat64{static_cast<uint64_t>(id)});
       if (!result) {
         const bool attempted = ran(result.error());
