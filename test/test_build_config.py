@@ -31,8 +31,9 @@ def test__native_tests_build_sqlite_as_the_canister_does() -> None:
         for t in libraries("icpp-test.toml", "build-library-native")
         if t["lib_name"] == "sqlite3"
     ]
-    [wasm] = [t for t in libraries("icpp-test.toml") if t["lib_name"] == "sqlite3"]
-    assert native["c_compile_flags"] == wasm["c_compile_flags"]
+    # The canister's flags, and none of its own
+    assert native.get("inherit_compile_flags") is True
+    assert not native.get("c_compile_flags") and not native.get("cpp_compile_flags")
 
 
 def relay_interface(did: str) -> dict[str, set[str]]:
