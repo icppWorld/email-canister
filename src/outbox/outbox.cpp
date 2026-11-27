@@ -76,8 +76,8 @@ store::Outcome read_status(const VecBytes &reply, std::string &detail) {
   CandidTypeGraph graph;
   const std::vector<int> args{graph.add(std::move(node))};
   std::vector<CandidValue> values;
-  const auto *data = reinterpret_cast<const uint8_t *>(reply.vec().data());
-  if (!CandidDecoder::decode(data, reply.vec().size(), graph, args, values,
+  const std::vector<uint8_t> &bytes = reply.vec_uint8_t();
+  if (!CandidDecoder::decode(bytes.data(), bytes.size(), graph, args, values,
                              detail)) {
     return store::Outcome::Retry;
   }

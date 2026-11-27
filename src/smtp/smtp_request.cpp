@@ -131,10 +131,9 @@ bool decode_smtp_request(const uint8_t *data, size_t size, SmtpRequest &out,
 }
 
 bool decode_smtp_request(IC_API &ic_api, SmtpRequest &out, std::string &err) {
-  const VecBytes bytes = ic_api.get_B_in();
-  return decode_smtp_request(
-      reinterpret_cast<const uint8_t *>(bytes.vec().data()), bytes.vec().size(),
-      out, err);
+  // A reference and the bytes as they are: the argument is up to 2 MB
+  const std::vector<uint8_t> &bytes = ic_api.get_B_in().vec_uint8_t();
+  return decode_smtp_request(bytes.data(), bytes.size(), out, err);
 }
 
 void smtp_reply_ok(IC_API &ic_api) {
