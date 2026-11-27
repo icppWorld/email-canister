@@ -96,6 +96,10 @@ test('the navigation, pinned beside the page, holds the folders and the account 
     ).toBeVisible()
   }
   await expect(navigation.getByRole('button', { name: 'Admin' })).toHaveCount(0)
+  // A mailbox's address, cut short in the panel, shows in full on hover
+  await expect(
+    navigation.getByRole('button', { name: `alice@${DOMAIN}` })
+  ).toHaveAttribute('title', `alice@${DOMAIN}`)
   // Beside the page, not over it: a choice leaves it there
   await navItem(page, 'Blocked senders')
   await expect(
@@ -1322,6 +1326,23 @@ test('at phone width the field of a search made before takes no focus, at the re
   await expect(
     appBar(page).getByLabel('List actions', { exact: true })
   ).toBeFocused()
+  await context.close()
+})
+
+test('a search field opened at phone width and left empty has no ✕ once the page is wider', async ({
+  browser,
+}) => {
+  const { context, page } = await signedInPhone(browser, USER_A)
+  await appBar(page)
+    .getByRole('button', { name: 'Search', exact: true })
+    .click()
+  const field = appBar(page).getByRole('textbox', { name: 'Search mail' })
+  await expect(field).toBeFocused()
+  await page.setViewportSize({ width: 1280, height: 800 })
+  await expect(field).toBeVisible()
+  await expect(
+    page.getByRole('button', { name: 'Clear search', exact: true })
+  ).toHaveCount(0)
   await context.close()
 })
 
