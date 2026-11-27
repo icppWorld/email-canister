@@ -209,23 +209,27 @@ nav {
   background: var(--surface-muted);
   border-right: 1px solid var(--border);
 }
-nav button {
+nav button,
+.drawer-body button {
   text-align: left;
   border-color: transparent;
   background: transparent;
 }
-nav button:hover:not(:disabled) {
+nav button:hover:not(:disabled),
+.drawer-body button:hover:not(:disabled) {
   background: var(--selected);
 }
 nav button.compose {
   margin-bottom: 8px;
 }
-nav button[aria-current='true'] {
+nav button[aria-current='true'],
+.drawer-body button[aria-current='true'] {
   background: var(--selected);
 }
 /* The folder shown: more than the hover's tint, bold with a bar in the
    brand's colour */
-.folders button[aria-current='true'] {
+.folders button[aria-current='true'],
+.drawer-folders button[aria-current='true'] {
   font-weight: 700;
   box-shadow: inset 3px 0 0 var(--action-text);
 }
@@ -268,7 +272,8 @@ nav button.mailbox {
   gap: 6px;
   font-weight: 600;
 }
-.mailbox .name {
+.mailbox .name,
+.drawer-body .name {
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -291,9 +296,6 @@ nav button.mailbox {
   flex-direction: column;
   gap: 4px;
   padding: 2px 0 6px 12px;
-}
-.mailbox-select {
-  display: none;
 }
 .seen-by {
   position: relative;
@@ -890,42 +892,209 @@ th {
   flex-wrap: wrap;
   gap: 6px;
 }
+/* At phone width only: the bar along the top (AppBar.tsx), and the open
+   message's subject in the reader's toolbar */
+.appbar-title {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 0 4px;
+}
+.appbar-title strong,
+.appbar-title span,
+.toolbar-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.appbar-title strong,
+.toolbar-title {
+  font: 600 18px/1.25 var(--font-heading);
+}
+.toolbar-title {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 0 4px;
+}
+.appbar-title span {
+  color: var(--ink-muted);
+  font-size: 12px;
+  line-height: 1.3;
+}
+.appbar-search {
+  flex: 1;
+  min-width: 0;
+}
+/* The ☰ drawer: a modal dialog along the left edge (Drawer.tsx) */
+dialog.drawer {
+  inset: 0 auto 0 0;
+  width: min(300px, 85vw);
+  max-width: none;
+  height: 100%;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-right: 1px solid var(--border);
+  background: var(--surface-raised);
+  color: inherit;
+  box-shadow: var(--shadow-dialog);
+  animation: drawer-in 0.15s ease-out;
+}
+dialog.drawer::backdrop {
+  background: rgb(0 0 0 / 40%);
+}
+@keyframes drawer-in {
+  from {
+    transform: translateX(-100%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  dialog.drawer {
+    animation: none;
+  }
+}
+.drawer-body {
+  height: 100%;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px;
+}
+.drawer-body .brand {
+  margin: 0;
+  padding: 4px 8px 12px;
+}
+.drawer-body ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.drawer-folders {
+  margin-top: 8px;
+}
+.drawer-body button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.drawer-body hr {
+  width: 100%;
+  margin: 8px 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+.drawer-body .usage {
+  margin: 0;
+  padding: 4px 12px;
+}
+.drawer-body .menu-note {
+  margin: 0;
+  padding: 0 12px 4px 38px;
+  border: 0;
+}
 @media (max-width: 760px) {
   .app {
     /* minmax: the column never grows past the screen for wide content, such
-       as a long mailbox address in the select */
+       as a long mailbox address */
     grid-template: 'head' auto 'nav' auto 'main' 1fr / minmax(0, 1fr);
   }
-  nav {
-    flex-direction: row;
-    flex-wrap: wrap;
-    border-right: 0;
-    border-bottom: 1px solid var(--border);
-  }
-  nav button.compose {
-    margin: 0;
-  }
-  /* One select for the mailbox, then the open one's folders as tabs */
-  .mailbox-select {
-    display: block;
-    flex-basis: 100%;
-  }
-  .mailboxes > li:not(.open),
-  nav button.mailbox {
-    display: none;
-  }
-  .folders {
-    flex-direction: row;
-    flex-wrap: wrap;
-    padding: 0;
-  }
-  /* Tabs: the bar goes under the selected one */
-  .folders button[aria-current='true'] {
-    box-shadow: inset 0 -3px 0 var(--action-text);
-  }
-  .usage,
+  /* The bar along the top and the ☰ drawer take the place of the header,
+     which is not there, and of the folders beside the mail: only a
+     download's progress stays */
+  nav .mailboxes,
+  nav .usage,
   nav .hint {
     display: none;
+  }
+  nav {
+    padding: 0;
+    gap: 0;
+    border: 0;
+    background: none;
+  }
+  nav .download-status,
+  nav > .error {
+    margin: 0;
+    padding: 6px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  /* Compose floats at the bottom right (App.tsx takes it away while a
+     message is being written) */
+  nav button.compose {
+    position: fixed;
+    right: 16px;
+    bottom: 16px;
+    z-index: 2;
+    width: 56px;
+    height: 56px;
+    margin: 0;
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-dialog);
+  }
+  /* The bar along the top, and the reader's toolbar, which is its bar
+     there, named by the subject. Seen by takes a line below. */
+  .appbar,
+  .reader > .toolbar {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-height: 56px;
+    padding: 4px 8px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+  }
+  .appbar {
+    grid-area: head;
+  }
+  .reader {
+    padding-top: 0;
+  }
+  .reader > .toolbar {
+    margin: 0 -18px 8px;
+  }
+  .reader > .toolbar > .seen-by {
+    flex-basis: 100%;
+    padding: 0 0 4px 4px;
+  }
+  /* The list's search and its Select all are in the bar; the rows' boxes
+     wait for selection mode */
+  .list-head,
+  .list:not(.selecting) .pick-area {
+    display: none;
+  }
+  /* The end of each page beside Compose scrolls clear of it (the calendar's
+     below, after its own padding) */
+  .list,
+  .reader,
+  .blocked,
+  .admin {
+    padding-bottom: 88px;
+  }
+  /* A long press starts selection mode, rather than selecting text */
+  .message {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  /* The bars' buttons are flat */
+  .appbar button.icon-button:not(.primary),
+  .reader > .toolbar button.icon-button:not(.primary) {
+    border-color: transparent;
+    background: transparent;
+  }
+  .appbar button.icon-button:not(.primary):hover:not(:disabled),
+  .reader > .toolbar button.icon-button:not(.primary):hover:not(:disabled) {
+    background: var(--surface-muted);
   }
   /* The list, or the open message in its place */
   .split {
@@ -939,10 +1108,6 @@ th {
   }
   button.back {
     display: inline-grid;
-  }
-  /* A little tighter, so a message's actions fit on one line */
-  .reader > .toolbar {
-    gap: 6px;
   }
   /* Compose fills the screen, or minimised, a bar along its foot */
   .dialog.compose,
@@ -1195,6 +1360,9 @@ dialog.event-dialog::backdrop {
   min-height: 80px;
 }
 @media (max-width: 760px) {
+  .calendar {
+    padding-bottom: 88px;
+  }
   .month {
     display: none;
   }

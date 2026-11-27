@@ -6,18 +6,28 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
 } from 'react'
 import type { Identity } from '@icp-sdk/core/agent'
 
-import { createBackend, errorText, mailbox, type Backend, type Me } from './api'
+import {
+  createBackend,
+  errorText,
+  mailbox,
+  type Backend,
+  type MailboxInfo,
+  type Me,
+} from './api'
 import { createSession, type Session } from './auth'
 import { AdminPanel } from './AdminPanel'
+import { AppBar, PageBar, usePhone } from './AppBar'
 import { BlockedSenders } from './Blocked'
 import { IconButton } from './Buttons'
 import { formatBytes } from './format'
-import { Icon } from './Icon'
+import { Icon, type IconName } from './Icon'
 import { Compose, type Draft } from './Compose'
 import { useDownload } from './Download'
+import { Drawer } from './Drawer'
 import { Inbox, isFolder } from './Inbox'
 import { Menu } from './Menu'
 import { Sent } from './Sent'
@@ -69,6 +79,21 @@ const PAGES = {
 } as const
 type Page = keyof typeof PAGES
 type View = Page | 'admin'
+
+// Each page's icon, where the ☰ drawer lists it
+const PAGE_ICONS: Record<Page, IconName> = {
+  inbox: 'inbox',
+  sent: 'send',
+  spam: 'spam',
+  trash: 'trash',
+  calendar: 'calendar',
+  blocked: 'block',
+}
+
+// The folders and the calendar: Blocked senders is in the menu
+const FOLDER_PAGES = (Object.keys(PAGES) as Page[]).filter(
+  (page) => page !== 'blocked'
+)
 
 // How long a note about what was just done stays shown
 const TOAST_MS = 8_000
@@ -194,6 +219,10 @@ export function App() {
   const [refreshing, setRefreshing] = useState(false)
   const onLoaded = useCallback(() => setRefreshing(false), [])
   const [draft, setDraft] = useState<Draft | null>(null)
+  // The ☰ drawer, at phone width: closed as the page leaves it
+  const [drawer, setDrawer] = useState(false)
+  const phone = usePhone()
+  if (drawer && !phone) setDrawer(false)
   const [toast, setToast] = useState<ShownToast | null>(null)
   const toastIds = useRef(0)
   // Under the pointer or holding the focus, the note stays until let go
@@ -439,12 +468,21 @@ export function App() {
     if (latestBackend.current === backend) showToast(note)
   }
 
-  const refreshInbox = () => {
+  // The folder shown again, and the mailboxes' counts
+  const refreshFolder = () => {
     setRefreshing(true)
-    setView('inbox')
     setRefresh((count) => count + 1)
     reloadMailboxes()
   }
+
+  const refreshInbox = () => {
+    setView('inbox')
+    refreshFolder()
+  }
+
+  const usage =
+    shown &&
+    `${formatBytes(shown.used_bytes)} of ${formatBytes(shown.quota_bytes)} used`
 
   // The open mailbox's folders, below its row in the list
   const folders = (
@@ -465,112 +503,167 @@ export function App() {
           onClick={refreshInbox}
         />
       </div>
-      {(Object.keys(PAGES) as Page[])
-        // Blocked senders is in the menu
-        .filter((page) => page !== 'inbox' && page !== 'blocked')
-        .map((page) => (
-          <button
-            key={page}
-            aria-current={current === page}
-            onClick={() => setView(page)}
-          >
-            {PAGES[page]}
-          </button>
-        ))}
+      {FOLDER_PAGES.filter((page) => page !== 'inbox').map((page) => (
+        <button
+          key={page}
+          aria-current={current === page}
+          onClick={() => setView(page)}
+        >
+          {PAGES[page]}
+        </button>
+      ))}
     </div>
   )
 
-  return (
-    <div className="app">
-      <header>
-        <strong className="brand">
-          <Logo />
-          {deployment().brand.label}
-        </strong>
-        <span className="address" data-testid="address">
-          {shown?.address ?? 'Administrator'}
+  // A mailbox's button, with its unread count: in the list beside the mail
+  // by its name, with the address as its tooltip, and in the drawer by its
+  // address. The one shown is current, unless Admin is.
+  const mailboxButton = (m: MailboxInfo, inDrawer: boolean) => (
+    <button
+      className={inDrawer ? undefined : 'mailbox'}
+      title={inDrawer ? undefined : m.address}
+      aria-current={m.local === shown?.local && current !== 'admin'}
+      onClick={() => choose(m.local)}
+    >
+      {inDrawer && <Icon name="mail" />}
+      <span className="name">{inDrawer ? m.address : m.local}</span>
+      {m.unseen > 0n && (
+        <span
+          className="badge"
+          data-testid={inDrawer ? undefined : `unread-${m.local}`}
+        >
+          {m.unseen.toString()}
         </span>
-        <Menu label="More">
-          {box && (
+      )}
+    </button>
+  )
+
+  const address = shown?.address ?? 'Administrator'
+  const brand = (
+    <strong className="brand">
+      <Logo />
+      {deployment().brand.label}
+    </strong>
+  )
+  // The header menu's items, which the ☰ drawer lists too, with what it
+  // shows before Reload
+  const accountItems = (beforeReload?: ReactNode) => (
+    <>
+      {box && (
+        <>
+          <button
+            aria-current={current === 'blocked'}
+            onClick={() => setView('blocked')}
+          >
+            <Icon name={PAGE_ICONS.blocked} />
+            Blocked senders
+          </button>
+          <button onClick={download.start} disabled={download.busy}>
+            <Icon name="download" />
+            Download a copy
+          </button>
+        </>
+      )}
+      {me.is_controller && (
+        <button
+          aria-current={current === 'admin'}
+          onClick={() => setView('admin')}
+        >
+          <Icon name="admin" />
+          Admin
+        </button>
+      )}
+      {beforeReload}
+      {/* The page again from the server, as a phone can keep an old one */}
+      <button onClick={reload}>
+        <Icon name="refresh" />
+        Reload
+      </button>
+      {/* One at a time: the header is not there at phone width, and the
+          drawer only there */}
+      <p className="menu-note" data-testid="version">
+        Webmail v{VERSION}
+      </p>
+    </>
+  )
+
+  // At phone width each page has a bar along the top: a folder's list has
+  // its own, the other pages this one
+  const listed = box !== null && (isFolder(current) || current === 'sent')
+
+  const app = (
+    <div className="app">
+      {phone && !listed && <AppBar />}
+      {phone && drawer && (
+        <Drawer onClose={() => setDrawer(false)}>
+          {brand}
+          {box && shown && (
             <>
-              <button
-                aria-current={current === 'blocked'}
-                onClick={() => setView('blocked')}
-              >
-                <Icon name="block" />
-                Blocked senders
-              </button>
-              <button onClick={download.start} disabled={download.busy}>
-                <Icon name="download" />
-                Download a copy
-              </button>
+              <ul aria-label="Mailboxes">
+                {me.mailboxes.map((m) => (
+                  <li key={m.local}>{mailboxButton(m, true)}</li>
+                ))}
+              </ul>
+              <ul className="drawer-folders" aria-label="Folders">
+                {FOLDER_PAGES.map((page) => (
+                  <li key={page}>
+                    <button
+                      aria-current={current === page}
+                      onClick={() => setView(page)}
+                    >
+                      <Icon name={PAGE_ICONS[page]} />
+                      {PAGES[page]}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              <hr />
             </>
           )}
-          {me.is_controller && (
-            <button
-              aria-current={current === 'admin'}
-              onClick={() => setView('admin')}
-            >
-              <Icon name="admin" />
-              Admin
-            </button>
+          {accountItems(
+            <>
+              <hr />
+              {usage && <p className="usage">{usage}</p>}
+            </>
           )}
-          {/* The page again from the server, as a phone can keep an old one */}
-          <button onClick={reload}>
-            <Icon name="refresh" />
-            Reload
+          <button onClick={signOut}>
+            <Icon name="signOut" />
+            Sign out
           </button>
-          <p className="menu-note" data-testid="version">
-            Webmail v{VERSION}
-          </p>
-        </Menu>
-        <IconButton label="Sign out" icon="signOut" onClick={signOut} />
-      </header>
+        </Drawer>
+      )}
+      {!phone && (
+        <header>
+          {brand}
+          <span className="address" data-testid="address">
+            {address}
+          </span>
+          <Menu label="More">{accountItems()}</Menu>
+          <IconButton label="Sign out" icon="signOut" onClick={signOut} />
+        </header>
+      )}
       <nav aria-label="Folders">
         {box && shown && (
           <>
-            <IconButton
-              className="compose"
-              variant="primary"
-              label="Compose"
-              icon="compose"
-              onClick={() => setDraft((open) => open ?? { from: shown.local })}
-            />
-            {/* At phone width a select takes the place of the list */}
-            <select
-              className="mailbox-select"
-              aria-label="Mailbox"
-              value={shown.local}
-              onChange={(e) => choose(e.target.value)}
-            >
-              {me.mailboxes.map((m) => (
-                <option key={m.local} value={m.local}>
-                  {m.address}
-                  {m.unseen > 0n ? ` (${m.unseen} unread)` : ''}
-                </option>
-              ))}
-            </select>
+            {/* At phone width it floats at the bottom right, and gives way
+                to a message being written, whose minimised bar is there */}
+            {!(phone && draft) && (
+              <IconButton
+                className="compose"
+                variant="primary"
+                label="Compose"
+                icon="compose"
+                onClick={() =>
+                  setDraft((open) => open ?? { from: shown.local })
+                }
+              />
+            )}
             <ul className="mailboxes" aria-label="Mailboxes">
               {me.mailboxes.map((m) => {
                 const isOpen = m.local === shown.local
                 return (
                   <li key={m.local} className={isOpen ? 'open' : undefined}>
-                    <button
-                      className="mailbox"
-                      title={m.address}
-                      aria-current={isOpen && current !== 'admin'}
-                      onClick={() => choose(m.local)}
-                    >
-                      <span className="name">{m.local}</span>
-                      {m.unseen > 0n && (
-                        <span
-                          className="badge"
-                          data-testid={`unread-${m.local}`}
-                        >
-                          {m.unseen.toString()}
-                        </span>
-                      )}
-                    </button>
+                    {mailboxButton(m, false)}
                     {isOpen && folders}
                   </li>
                 )
@@ -578,10 +671,9 @@ export function App() {
             </ul>
           </>
         )}
-        {shown && (
+        {usage && (
           <p className="usage" data-testid="usage">
-            {formatBytes(shown.used_bytes)} of {formatBytes(shown.quota_bytes)}{' '}
-            used
+            {usage}
           </p>
         )}
         {/* Started from the menu, and shown here while it runs */}
@@ -616,6 +708,7 @@ export function App() {
             onCounts={reloadMailboxes}
             refresh={refresh}
             onLoaded={onLoaded}
+            onRefresh={refreshFolder}
             onBlocked={() => setView('blocked')}
             domain={shown.address.slice(shown.address.indexOf('@') + 1)}
           />
@@ -684,5 +777,17 @@ export function App() {
         onHold={setToastHeld}
       />
     </div>
+  )
+
+  return (
+    <PageBar.Provider
+      value={{
+        title: current === 'admin' ? 'Admin' : PAGES[current],
+        address,
+        openDrawer: () => setDrawer(true),
+      }}
+    >
+      {app}
+    </PageBar.Provider>
   )
 }

@@ -1,11 +1,12 @@
 // The webmail tests of shared mailboxes and of several mailboxes per person.
 // Each spec file runs on a backend of its own (freshBackend in support.ts).
 
-import { expect, type Page, test } from '@playwright/test'
+import { expect, test } from '@playwright/test'
 import { asUser } from './as_user'
 import { env } from './local'
 import {
   ADMIN,
+  appBar,
   asAlice,
   backend,
   callsTo,
@@ -14,6 +15,8 @@ import {
   DOMAIN,
   downloadCopy,
   downloadStatus,
+  drawer,
+  drawerButton,
   endSignIn,
   FLAG_FLAGGED,
   FLAG_SEEN,
@@ -21,11 +24,16 @@ import {
   hold,
   joinMailbox,
   joinTeam,
+  mailboxButton,
   menu,
+  menuItem,
+  openDrawer,
   openMail,
+  phoneOpenMail,
   principalOf,
   send,
   signedIn,
+  signedInPhone,
   signInAgain,
   uidOf,
   USER_A,
@@ -249,11 +257,6 @@ function fernAndGail(): void {
   fernAndGailReady = true
 }
 
-const mailboxButton = (page: Page, local: string) =>
-  page
-    .getByRole('list', { name: 'Mailboxes' })
-    .getByRole('button', { name: new RegExp(`^${local}`) })
-
 test('a person with several mailboxes switches between them, by the list or the address', async ({
   browser,
 }) => {
@@ -380,18 +383,24 @@ test('the unread count of a mailbox follows a delivery and a reading', async ({
   await context.close()
 })
 
-test('at phone width a select chooses the mailbox', async ({ browser }) => {
+test("at phone width the drawer chooses the mailbox, and lists the open one's folders", async ({
+  browser,
+}) => {
   fernAndGail()
-  const { context, page } = await signedIn(browser, FERN, {
-    viewport: { width: 390, height: 844 },
-  })
-  await expect(page.getByTestId('address')).toHaveText(`heron@${DOMAIN}`)
+  const { context, page } = await signedInPhone(browser, FERN)
+  await expect(appBar(page)).toContainText(`heron@${DOMAIN}`)
   await expect(mailboxButton(page, 'heron')).toBeHidden()
-  await page.getByLabel('Mailbox', { exact: true }).selectOption('shore')
-  await expect(page.getByTestId('address')).toHaveText(`shore@${DOMAIN}`)
-  await expect(page.getByRole('button', { name: 'Inbox' })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Sent' })).toBeVisible()
-  // The select's long option text does not widen the page
+  await openDrawer(page)
+  await mailboxButton(page, 'shore', drawer(page)).click()
+  await expect(drawer(page)).toHaveCount(0)
+  await expect(appBar(page)).toContainText(`shore@${DOMAIN}`)
+  await openDrawer(page)
+  for (const name of ['Inbox', 'Sent']) {
+    await expect(drawerButton(page, name)).toBeVisible()
+  }
+  await page.keyboard.press('Escape')
+  await expect(drawer(page)).toHaveCount(0)
+  // A long address does not widen the page
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= window.innerWidth
@@ -400,8 +409,8 @@ test('at phone width a select chooses the mailbox', async ({ browser }) => {
   // Compose covers an open Seen by list
   deliver({ subject: 'Covered stint', body: '<p>Under</p>', to: 'shore' })
   await waitDrained()
-  await page.getByRole('button', { name: 'Refresh' }).click()
-  await openMail(page, 'Covered stint')
+  await menuItem(page, 'List actions', 'Refresh')
+  await phoneOpenMail(page, 'Covered stint')
   await page.getByText(/^Seen by/).click()
   const seen = page.getByRole('list', { name: 'Seen by' })
   await expect(seen).toBeVisible()

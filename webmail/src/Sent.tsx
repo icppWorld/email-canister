@@ -12,8 +12,16 @@ import {
   type OutboxSummary,
 } from './api'
 import { attempt, BATCH, inBatches, MAX_BATCH } from './batch'
+import { usePhone } from './AppBar'
 import { BackButton, IconButton } from './Buttons'
-import { Bulk, RowPick, useTicks } from './Bulk'
+import {
+  Bulk,
+  ListBar,
+  RowPick,
+  useSelectMode,
+  useTicks,
+  type BulkAction,
+} from './Bulk'
 import { memberName, messages, noteOf, shown, was } from './format'
 import { Icon } from './Icon'
 import { MessageBody } from './MessageBody'
@@ -137,11 +145,15 @@ function Details({
 
   const canResend =
     summary.state === OUTBOX_REJECTED || summary.state === OUTBOX_UNKNOWN
+  const subject = shown(summary.subject) || '(no subject)'
+  const phone = usePhone()
 
   return (
     <article className="reader">
+      {/* At phone width, the bar along the top */}
       <div className="toolbar">
         <BackButton onClick={onBack} />
+        {phone && <strong className="toolbar-title">{subject}</strong>}
         {canResend && (
           <IconButton
             variant="primary"
@@ -163,7 +175,7 @@ function Details({
           {error}
         </p>
       )}
-      <h2>{shown(summary.subject) || '(no subject)'}</h2>
+      <h2>{subject}</h2>
       <p className="status" data-testid="outbox-state">
         {stateLabel(summary.state)}
       </p>
@@ -249,6 +261,7 @@ export function Sent({
   const ticks = useTicks(
     items.filter((m) => m.state !== OUTBOX_SENDING).map((m) => m.id)
   )
+  const select = useSelectMode(ticks)
   // The list's own error, which a reload clears, and an action's refusal
   const [error, setError] = useState('')
   const [actionError, setActionError] = useState('')
@@ -353,28 +366,36 @@ export function Sent({
 
   const selected = items.find((m) => m.id === selectedId) ?? null
 
+  const deleteTicked: BulkAction = {
+    label: 'Delete',
+    icon: 'trash',
+    danger: true,
+    run: () => act(() => remove(ticks.ticked)),
+  }
+  const emptySent: BulkAction = {
+    label: 'Empty Sent',
+    icon: 'trash',
+    danger: true,
+    run: () => act(() => remove('all')),
+  }
+
   return (
     <Split reading={selected !== null}>
-      <section className="list" aria-label="Sent mail">
+      <section
+        className={select.on ? 'list selecting' : 'list'}
+        aria-label="Sent mail"
+      >
+        {/* At phone width: the page's bar, or selection mode's actions */}
+        <ListBar
+          select={select}
+          ticks={ticks}
+          actions={[deleteTicked]}
+          listed={items.length > 0}
+          empty={emptySent}
+        />
         {items.length > 0 && (
           <div className="list-head">
-            <Bulk
-              ticks={ticks}
-              actions={[
-                {
-                  label: 'Delete',
-                  icon: 'trash',
-                  danger: true,
-                  run: () => act(() => remove(ticks.ticked)),
-                },
-              ]}
-              empty={{
-                label: 'Empty Sent',
-                icon: 'trash',
-                danger: true,
-                run: () => act(() => remove('all')),
-              }}
-            />
+            <Bulk ticks={ticks} actions={[deleteTicked]} empty={emptySent} />
           </div>
         )}
         {error && (
@@ -405,7 +426,7 @@ export function Sent({
                 <button
                   className="message"
                   aria-current={selectedId === m.id}
-                  onClick={() => setSelectedId(m.id)}
+                  {...select.row(m.id, () => setSelectedId(m.id))}
                 >
                   <span className="who">
                     {shown(m.to.concat(m.cc, m.bcc).join(', '))}
