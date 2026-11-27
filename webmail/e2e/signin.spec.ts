@@ -60,8 +60,7 @@ test('a user signs in through the local Internet Identity', async ({
   let removal: unknown
   try {
     await page.reload()
-    // In the header's menu
-    await page.getByLabel('More', { exact: true }).click()
+    // In the navigation
     await expect(page.getByRole('button', { name: 'Admin' })).toBeVisible()
   } finally {
     try {

@@ -1,8 +1,7 @@
 // Ticking messages in a list for an action on all of them: the row's box,
-// and the bar above the list with Select all, how many are ticked, and what
-// can be done to them. With none ticked, the bar can offer to empty the
-// folder. At phone width the boxes and that bar wait for selection mode,
-// whose actions take the place of the bar along the top.
+// and the list's bar along the top, which, while any are ticked, says how
+// many and what can be done to them. At phone width the boxes wait for
+// selection mode.
 
 import {
   useCallback,
@@ -99,43 +98,6 @@ export function RowPick({
         onChange={(e) => ticks.tick(id, e.target.checked)}
       />
     </label>
-  )
-}
-
-export function Bulk({
-  ticks,
-  actions,
-  empty,
-}: {
-  ticks: Ticks
-  actions: BulkAction[]
-  empty?: BulkAction
-}) {
-  const ticked = ticks.ticked.length
-  const all = ticks.total > 0 && ticked === ticks.total
-  const shown = ticked > 0 ? actions : empty ? [empty] : []
-  return (
-    <div className="bulk" role="toolbar" aria-label="Selected messages">
-      <input
-        ref={(box) => {
-          if (box) box.indeterminate = ticked > 0 && !all
-        }}
-        type="checkbox"
-        aria-label="Select all"
-        checked={all}
-        onChange={(e) => ticks.all(e.target.checked)}
-      />
-      {ticked > 0 && <span className="hint">{ticked} selected</span>}
-      {shown.map((action) => (
-        <IconButton
-          key={action.label}
-          variant={action.danger ? 'danger' : undefined}
-          label={action.label}
-          icon={action.icon}
-          onClick={action.run}
-        />
-      ))}
-    </div>
   )
 }
 
@@ -239,8 +201,9 @@ export function useSelectMode(ticks: Ticks) {
 
 export type SelectMode = ReturnType<typeof useSelectMode>
 
-// The bar along the top in selection mode: ✕ to leave it, how many are
-// ticked, the first two actions, and a ⋮ with Select all and the rest
+// The bar along the top while messages are ticked, or in selection mode: ✕
+// to untick them all, how many are ticked, the actions, and a ⋮ with Select
+// all; at phone width the first two actions, with the rest in the ⋮
 export function SelectionBar({
   ticks,
   actions,
@@ -254,13 +217,15 @@ export function SelectionBar({
 }) {
   const ticked = ticks.ticked.length
   const none = ticked === 0
+  const inBar = usePhone() ? 2 : actions.length
   return (
     <AppBar
       ref={ref}
+      label="Selected messages"
       lead={<IconButton label="Stop selecting" icon="close" onClick={onExit} />}
       title={`${ticked} selected`}
     >
-      {actions.slice(0, 2).map((action) => (
+      {actions.slice(0, inBar).map((action) => (
         <IconButton
           key={action.label}
           variant={action.danger ? 'danger' : undefined}
@@ -279,7 +244,7 @@ export function SelectionBar({
           }}
           disabled={ticks.total === 0 || ticked === ticks.total}
         />
-        {actions.slice(2).map((action) => (
+        {actions.slice(inBar).map((action) => (
           <MenuAction key={action.label} action={action} disabled={none} />
         ))}
       </Menu>
@@ -287,9 +252,11 @@ export function SelectionBar({
   )
 }
 
-// A list's bar along the top, at phone width: the page's bar with the
-// page's own buttons and the list's ⋮, or selection mode's. As one takes
-// the other's place, the focus goes to ✕, or back to the ⋮.
+// A list's bar along the top: the page's bar with the page's own buttons
+// and the list's ⋮, or the selection bar while messages are ticked, which at
+// phone width is selection mode. As one takes the other's place at phone
+// width, the focus goes to ✕, or back to the ⋮; at a wider one, where a
+// row's box ticks and keeps the focus, only focus the swap took moves
 export function ListBar({
   select,
   ticks,
@@ -310,16 +277,20 @@ export function ListBar({
   children?: ReactNode // the page's own buttons, before the ⋮
 }) {
   const phone = usePhone()
+  const selecting = phone ? select.on : ticks.ticked.length > 0
   const bar = useRef<HTMLDivElement>(null)
-  const selecting = useRef(select.on)
+  const wasSelecting = useRef(selecting)
   useEffect(() => {
-    if (selecting.current === select.on) return
-    selecting.current = select.on
-    const to = select.on ? 'Stop selecting' : 'List actions'
+    if (wasSelecting.current === selecting) return
+    wasSelecting.current = selecting
+    const lost =
+      document.activeElement === document.body ||
+      bar.current?.contains(document.activeElement)
+    if (!phone && !lost) return
+    const to = selecting ? 'Stop selecting' : 'List actions'
     bar.current?.querySelector<HTMLElement>(`[aria-label="${to}"]`)?.focus()
-  }, [select.on])
-  if (!phone) return null
-  if (select.on) {
+  }, [selecting, phone])
+  if (selecting) {
     return (
       <SelectionBar
         ref={bar}
@@ -332,7 +303,19 @@ export function ListBar({
   return (
     <AppBar ref={bar} bare={bare}>
       {children}
-      <ListMenu listed={listed} onSelect={select.start} empty={empty}>
+      <ListMenu
+        listed={listed}
+        select={
+          phone
+            ? { label: 'Select messages', icon: 'select', run: select.start }
+            : {
+                label: 'Select all',
+                icon: 'selectAll',
+                run: () => ticks.all(true),
+              }
+        }
+        empty={empty}
+      >
         {items}
       </ListMenu>
     </AppBar>
@@ -356,25 +339,23 @@ export function MenuAction({
 }
 
 // A list's ⋮ in the bar along the top: the page's own items, Select
-// messages, and the action that empties the folder, while it lists mail
+// messages, or Select all where the rows' boxes show, and the action that
+// empties the folder, while it lists mail
 export function ListMenu({
   listed,
-  onSelect,
+  select,
   empty,
   children,
 }: {
   listed: boolean // the list shows mail
-  onSelect: () => void // starts selection mode
+  select: BulkAction
   empty?: BulkAction
   children?: ReactNode
 }) {
   return (
     <Menu label="List actions">
       {children}
-      <MenuAction
-        action={{ label: 'Select messages', icon: 'select', run: onSelect }}
-        disabled={!listed}
-      />
+      <MenuAction action={select} disabled={!listed} />
       {listed && empty && <MenuAction action={empty} />}
     </Menu>
   )

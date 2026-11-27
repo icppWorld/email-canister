@@ -31,14 +31,18 @@ import {
   menu,
   menuItem,
   messageRow,
+  navItem,
   openMail,
   openMenu,
   reader,
+  refreshList,
   search,
+  selectAll,
   signedIn,
   signInAgain,
   spamFromReader,
   stale,
+  stopSelecting,
   toastButton,
   uidOf,
   undo,
@@ -154,14 +158,14 @@ test('ticked messages are read, unread, starred and deleted together, and Trash 
   const background = () =>
     row.evaluate((el) => getComputedStyle(el).backgroundColor)
   const unticked = await background()
-  await bulk.getByLabel('Select all').check()
+  await selectAll(page)
   await expect(bulk).toContainText('3 selected')
   expect(await background()).not.toBe(unticked)
   await bulk.getByRole('button', { name: 'Mark read' }).click()
   await expect(page.locator('button.message.unread')).toHaveCount(0)
   await bulk.getByRole('button', { name: 'Mark unread' }).click()
   await expect(page.locator('button.message.unread')).toHaveCount(3)
-  await bulk.getByLabel('Select all').uncheck()
+  await stopSelecting(page)
 
   // The star in the row
   const star = page.getByRole('button', {
@@ -184,7 +188,7 @@ test('ticked messages are read, unread, starred and deleted together, and Trash 
   await expect(messageRow(page, 'Ticked pratincole')).toHaveCount(2)
   await expect(page.getByTestId('toast')).toHaveText(/Message moved to Trash/)
 
-  await bulk.getByLabel('Select all').check()
+  await selectAll(page)
   await expect(
     bulk.getByRole('button', { name: 'Spam', exact: true })
   ).toBeVisible()
@@ -197,12 +201,12 @@ test('ticked messages are read, unread, starred and deleted together, and Trash 
   await folder(page, 'Trash')
   await expect(messageRow(page, 'Ticked pratincole')).toHaveCount(3)
   page.once('dialog', (dialog) => dialog.accept())
-  await page.getByRole('button', { name: 'Empty Trash' }).click()
+  await menuItem(page, 'List actions', 'Empty Trash')
   await expect(page.getByText('Nothing in Trash.')).toBeVisible()
   await context.close()
 })
 
-test("the bulk toolbar's buttons sit on one line in a list of the usual width", async ({
+test("the selection bar's buttons sit on one line in a list of the usual width", async ({
   browser,
 }) => {
   for (const n of [1, 2]) {
@@ -215,10 +219,12 @@ test("the bulk toolbar's buttons sit on one line in a list of the usual width", 
   const list = page.getByRole('region', { name: 'Messages' })
   expect((await list.boundingBox())!.width).toBeCloseTo(380, 0)
   const bulk = page.getByRole('toolbar', { name: 'Selected messages' })
-  await bulk.getByLabel('Select all').check()
+  await selectAll(page)
   await expect(bulk).toContainText('2 selected')
-  const buttons = bulk.getByRole('button')
-  await expect(buttons).toHaveCount(4)
+  const buttons = bulk.getByRole('button', {
+    name: /^(Stop selecting|Delete|Spam|Mark read|Mark unread|Star)$/,
+  })
+  await expect(buttons).toHaveCount(6)
   const tops = await buttons.evaluateAll((all) =>
     all.map((button) => button.getBoundingClientRect().top)
   )
@@ -249,7 +255,7 @@ test('a blocked sender goes to Spam, until Not spam and Unblock bring the mail b
   await expect(page).toHaveURL(/#alice\/spam$/)
   await expect(messageRow(page, 'Pushy grebe')).toHaveCount(2)
 
-  await menuItem(page, 'More', 'Blocked senders')
+  await navItem(page, 'Blocked senders')
   const blocked = page.getByRole('region', { name: 'Blocked senders' })
   await expect(blocked).toContainText('pushy@sender.example')
   await expect(blocked).toContainText('by you')
@@ -293,7 +299,7 @@ test('a list load under way when mail moves does not bring it back', async ({
   await expect(messageRow(page, 'Lingering dowitcher')).toHaveCount(1)
   // A reload whose reply, still listing the message, arrives after the move
   const listing = await hold(page, 'mail_search', { late: true })
-  await page.getByRole('button', { name: 'Refresh' }).click()
+  await refreshList(page)
   await listing.seen
   await messageRow(page, 'Lingering dowitcher').hover()
   await page
@@ -386,7 +392,7 @@ test('when part of a large move is refused, the part that moved leaves the list'
       : route.fallback()
   )
   const bulk = page.getByRole('toolbar', { name: 'Selected messages' })
-  await bulk.getByLabel('Select all').check()
+  await selectAll(page)
   await expect(bulk).toContainText('120 selected')
   await bulk.getByRole('button', { name: 'Delete', exact: true }).click()
   await expect(page.getByTestId('toast')).toHaveText(
@@ -563,7 +569,7 @@ test('Empty Trash refused part way leaves only what is still there', async ({
       : route.fallback()
   )
   page.once('dialog', (dialog) => dialog.accept())
-  await page.getByRole('button', { name: 'Empty Trash' }).click()
+  await menuItem(page, 'List actions', 'Empty Trash')
   await expect(
     page.getByRole('region', { name: 'Messages' }).getByRole('alert')
   ).toBeVisible()
@@ -581,7 +587,7 @@ test('Empty Trash refused part way leaves only what is still there', async ({
       : route.fallback()
   )
   page.once('dialog', (dialog) => dialog.accept())
-  await page.getByRole('button', { name: 'Empty Trash' }).click()
+  await menuItem(page, 'List actions', 'Empty Trash')
   // One page holds the rest. The reload and the agent's 3 tries more, then at
   // once, not at the next timed refresh.
   await expect.poll(() => lists, { timeout: 60_000 }).toBe(5)
@@ -719,7 +725,7 @@ test('Undo of a block shows on the Blocked senders page', async ({
   await menuItem(page, 'More actions', 'Block sender')
   const note = page.getByTestId('toast')
   await expect(note).toHaveText(/Blocked hasty@sender.example/)
-  await menuItem(page, 'More', 'Blocked senders')
+  await navItem(page, 'Blocked senders')
   const blocked = page.getByRole('region', { name: 'Blocked senders' })
   await expect(blocked).toContainText('hasty@sender.example')
   await note.getByRole('button', { name: 'Undo' }).click()
@@ -760,7 +766,7 @@ test('Spam in the reader blocks the sender, and Undo unblocks them and brings th
   await expect(note.getByRole('button', { name: 'Block sender' })).toHaveCount(
     0
   )
-  await menuItem(page, 'More', 'Blocked senders')
+  await navItem(page, 'Blocked senders')
   const blocked = page.getByRole('region', { name: 'Blocked senders' })
   await expect(blocked).toContainText('brash@sender.example')
 
@@ -805,7 +811,7 @@ test('ticked messages to Spam block each sender once, and Undo lifts only those 
   await search(page, 'Flocking')
   await expect(messageRow(page, 'Flocking')).toHaveCount(3)
   const bulk = page.getByRole('toolbar', { name: 'Selected messages' })
-  await bulk.getByLabel('Select all').check()
+  await selectAll(page)
   await bulk.getByRole('button', { name: 'Spam', exact: true }).click()
   const note = page.getByTestId('toast')
   await expect(note.locator('span')).toHaveText(
@@ -854,7 +860,7 @@ test('a block whose reply is lost leaves the other senders blocked, and Undo lif
     }
   })
   const bulk = page.getByRole('toolbar', { name: 'Selected messages' })
-  await bulk.getByLabel('Select all').check()
+  await selectAll(page)
   await bulk.getByRole('button', { name: 'Spam', exact: true }).click()
   // reeve's block is not held up by ruff's, nor skipped after it
   const note = page.getByTestId('toast')
@@ -1267,7 +1273,7 @@ test('Undo of Not spam blocks again only the senders that click unblocked', asyn
   await search(page, 'Judged')
   await expect(messageRow(page, 'Judged')).toHaveCount(2)
   const bulk = page.getByRole('toolbar', { name: 'Selected messages' })
-  await bulk.getByLabel('Select all').check()
+  await selectAll(page)
   await bulk.getByRole('button', { name: 'Not spam', exact: true }).click()
   const note = page.getByTestId('toast')
   await expect(note.locator('span')).toHaveText(
@@ -1325,7 +1331,7 @@ test('an unblock stays, with no read after it, and later reads that lag behind i
   await page.getByRole('button', { name: 'Delete: Marked smew' }).click()
   const note = page.getByTestId('toast')
   await expect(note).toHaveText(/moved to Trash/)
-  await menuItem(page, 'More', 'Blocked senders')
+  await navItem(page, 'Blocked senders')
   const blocked = page.getByRole('region', { name: 'Blocked senders' })
   await expect(blocked).toContainText('lagging@sender.example')
   // Every read from here on lags behind the unblock: it lists the same block,
@@ -1381,7 +1387,7 @@ test('Empty Trash goes on past a page that lists mail no longer there', async ({
   // replica that lags would read it
   const listing = await hold(page, 'mail_list', { late: true })
   page.once('dialog', (dialog) => dialog.accept())
-  await page.getByRole('button', { name: 'Empty Trash' }).click()
+  await menuItem(page, 'List actions', 'Empty Trash')
   await listing.seen
   const [moved] = await tern.mail_move('skua', uids.slice(20), FOLDER_INBOX)
   expect(moved).toBe(100n)
@@ -1409,7 +1415,7 @@ test('a search made while Trash empties is the one the list shows after', async 
       : route.fallback()
   )
   page.once('dialog', (dialog) => dialog.accept())
-  await page.getByRole('button', { name: 'Empty Trash' }).click()
+  await menuItem(page, 'List actions', 'Empty Trash')
   await deleting.seen
   // Seeded message 7 is among the 20 the refusal leaves
   await search(page, 'word7')
@@ -1493,7 +1499,7 @@ test('Undo of a Delete brings back only what it moved, not mail another member m
   // As another member would, while the list still shows it
   await alice.mail_move('alice', [first], FOLDER_TRASH)
   const bulk = page.getByRole('toolbar', { name: 'Selected messages' })
-  await bulk.getByLabel('Select all').check()
+  await selectAll(page)
   await bulk.getByRole('button', { name: 'Delete', exact: true }).click()
   const note = page.getByTestId('toast')
   await expect(note.locator('span')).toHaveText(
@@ -1612,7 +1618,7 @@ test('an address unblocked on Blocked senders shows once it is blocked again', a
   await page.getByRole('button', { name: 'Delete: Reblocked pintail' }).click()
   const note = page.getByTestId('toast')
   await expect(note).toHaveText(/moved to Trash/)
-  await menuItem(page, 'More', 'Blocked senders')
+  await navItem(page, 'Blocked senders')
   const blocked = page.getByRole('region', { name: 'Blocked senders' })
   await note.getByRole('button', { name: 'Undo' }).focus()
   await blocked
@@ -1749,7 +1755,7 @@ test('an Unblock that ends after a block made again leaves that block shown', as
   await page.getByRole('button', { name: 'Delete: Twice phalarope' }).click()
   const note = page.getByTestId('toast')
   await expect(note).toHaveText(/moved to Trash/)
-  await menuItem(page, 'More', 'Blocked senders')
+  await navItem(page, 'Blocked senders')
   const blocked = page.getByRole('region', { name: 'Blocked senders' })
   const row = blocked
     .getByRole('listitem')
@@ -1842,7 +1848,7 @@ test('an Undo whose move back is refused part way says what moved back, and leav
     await expect(page.locator('button.message')).toHaveCount(shown)
   }
   const bulk = page.getByRole('toolbar', { name: 'Selected messages' })
-  await bulk.getByLabel('Select all').check()
+  await selectAll(page)
   await expect(bulk).toContainText('120 selected')
   await bulk.getByRole('button', { name: 'Spam', exact: true }).click()
   const note = page.getByTestId('toast')

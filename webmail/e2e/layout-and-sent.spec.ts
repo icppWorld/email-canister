@@ -42,6 +42,7 @@ import {
   menuItem,
   messageRow,
   nav,
+  navItem,
   openDrawer,
   openMail,
   openMenu,
@@ -53,6 +54,7 @@ import {
   roleColour,
   rowBox,
   search,
+  selectAll,
   send,
   sentMessage,
   signedIn,
@@ -71,54 +73,141 @@ test.describe.configure({ mode: 'serial' })
 
 test.beforeAll(() => freshBackend())
 
-test('the header menu holds Blocked senders, Download a copy, Admin for a controller, and Reload', async ({
+test('the navigation, pinned beside the page, holds the folders and the account items, and ☰ folds it away and back', async ({
   browser,
 }) => {
   const { context, page } = await signedIn(browser, USER_A)
   await expect(page.getByTestId('address')).toHaveText(`alice@${DOMAIN}`)
-  await expect(nav(page).getByRole('button', { name: 'Inbox' })).toBeVisible()
-  // No longer among the folders
-  for (const name of ['Blocked senders', 'Download a copy', 'Admin']) {
-    await expect(nav(page).getByRole('button', { name })).toHaveCount(0)
+  const navigation = nav(page)
+  for (const name of [
+    'Inbox',
+    'Sent',
+    'Spam',
+    'Trash',
+    'Calendar',
+    'Blocked senders',
+    'Download a copy',
+    'Reload',
+    'Sign out',
+  ]) {
+    await expect(
+      navigation.getByRole('button', { name, exact: true })
+    ).toBeVisible()
   }
-  const more = menu(page, 'More')
-  const blockedItem = more.getByRole('button', { name: 'Blocked senders' })
-  await openMenu(page, 'More')
-  await expect(blockedItem).toBeVisible()
-  await expect(
-    more.getByRole('button', { name: 'Download a copy' })
-  ).toBeVisible()
-  await expect(more.getByRole('button', { name: 'Admin' })).toHaveCount(0)
-
-  // Escape closes it, and so does a click beside it
-  await page.keyboard.press('Escape')
-  await expect(blockedItem).toBeHidden()
-  await openMenu(page, 'More')
-  await expect(blockedItem).toBeVisible()
-  await page.getByTestId('address').click()
-  await expect(blockedItem).toBeHidden()
-  // and the item chosen
-  await menuItem(page, 'More', 'Blocked senders')
+  await expect(navigation.getByRole('button', { name: 'Admin' })).toHaveCount(0)
+  // Beside the page, not over it: a choice leaves it there
+  await navItem(page, 'Blocked senders')
   await expect(
     page.getByRole('region', { name: 'Blocked senders' })
   ).toBeVisible()
-  await expect(blockedItem).toBeHidden()
+  await expect(navigation).toBeVisible()
+  await expect(drawer(page)).toHaveCount(0)
+  // ☰ folds it away and back, with no drawer over the page
+  const menuButton = page.getByRole('button', { name: 'Menu', exact: true })
+  await expect(menuButton).toHaveAttribute('aria-expanded', 'true')
+  await menuButton.click()
+  await expect(navigation).toHaveCount(0)
+  await expect(menuButton).toHaveAttribute('aria-expanded', 'false')
+  await expect(drawer(page)).toHaveCount(0)
+  await menuButton.click()
+  await expect(navigation).toBeVisible()
   await context.close()
 
-  // A controller with no mailbox has only Admin and Reload there
+  // A controller with no mailbox has Admin, Reload and Sign out there
   const admin = await signedIn(browser, ADMIN)
   await expect(
     admin.page.getByRole('heading', { name: 'Administration' })
   ).toBeVisible()
-  await expect(
-    nav(admin.page).getByRole('button', { name: 'Admin' })
-  ).toHaveCount(0)
-  await openMenu(admin.page, 'More')
-  const adminMenu = menu(admin.page, 'More')
-  await expect(adminMenu.getByRole('button', { name: 'Admin' })).toBeVisible()
-  await expect(adminMenu.getByRole('button', { name: 'Reload' })).toBeVisible()
-  await expect(adminMenu.getByRole('button')).toHaveCount(2)
+  const adminNav = nav(admin.page)
+  for (const name of ['Pin the menu', 'Admin', 'Reload', 'Sign out']) {
+    await expect(
+      adminNav.getByRole('button', { name, exact: true })
+    ).toBeVisible()
+  }
+  await expect(adminNav.getByRole('button')).toHaveCount(4)
   await admin.context.close()
+})
+
+test('unpinned, the navigation is the ☰ drawer over the page, as this browser keeps; never pinned at phone width', async ({
+  browser,
+}) => {
+  const { context, page } = await signedIn(browser, USER_A)
+  await expect(page.getByTestId('address')).toHaveText(`alice@${DOMAIN}`)
+  const pin = nav(page).getByRole('button', { name: 'Pin the menu' })
+  await expect(pin).toHaveAttribute('aria-pressed', 'true')
+  await pin.click()
+  await expect(nav(page)).toHaveCount(0)
+  // The focus the panel held goes to ☰, which now opens the drawer
+  const menuButton = page.getByRole('button', { name: 'Menu', exact: true })
+  await expect(menuButton).toBeFocused()
+  await expect(menuButton).not.toHaveAttribute('aria-expanded')
+  await drawerItem(page, 'Sent')
+  await expect(page.getByRole('region', { name: 'Sent mail' })).toBeVisible()
+
+  // Kept in this browser
+  await page.reload()
+  await expect(page.getByTestId('address')).toHaveText(`alice@${DOMAIN}`)
+  await expect(nav(page)).toHaveCount(0)
+  // Pinned again from the drawer, which gives way to the panel
+  await openDrawer(page)
+  const drawerPin = drawer(page).getByRole('button', { name: 'Pin the menu' })
+  await expect(drawerPin).toHaveAttribute('aria-pressed', 'false')
+  await drawerPin.click()
+  await expect(drawer(page)).toHaveCount(0)
+  await expect(nav(page)).toBeVisible()
+  await page.reload()
+  await expect(nav(page)).toBeVisible()
+
+  // At phone width there is no room beside the page: the drawer, with no pin
+  await page.setViewportSize(PHONE)
+  await expect(nav(page)).toHaveCount(0)
+  await openDrawer(page)
+  await expect(
+    drawer(page).getByRole('button', { name: 'Pin the menu' })
+  ).toHaveCount(0)
+  await context.close()
+})
+
+test('at a wider width a ticked box makes the bar the selection bar, and its ✕ unticks them all', async ({
+  browser,
+}) => {
+  for (const n of [1, 2]) {
+    deliver({ subject: `Barred godwit ${n}`, body: '<p>A godwit.</p>' })
+  }
+  await waitDrained()
+  const { context, page } = await signedIn(browser, USER_A)
+  await search(page, 'Barred godwit')
+  await expect(messageRow(page, 'Barred godwit')).toHaveCount(2)
+  const bar = page.getByRole('toolbar', { name: 'Selected messages' })
+  await expect(bar).toHaveCount(0)
+  const box = rowBox(page, 'Barred godwit 1')
+  await box.check()
+  await expect(bar).toContainText('1 selected')
+  // The box keeps the focus, for the next one
+  await expect(box).toBeFocused()
+  // Every action is in the bar, where there is room
+  for (const name of ['Delete', 'Spam', 'Mark read', 'Mark unread', 'Star']) {
+    await expect(bar.getByRole('button', { name, exact: true })).toBeVisible()
+  }
+  await selectAll(page)
+  await expect(bar).toContainText('2 selected')
+  await stopSelecting(page)
+  await expect(bar).toHaveCount(0)
+  await expect(box).not.toBeChecked()
+  await expect(
+    page.getByRole('button', { name: 'List actions', exact: true })
+  ).toBeFocused()
+
+  // The search field stays in the bar; its ✕ only ends the search
+  const field = page.getByRole('textbox', { name: 'Search mail' })
+  await expect(field).toHaveValue('Barred godwit')
+  await page.getByRole('button', { name: 'Clear search', exact: true }).click()
+  await expect(field).toHaveValue('')
+  await expect(field).toBeFocused()
+  await expect(
+    page.getByRole('button', { name: 'Clear search', exact: true })
+  ).toHaveCount(0)
+  await context.close()
 })
 
 test('a menu gives the focus back to its button, and closes when the focus leaves it or the window changes size', async ({
@@ -126,21 +215,20 @@ test('a menu gives the focus back to its button, and closes when the focus leave
 }) => {
   const { context, page } = await signedIn(browser, USER_A)
   await expect(page.getByTestId('address')).toHaveText(`alice@${DOMAIN}`)
-  const more = menu(page, 'More')
-  const button = page.getByLabel('More', { exact: true })
-  const blockedItem = more.getByRole('button', { name: 'Blocked senders' })
+  const more = menu(page, 'List actions')
+  const button = page.getByLabel('List actions', { exact: true })
+  const refreshItem = more.getByRole('button', { name: 'Refresh' })
 
   // The item chosen hands the focus back to the ⋮
-  await menuItem(page, 'More', 'Blocked senders')
-  await expect(blockedItem).toBeHidden()
+  await menuItem(page, 'List actions', 'Refresh')
+  await expect(refreshItem).toBeHidden()
   await expect(button).toBeFocused()
 
   // Tab past the last item leaves the menu, which closes behind it
-  await openMenu(page, 'More')
-  const last = more.getByRole('button', { name: 'Reload' })
-  await last.focus()
+  await openMenu(page, 'List actions')
+  await more.locator('button:not(:disabled)').last().focus()
   await page.keyboard.press('Tab')
-  await expect(blockedItem).toBeHidden()
+  await expect(refreshItem).toBeHidden()
   // A closed menu's items are out of the accessibility tree, so the check
   // looks at the menu itself
   expect(await more.evaluate((m) => m.contains(document.activeElement))).toBe(
@@ -148,15 +236,15 @@ test('a menu gives the focus back to its button, and closes when the focus leave
   )
 
   // A window that changes width leaves no list behind
-  await openMenu(page, 'More')
-  await expect(blockedItem).toBeVisible()
+  await openMenu(page, 'List actions')
+  await expect(refreshItem).toBeVisible()
   await page.setViewportSize({ width: 900, height: 700 })
-  await expect(blockedItem).toBeHidden()
+  await expect(refreshItem).toBeHidden()
   // Only the height, as a phone's keyboard or toolbar changes it: it stays
-  await openMenu(page, 'More')
+  await openMenu(page, 'List actions')
   await page.setViewportSize({ width: 900, height: 500 })
   await page.waitForTimeout(200)
-  await expect(blockedItem).toBeVisible()
+  await expect(refreshItem).toBeVisible()
   await context.close()
 })
 
@@ -363,7 +451,7 @@ test('an unblock made while the list reloads stays', async ({ browser }) => {
   await spamFromReader(page)
   const note = page.getByTestId('toast')
   await expect(note).toHaveText(/rash@sender.example blocked/)
-  await menuItem(page, 'More', 'Blocked senders')
+  await navItem(page, 'Blocked senders')
   const blocked = page.getByRole('region', { name: 'Blocked senders' })
   await expect(blocked).toContainText('brisk@sender.example')
   // The reload after Undo reads the list while brisk is still blocked
@@ -625,7 +713,7 @@ test('at phone width one bar along the top takes the place of the header and the
   ]) {
     await expect(hidden).toBeHidden()
   }
-  await expect(page.getByTestId('address')).toBeHidden()
+  await expect(page.getByTestId('address')).toHaveText(`alice@${DOMAIN}`)
   await context.close()
 })
 
@@ -1072,7 +1160,7 @@ test('the drawer and selection mode end as the page leaves phone width, and stay
   const desktop = { width: 1280, height: 800 }
   await openDrawer(page)
   await page.setViewportSize(desktop)
-  await expect(appBar(page)).toHaveCount(0)
+  await expect(nav(page)).toBeVisible()
   await page.setViewportSize(PHONE)
   // The bar is back, in the same render the drawer would be
   await expect(barTitle(page)).toHaveText('Inbox')
@@ -1081,7 +1169,7 @@ test('the drawer and selection mode end as the page leaves phone width, and stay
   await menuItem(page, 'List actions', 'Select messages')
   await expect(barTitle(page)).toHaveText('0 selected')
   await page.setViewportSize(desktop)
-  await expect(appBar(page)).toHaveCount(0)
+  await expect(nav(page)).toBeVisible()
   await page.setViewportSize(PHONE)
   await expect(barTitle(page)).toHaveText('Inbox')
   await expect(rowBox(page, 'Resized greenshank')).toBeHidden()
@@ -1243,7 +1331,7 @@ test('a long press pending as the page leaves phone width starts nothing, and ma
   await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1_000)
   await pressed.dispatchEvent('pointerdown', pointer)
   await page.setViewportSize(desktop)
-  await expect(appBar(page)).toHaveCount(0)
+  await expect(nav(page)).toBeVisible()
   await page.clock.runFor(700)
   await pressed.dispatchEvent('pointerup', pointer)
   await page.clock.resume()
@@ -1482,10 +1570,11 @@ const textButtons = (page: Page) =>
     buttons
       .filter(
         (button) =>
-          // The calendar's events and days are its content, like rows
+          // The navigation's items are a menu's; the calendar's events and
+          // days are its content, like rows
           !button.closest(
-            '.menu-items, li.message-row, .attachments, .month .day, .agenda'
-          ) && !button.matches('nav button[aria-current]')
+            '.menu-items, nav, li.message-row, .attachments, .month .day, .agenda'
+          )
       )
       .filter(
         (button) =>
@@ -1802,7 +1891,7 @@ test("a Sent row's own Delete deletes it, and Select all ticks the rest", async 
   await expect(sent.getByRole('listitem')).toHaveCount(2)
 
   const bulk = page.getByRole('toolbar', { name: 'Selected messages' })
-  await bulk.getByLabel('Select all').check()
+  await selectAll(page)
   await expect(bulk).toContainText('2 selected')
   for (const n of [1, 3]) {
     await expect(
@@ -1850,10 +1939,7 @@ test('Empty Sent deletes all but mail being sent, which the note says it could n
     await expect(held.getByRole('button', { name: /^Delete/ })).toHaveCount(0)
 
     const dialogs = answer(page, true)
-    await page
-      .getByRole('toolbar', { name: 'Selected messages' })
-      .getByRole('button', { name: 'Empty Sent' })
-      .click()
+    await menuItem(page, 'List actions', 'Empty Sent')
     await expect(page.getByTestId('toast').locator('span')).toHaveText(
       '2 sent messages deleted. 1 could not be deleted: it is being sent, ' +
         'or was deleted already'
@@ -2114,7 +2200,7 @@ test('a reversing mark in an address shows as a replacement character wherever t
   expect((await alice.mail_blocked('alice')).map((b) => b.address)).toContain(
     marked
   )
-  await menuItem(page, 'More', 'Blocked senders')
+  await navItem(page, 'Blocked senders')
   const blocked = page.getByRole('region', { name: 'Blocked senders' })
   const address = page.locator('.blocked-address', { hasText: 'voice' })
   const entry = blocked.locator(address)
@@ -2163,17 +2249,16 @@ const markPage = (page: Page) =>
 const reloaded = (page: Page) =>
   page.waitForFunction(() => !('notReloaded' in window))
 
-test('the header menu shows the release, and its Reload loads the page again', async ({
+test('the navigation shows the release, and its Reload loads the page again', async ({
   browser,
 }) => {
   const { context, page } = await signedIn(browser, USER_A)
   await expect(page.getByTestId('address')).toHaveText(`alice@${DOMAIN}`)
-  await openMenu(page, 'More')
-  await expect(menu(page, 'More').getByTestId('version')).toHaveText(
+  await expect(nav(page).getByTestId('version')).toHaveText(
     `Webmail v${VERSION}`
   )
   await markPage(page)
-  await menu(page, 'More').getByRole('button', { name: 'Reload' }).click()
+  await navItem(page, 'Reload')
   await reloaded(page)
   await expect(page.getByTestId('address')).toHaveText(`alice@${DOMAIN}`)
 
@@ -2182,7 +2267,7 @@ test('the header menu shows the release, and its Reload loads the page again', a
   await markPage(page)
   // No, then yes
   const asked = answer(page, false, true)
-  await menuItem(page, 'More', 'Reload')
+  await navItem(page, 'Reload')
   expect(asked).toEqual([expect.stringContaining('message being written')])
   await page.waitForTimeout(1_000)
   expect(await page.evaluate(() => 'notReloaded' in window)).toBe(true)
@@ -2190,7 +2275,7 @@ test('the header menu shows the release, and its Reload loads the page again', a
     'Unsent loon'
   )
   // and a yes reloads, losing it
-  await menuItem(page, 'More', 'Reload')
+  await navItem(page, 'Reload')
   await reloaded(page)
   await expect(page.getByRole('dialog', { name: 'New message' })).toHaveCount(0)
   await context.close()

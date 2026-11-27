@@ -15,7 +15,6 @@ import { attempt, BATCH, inBatches, MAX_BATCH } from './batch'
 import { usePhone } from './AppBar'
 import { BackButton, IconButton } from './Buttons'
 import {
-  Bulk,
   ListBar,
   RowPick,
   useSelectMode,
@@ -385,7 +384,7 @@ export function Sent({
         className={select.on ? 'list selecting' : 'list'}
         aria-label="Sent mail"
       >
-        {/* At phone width: the page's bar, or selection mode's actions */}
+        {/* The page's bar, or the selection bar */}
         <ListBar
           select={select}
           ticks={ticks}
@@ -393,11 +392,6 @@ export function Sent({
           listed={items.length > 0}
           empty={emptySent}
         />
-        {items.length > 0 && (
-          <div className="list-head">
-            <Bulk ticks={ticks} actions={[deleteTicked]} empty={emptySent} />
-          </div>
-        )}
         {error && (
           <p className="error" role="alert">
             {error}

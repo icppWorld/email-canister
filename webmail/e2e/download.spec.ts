@@ -21,12 +21,11 @@ import {
   freshBackend,
   hold,
   joinMailbox,
-  menu,
   nav,
   noDownloadHeld,
   openMail,
-  openMenu,
   principalOf,
+  refreshList,
   signedIn,
   signInAgain,
   USER_A,
@@ -296,10 +295,7 @@ test('the Download button waits until the download has ended', async ({
   await download(page, () => downloadCopy(page))
   await thaw.seen
   // Saved, but the freeze has not ended yet: a new download would be refused
-  await openMenu(page, 'More')
-  const button = menu(page, 'More').getByRole('button', {
-    name: 'Download a copy',
-  })
+  const button = nav(page).getByRole('button', { name: 'Download a copy' })
   await expect(button).toBeDisabled()
   await expect(downloadStatus(page)).toBeVisible()
   thaw.release()
@@ -332,10 +328,9 @@ test('signing out ends a download under way, and the next sign-in shows none', a
 
   // Nothing of it is left on the new sign-in: a new download can start
   await expect(downloadStatus(page)).toHaveCount(0)
-  await expect(nav(page).getByRole('alert')).toHaveCount(0)
-  await openMenu(page, 'More')
+  await expect(page.locator('.notices')).toHaveCount(0)
   await expect(
-    menu(page, 'More').getByRole('button', { name: 'Download a copy' })
+    nav(page).getByRole('button', { name: 'Download a copy' })
   ).toBeEnabled()
   await context.close()
 })
@@ -357,7 +352,7 @@ test('a download ends when its person no longer has a mailbox, saving nothing', 
   await downloadCopy(page)
   await chunk.seen
   backend('admin_remove_member', `("scaup", principal "${principalOf(LARK)}")`)
-  await page.getByRole('button', { name: 'Refresh' }).click()
+  await refreshList(page)
   await expect(
     page.getByRole('heading', { name: 'Not activated yet' })
   ).toBeVisible()
@@ -402,7 +397,7 @@ test('a mailbox that is briefly busy is read again, without an error', async ({
   const { context, page } = await signedIn(browser, USER_B)
   try {
     await expect(
-      page.getByRole('button', { name: 'Refresh', exact: true })
+      page.getByRole('button', { name: 'List actions', exact: true })
     ).toBeVisible()
     // Each read of the mailbox: whether it started after a "busy:" answer,
     // and whether its own answer was one (undefined until read)
@@ -424,7 +419,7 @@ test('a mailbox that is briefly busy is read again, without an error', async ({
     })
     backend('dev_hide_file', '("bob", true)')
     try {
-      await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+      await refreshList(page)
       await expect.poll(answeredBusy).toBe(true)
     } finally {
       backend('dev_hide_file', '("bob", false)')
