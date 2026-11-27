@@ -927,7 +927,10 @@ export function Inbox({
   const submitSearch = (e: FormEvent) => {
     e.preventDefault()
     setSelected(null)
-    searchFor(query.trim())
+    const text = query.trim()
+    // An empty one closes the bar's field, as its ✕ does
+    if (text === '') setSearchOpened(false)
+    searchFor(text)
   }
   const clearSearch = () => {
     setQuery('')

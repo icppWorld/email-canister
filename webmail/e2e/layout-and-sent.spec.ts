@@ -1150,6 +1150,44 @@ test('at phone width an empty search sent from the bar closes its field, and the
   await context.close()
 })
 
+test('at phone width an empty search sent after 🔍 opened the field closes it, and the focus goes to 🔍', async ({
+  browser,
+}) => {
+  deliver({ subject: 'Emptied willet', body: '<p>A willet.</p>' })
+  await waitDrained()
+  const { context, page } = await signedInPhone(browser, USER_A)
+  await phoneSearch(page, 'willet')
+  await expect(messageRow(page, 'Emptied willet')).toBeVisible()
+  const field = appBar(page).getByRole('textbox', { name: 'Search mail' })
+  await field.fill('')
+  await field.press('Enter')
+  await expect(field).toHaveCount(0)
+  await expect(barTitle(page)).toHaveText('Inbox')
+  await expect(
+    appBar(page).getByRole('button', { name: 'Search', exact: true })
+  ).toBeFocused()
+  await context.close()
+})
+
+test("at phone width the focus goes to the bar's ☰ of the page the drawer went to", async ({
+  browser,
+}) => {
+  const { context, page } = await signedInPhone(browser, USER_A)
+  const menuButton = appBar(page).getByRole('button', {
+    name: 'Menu',
+    exact: true,
+  })
+  for (const [name, region] of [
+    ['Sent', 'Sent mail'],
+    ['Calendar', 'Calendar'],
+  ]) {
+    await drawerItem(page, name)
+    await expect(page.getByRole('region', { name: region })).toBeVisible()
+    await expect(menuButton).toBeFocused()
+  }
+  await context.close()
+})
+
 test('at phone width the field of a search made before takes no focus, at the resize or as selection mode ends', async ({
   browser,
 }) => {

@@ -1,11 +1,16 @@
 // The ☰ drawer at phone width: a modal dialog along the left edge. The focus
-// moves into it as it opens, and back to where it was when it closes.
+// moves into it as it opens, and back to where it was when it closes, or,
+// when it went to a page of its own, to that page's ☰.
 // Escape, a click on the backdrop beside it, and choosing one of its buttons
 // close it.
 
 import { useRef, type ReactNode } from 'react'
 
 import { useModal } from './modal'
+
+// The ☰ of the page the drawer went to: its own one left with the page
+const focusMenu = () =>
+  document.querySelector<HTMLElement>('.appbar [aria-label="Menu"]')?.focus()
 
 export function Drawer({
   onClose,
@@ -15,7 +20,7 @@ export function Drawer({
   children: ReactNode
 }) {
   const box = useRef<HTMLDialogElement>(null)
-  useModal(box)
+  useModal(box, focusMenu)
   return (
     <dialog
       ref={box}
