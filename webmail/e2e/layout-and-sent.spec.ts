@@ -1308,6 +1308,10 @@ test('at phone width the field of a search made before takes no focus, at the re
   const { context, page } = await signedIn(browser, USER_A)
   await search(page, 'courser')
   await expect(messageRow(page, 'Unfocused courser')).toBeVisible()
+  // The field is the same at both widths: one the focus has left
+  await page
+    .getByRole('textbox', { name: 'Search mail' })
+    .evaluate((field: HTMLElement) => field.blur())
   await page.setViewportSize(PHONE)
   const field = appBar(page).getByRole('textbox', { name: 'Search mail' })
   await expect(field).toHaveValue('courser')

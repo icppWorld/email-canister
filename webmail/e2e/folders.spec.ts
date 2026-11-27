@@ -1001,10 +1001,7 @@ test('Not spam unblocks the sender, its Undo blocks them again, and Spam links t
   const { context, page } = await signedIn(browser, USER_A)
   await folder(page, 'Spam')
   // The Spam folder's list leads to the senders it blocks
-  await page
-    .getByRole('region', { name: 'Messages' })
-    .getByRole('button', { name: 'Blocked senders', exact: true })
-    .click()
+  await menuItem(page, 'List actions', 'Blocked senders')
   const blocked = page.getByRole('region', { name: 'Blocked senders' })
   await expect(blocked).toContainText('stray@sender.example')
 
