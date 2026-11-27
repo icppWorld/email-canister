@@ -42,14 +42,13 @@ import {
   saveFile,
   type ParsedMail,
 } from './mime'
-import { AppBar, usePhone } from './AppBar'
+import { usePhone } from './AppBar'
 import { BackButton, IconButton, StarButton, starLabel } from './Buttons'
 import {
   Bulk,
-  ListMenu,
+  ListBar,
   MenuAction,
   RowPick,
-  SelectionBar,
   useSelectMode,
   useTicks,
   type BulkAction,
@@ -603,11 +602,12 @@ export function Inbox({
   // The messages ticked for an action on all of them
   const ticks = useTicks(items.map((m) => m.uid))
   const select = useSelectMode(ticks)
-  const phone = usePhone()
   const [query, setQuery] = useState('')
-  // At phone width, the bar along the top is a search field
-  const [searching, setSearching] = useState(false)
   const [activeQuery, setActiveQuery] = useState('')
+  // At phone width, the bar along the top is a search field: opened by its
+  // 🔍, and while a search is shown, as one made at a wider width
+  const [searchOpened, setSearchOpened] = useState(false)
+  const searching = searchOpened || activeQuery !== ''
   // The search shown now, for a reload by work that began under another
   const searched = useRef('')
   const [error, setError] = useState('')
@@ -979,19 +979,6 @@ export function Inbox({
       : undefined
   const placeholder =
     folder === 'inbox' ? 'Search mail' : `Search ${FOLDERS[folder].name}`
-  // The list's ⋮ in the bar along the top, at phone width
-  const listMenu = (
-    <ListMenu
-      listed={items.length > 0}
-      onSelect={select.start}
-      empty={emptyFolder}
-    >
-      <MenuAction
-        action={{ label: 'Refresh', icon: 'refresh', run: onRefresh }}
-      />
-    </ListMenu>
-  )
-
   // Only the search shown now goes on, from where its own pages ended
   const cursor: [] | [bigint] = more.search === activeQuery ? more.cursor : []
   // A search with a cursor left, or whose first page is on its way, has not
@@ -1013,15 +1000,21 @@ export function Inbox({
       >
         {/* At phone width: the page's bar, a search field, or selection
             mode's actions */}
-        {phone &&
-          (select.on ? (
-            <SelectionBar
-              ticks={ticks}
-              actions={bulk([...bulkActions, star])}
-              onExit={select.exit}
+        <ListBar
+          select={select}
+          ticks={ticks}
+          actions={bulk([...bulkActions, star])}
+          listed={items.length > 0}
+          empty={emptyFolder}
+          bare={searching}
+          items={
+            <MenuAction
+              action={{ label: 'Refresh', icon: 'refresh', run: onRefresh }}
             />
-          ) : searching ? (
-            <AppBar bare>
+          }
+        >
+          {searching ? (
+            <>
               <form
                 className="appbar-search"
                 role="search"
@@ -1040,21 +1033,18 @@ export function Inbox({
                 icon="close"
                 onClick={() => {
                   clearSearch()
-                  setSearching(false)
+                  setSearchOpened(false)
                 }}
               />
-              {listMenu}
-            </AppBar>
+            </>
           ) : (
-            <AppBar>
-              <IconButton
-                label="Search"
-                icon="search"
-                onClick={() => setSearching(true)}
-              />
-              {listMenu}
-            </AppBar>
-          ))}
+            <IconButton
+              label="Search"
+              icon="search"
+              onClick={() => setSearchOpened(true)}
+            />
+          )}
+        </ListBar>
         <div className="list-head">
           <form className="search" role="search" onSubmit={submitSearch}>
             <input

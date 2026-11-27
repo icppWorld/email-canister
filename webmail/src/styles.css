@@ -1067,12 +1067,17 @@ dialog.drawer::backdrop {
     padding: 0 0 4px 4px;
   }
   /* The list's search and its Select all are in the bar; the rows' boxes
-     wait for selection mode. The last row scrolls clear of Compose. */
+     wait for selection mode */
   .list-head,
   .list:not(.selecting) .pick-area {
     display: none;
   }
-  .list {
+  /* The end of each page beside Compose scrolls clear of it (the calendar's
+     below, after its own padding) */
+  .list,
+  .reader,
+  .blocked,
+  .admin {
     padding-bottom: 88px;
   }
   /* A long press starts selection mode, rather than selecting text */
@@ -1355,6 +1360,9 @@ dialog.event-dialog::backdrop {
   min-height: 80px;
 }
 @media (max-width: 760px) {
+  .calendar {
+    padding-bottom: 88px;
+  }
   .month {
     display: none;
   }

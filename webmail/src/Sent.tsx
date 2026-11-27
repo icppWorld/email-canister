@@ -12,13 +12,12 @@ import {
   type OutboxSummary,
 } from './api'
 import { attempt, BATCH, inBatches, MAX_BATCH } from './batch'
-import { AppBar, usePhone } from './AppBar'
+import { usePhone } from './AppBar'
 import { BackButton, IconButton } from './Buttons'
 import {
   Bulk,
-  ListMenu,
+  ListBar,
   RowPick,
-  SelectionBar,
   useSelectMode,
   useTicks,
   type BulkAction,
@@ -263,7 +262,6 @@ export function Sent({
     items.filter((m) => m.state !== OUTBOX_SENDING).map((m) => m.id)
   )
   const select = useSelectMode(ticks)
-  const phone = usePhone()
   // The list's own error, which a reload clears, and an action's refusal
   const [error, setError] = useState('')
   const [actionError, setActionError] = useState('')
@@ -388,22 +386,13 @@ export function Sent({
         aria-label="Sent mail"
       >
         {/* At phone width: the page's bar, or selection mode's actions */}
-        {phone &&
-          (select.on ? (
-            <SelectionBar
-              ticks={ticks}
-              actions={[deleteTicked]}
-              onExit={select.exit}
-            />
-          ) : (
-            <AppBar>
-              <ListMenu
-                listed={items.length > 0}
-                onSelect={select.start}
-                empty={emptySent}
-              />
-            </AppBar>
-          ))}
+        <ListBar
+          select={select}
+          ticks={ticks}
+          actions={[deleteTicked]}
+          listed={items.length > 0}
+          empty={emptySent}
+        />
         {items.length > 0 && (
           <div className="list-head">
             <Bulk ticks={ticks} actions={[deleteTicked]} empty={emptySent} />

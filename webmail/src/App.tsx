@@ -10,7 +10,14 @@ import {
 } from 'react'
 import type { Identity } from '@icp-sdk/core/agent'
 
-import { createBackend, errorText, mailbox, type Backend, type Me } from './api'
+import {
+  createBackend,
+  errorText,
+  mailbox,
+  type Backend,
+  type MailboxInfo,
+  type Me,
+} from './api'
 import { createSession, type Session } from './auth'
 import { AdminPanel } from './AdminPanel'
 import { AppBar, PageBar, usePhone } from './AppBar'
@@ -212,9 +219,10 @@ export function App() {
   const [refreshing, setRefreshing] = useState(false)
   const onLoaded = useCallback(() => setRefreshing(false), [])
   const [draft, setDraft] = useState<Draft | null>(null)
-  // The ☰ drawer, at phone width
+  // The ☰ drawer, at phone width: closed as the page leaves it
   const [drawer, setDrawer] = useState(false)
   const phone = usePhone()
+  if (drawer && !phone) setDrawer(false)
   const [toast, setToast] = useState<ShownToast | null>(null)
   const toastIds = useRef(0)
   // Under the pointer or holding the focus, the note stays until let go
@@ -507,6 +515,29 @@ export function App() {
     </div>
   )
 
+  // A mailbox's button, with its unread count: in the list beside the mail
+  // by its name, with the address as its tooltip, and in the drawer by its
+  // address. The one shown is current, unless Admin is.
+  const mailboxButton = (m: MailboxInfo, inDrawer: boolean) => (
+    <button
+      className={inDrawer ? undefined : 'mailbox'}
+      title={inDrawer ? undefined : m.address}
+      aria-current={m.local === shown?.local && current !== 'admin'}
+      onClick={() => choose(m.local)}
+    >
+      {inDrawer && <Icon name="mail" />}
+      <span className="name">{inDrawer ? m.address : m.local}</span>
+      {m.unseen > 0n && (
+        <span
+          className="badge"
+          data-testid={inDrawer ? undefined : `unread-${m.local}`}
+        >
+          {m.unseen.toString()}
+        </span>
+      )}
+    </button>
+  )
+
   const address = shown?.address ?? 'Administrator'
   const brand = (
     <strong className="brand">
@@ -570,18 +601,7 @@ export function App() {
             <>
               <ul aria-label="Mailboxes">
                 {me.mailboxes.map((m) => (
-                  <li key={m.local}>
-                    <button
-                      aria-current={m.local === shown.local}
-                      onClick={() => choose(m.local)}
-                    >
-                      <Icon name="mail" />
-                      <span className="name">{m.address}</span>
-                      {m.unseen > 0n && (
-                        <span className="badge">{m.unseen.toString()}</span>
-                      )}
-                    </button>
-                  </li>
+                  <li key={m.local}>{mailboxButton(m, true)}</li>
                 ))}
               </ul>
               <ul className="drawer-folders" aria-label="Folders">
@@ -643,22 +663,7 @@ export function App() {
                 const isOpen = m.local === shown.local
                 return (
                   <li key={m.local} className={isOpen ? 'open' : undefined}>
-                    <button
-                      className="mailbox"
-                      title={m.address}
-                      aria-current={isOpen && current !== 'admin'}
-                      onClick={() => choose(m.local)}
-                    >
-                      <span className="name">{m.local}</span>
-                      {m.unseen > 0n && (
-                        <span
-                          className="badge"
-                          data-testid={`unread-${m.local}`}
-                        >
-                          {m.unseen.toString()}
-                        </span>
-                      )}
-                    </button>
+                    {mailboxButton(m, false)}
                     {isOpen && folders}
                   </li>
                 )

@@ -48,6 +48,7 @@ import {
   PHONE,
   phoneOpenMail,
   phoneSearch,
+  principalOf,
   reader,
   roleColour,
   rowBox,
@@ -952,6 +953,166 @@ test("at phone width Sent has the bar, selection mode deletes the mail ticked, a
   expect(dialogs).toEqual(['Delete this sent message for good?'])
   await expect(sent.getByRole('listitem')).toHaveCount(1)
   await expect(sent).toContainText('Thrift 1')
+  await context.close()
+})
+
+const AVOCET = '5a'.repeat(32)
+
+test('at phone width mail being sent is ticked by neither a tap nor a long press, and stays unticked once sent', async ({
+  browser,
+}) => {
+  const box = await sentMail('avocet', AVOCET, ['Sent avocet'])
+  // The bridge holds the next one as being sent, until the test lets it finish
+  stub('stub_set_mode', '("sending")')
+  let context: BrowserContext | undefined
+  try {
+    await box.mail_send('avocet', {
+      client_id: crypto.randomUUID(),
+      to: ['friend@example.org'],
+      cc: [],
+      bcc: [],
+      subject: 'Held avocet',
+      html_body: '<p>Held.</p>',
+      attachments: [],
+    })
+    const signed = await signedInPhone(browser, AVOCET)
+    context = signed.context
+    const { page } = signed
+    await drawerItem(page, 'Sent')
+    const held = page.locator('li.message-row', { hasText: 'Held avocet' })
+    await expect(held).toContainText('Sending', { timeout: 30_000 })
+    // Its long press, as a touch screen sends it, starts no selection mode
+    await messageRow(page, 'Held avocet').click({ button: 'right' })
+    await expect(barTitle(page)).toHaveText('Sent')
+    // In selection mode, a tap or a long press on it ticks nothing
+    await menuItem(page, 'List actions', 'Select messages')
+    await messageRow(page, 'Held avocet').click()
+    await messageRow(page, 'Held avocet').click({ button: 'right' })
+    await expect(barTitle(page)).toHaveText('0 selected')
+    // and it is not ticked once sent either
+    stub('stub_set_mode', '("sent")')
+    stub('stub_finish', '("sent")')
+    const pick = rowBox(page, 'Held avocet')
+    await expect(pick).toBeEnabled({ timeout: 30_000 })
+    await expect(pick).not.toBeChecked()
+    await expect(barTitle(page)).toHaveText('0 selected')
+  } finally {
+    await context?.close()
+    stub('stub_set_mode', '("sent")')
+    stub('stub_finish', '("sent")')
+  }
+})
+
+const PLOVER = '5b'.repeat(32)
+
+test('at phone width the end of a page beside Compose, as Blocked senders, scrolls clear of it', async ({
+  browser,
+}) => {
+  joinMailbox('plover', PLOVER)
+  const box = await asUser(PLOVER, env.url, env.backend)
+  await Promise.all(
+    Array.from({ length: 20 }, (_, i) =>
+      box.mail_block('plover', `pest${i}@sender.example`)
+    )
+  )
+  const { context, page } = await signedInPhone(browser, PLOVER)
+  await drawerItem(page, 'Blocked senders')
+  const blocked = page.getByRole('region', { name: 'Blocked senders' })
+  const rows = blocked.getByRole('listitem')
+  await expect(rows).toHaveCount(20)
+  await blocked.evaluate((list) => list.scrollTo(0, list.scrollHeight))
+  const last = await rows.last().boundingBox()
+  const compose = await page
+    .getByRole('button', { name: 'Compose' })
+    .boundingBox()
+  if (!last || !compose) throw new Error('no last row or Compose')
+  expect(last.y + last.height).toBeLessThanOrEqual(compose.y)
+  await context.close()
+})
+
+test("at phone width the focus goes to selection mode's ✕ as it starts, and back to the list's ⋮ as it ends", async ({
+  browser,
+}) => {
+  deliver({ subject: 'Focused stint', body: '<p>A stint.</p>' })
+  await waitDrained()
+  const { context, page } = await signedInPhone(browser, USER_A)
+  await expect(messageRow(page, 'Focused stint')).toBeVisible()
+  await menuItem(page, 'List actions', 'Select messages')
+  await expect(
+    page.getByRole('button', { name: 'Stop selecting', exact: true })
+  ).toBeFocused()
+  await stopSelecting(page)
+  await expect(
+    appBar(page).getByLabel('List actions', { exact: true })
+  ).toBeFocused()
+  await context.close()
+})
+
+test('the drawer and selection mode end as the page leaves phone width, and stay ended back at it', async ({
+  browser,
+}) => {
+  deliver({ subject: 'Resized greenshank', body: '<p>A greenshank.</p>' })
+  await waitDrained()
+  const { context, page } = await signedInPhone(browser, USER_A)
+  await expect(messageRow(page, 'Resized greenshank')).toBeVisible()
+  const desktop = { width: 1280, height: 800 }
+  await openDrawer(page)
+  await page.setViewportSize(desktop)
+  await expect(appBar(page)).toHaveCount(0)
+  await page.setViewportSize(PHONE)
+  // The bar is back, in the same render the drawer would be
+  await expect(barTitle(page)).toHaveText('Inbox')
+  await expect(drawer(page)).toHaveCount(0)
+
+  await menuItem(page, 'List actions', 'Select messages')
+  await expect(barTitle(page)).toHaveText('0 selected')
+  await page.setViewportSize(desktop)
+  await expect(appBar(page)).toHaveCount(0)
+  await page.setViewportSize(PHONE)
+  await expect(barTitle(page)).toHaveText('Inbox')
+  await expect(rowBox(page, 'Resized greenshank')).toBeHidden()
+  await context.close()
+})
+
+test('at phone width Enter opens a row after a long press started selection mode and its ✕ ended it', async ({
+  browser,
+}) => {
+  deliver({ subject: 'Keyed turnstone', body: '<p>A turnstone.</p>' })
+  await waitDrained()
+  const { context, page } = await signedInPhone(browser, USER_A)
+  const row = messageRow(page, 'Keyed turnstone')
+  // A long press, as a touch screen sends it
+  await row.click({ button: 'right' })
+  await expect(barTitle(page)).toHaveText('1 selected')
+  await stopSelecting(page)
+  await expect(barTitle(page)).toHaveText('Inbox')
+  await row.focus()
+  await page.keyboard.press('Enter')
+  await expect(reader(page).locator('.toolbar-title')).toHaveText(
+    'Keyed turnstone'
+  )
+  await context.close()
+})
+
+test('a search made at a wider width shows in the bar at phone width, whose ✕ clears it', async ({
+  browser,
+}) => {
+  deliver({ subject: 'Sought redshank', body: '<p>A redshank.</p>' })
+  deliver({ subject: 'Unsought ruff', body: '<p>A ruff.</p>' })
+  await waitDrained()
+  const { context, page } = await signedIn(browser, USER_A)
+  await search(page, 'redshank')
+  await expect(messageRow(page, 'Sought redshank')).toBeVisible()
+  await expect(messageRow(page, 'Unsought ruff')).toHaveCount(0)
+  await page.setViewportSize(PHONE)
+  const field = appBar(page).getByRole('textbox', { name: 'Search mail' })
+  await expect(field).toHaveValue('redshank')
+  await appBar(page)
+    .getByRole('button', { name: 'Close search', exact: true })
+    .click()
+  await expect(field).toHaveCount(0)
+  await expect(barTitle(page)).toHaveText('Inbox')
+  await expect(messageRow(page, 'Unsought ruff')).toBeVisible()
   await context.close()
 })
 
@@ -1993,4 +2154,29 @@ test('a newer webmail deployed shows a banner when the page comes back into view
   await backInView()
   await expect(banner).toBeVisible()
   await context.close()
+})
+
+test('at phone width, while Admin is shown, the drawer marks Admin alone as current, not the mailbox open', async ({
+  browser,
+}) => {
+  joinMailbox('kite', ADMIN)
+  let context: BrowserContext | undefined
+  try {
+    const signed = await signedInPhone(browser, ADMIN)
+    context = signed.context
+    const { page } = signed
+    await expect(appBar(page)).toContainText(`kite@${DOMAIN}`)
+    await drawerItem(page, 'Admin')
+    await expect(barTitle(page)).toHaveText('Admin')
+    await openDrawer(page)
+    const current = drawer(page).locator('[aria-current="true"]')
+    await expect(current).toHaveCount(1)
+    await expect(current).toHaveText('Admin')
+  } finally {
+    await context?.close()
+    backend(
+      'admin_remove_member',
+      `("kite", principal "${principalOf(ADMIN)}")`
+    )
+  }
 })

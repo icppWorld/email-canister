@@ -12,9 +12,10 @@ import {
   type MouseEvent,
   type PointerEvent,
   type ReactNode,
+  type Ref,
 } from 'react'
 
-import { AppBar, phoneWidth } from './AppBar'
+import { AppBar, usePhone } from './AppBar'
 import { IconButton } from './Buttons'
 import { Icon, type IconName } from './Icon'
 import { Menu } from './Menu'
@@ -50,6 +51,7 @@ export function useTicks(ids: bigint[]) {
     ticked: ids.filter((id) => checked.has(id)),
     total: ids.length,
     has: (id: bigint) => checked.has(id),
+    can: (id: bigint) => ids.includes(id),
     tick: (id: bigint, on: boolean) =>
       setChecked((before) => {
         const next = new Set(before)
@@ -135,9 +137,11 @@ const LONG_PRESS_SLOP = 10
 // Selection mode, at phone width: a long press on a row starts it with that
 // row ticked, as does the browser's own long press on a touch screen, or a
 // right click, and the list's ⋮ starts it with none. A tap on a row then
-// ticks it rather than opening it. Leaving it unticks them all.
+// ticks it rather than opening it. A row that cannot be ticked, as mail being
+// sent, does neither. Leaving it, or phone width, unticks them all.
 export function useSelectMode(ticks: Ticks) {
   const [on, setOn] = useState(false)
+  const phone = usePhone()
   const timer = useRef<number | undefined>(undefined)
   const from = useRef({ x: 0, y: 0 })
   // The press ran its full time: the click that ends it opens nothing
@@ -149,16 +153,26 @@ export function useSelectMode(ticks: Ticks) {
     timer.current = undefined
   }
   useEffect(() => cancel, [])
+  if (on && !phone) {
+    setOn(false)
+    ticks.all(false)
+  }
   const press = (id: bigint) => {
     cancel()
+    if (!ticks.can(id)) return
     fired.current = true
     setOn(true)
     ticks.tick(id, true)
   }
   return {
     on,
-    start: () => setOn(true),
+    start: () => {
+      fired.current = false
+      setOn(true)
+    },
     exit: () => {
+      cancel()
+      fired.current = false
       setOn(false)
       ticks.all(false)
     },
@@ -167,7 +181,7 @@ export function useSelectMode(ticks: Ticks) {
       onPointerDown: (e: PointerEvent) => {
         fired.current = false
         cancel()
-        if (e.button !== 0 || !e.isPrimary || !phoneWidth.matches) return
+        if (e.button !== 0 || !e.isPrimary || !phone) return
         from.current = { x: e.clientX, y: e.clientY }
         timer.current = window.setTimeout(() => press(id), LONG_PRESS_MS)
       },
@@ -184,15 +198,17 @@ export function useSelectMode(ticks: Ticks) {
       onPointerLeave: cancel,
       // In place of the browser's own menu
       onContextMenu: (e: MouseEvent) => {
-        if (!phoneWidth.matches) return
+        if (!phone) return
         e.preventDefault()
         press(id)
       },
-      onClick: () => {
-        if (fired.current) {
-          fired.current = false
-        } else if (on && phoneWidth.matches) {
-          ticks.tick(id, !ticks.has(id))
+      onClick: (e: MouseEvent) => {
+        // A key's click (detail 0) ends no press
+        const ending = fired.current && e.detail > 0
+        fired.current = false
+        if (ending) return
+        if (on && phone) {
+          if (ticks.can(id)) ticks.tick(id, !ticks.has(id))
         } else {
           open()
         }
@@ -201,21 +217,26 @@ export function useSelectMode(ticks: Ticks) {
   }
 }
 
+export type SelectMode = ReturnType<typeof useSelectMode>
+
 // The bar along the top in selection mode: ✕ to leave it, how many are
 // ticked, the first two actions, and a ⋮ with Select all and the rest
 export function SelectionBar({
   ticks,
   actions,
   onExit,
+  ref,
 }: {
   ticks: Ticks
   actions: BulkAction[]
   onExit: () => void
+  ref?: Ref<HTMLDivElement>
 }) {
   const ticked = ticks.ticked.length
   const none = ticked === 0
   return (
     <AppBar
+      ref={ref}
       lead={<IconButton label="Stop selecting" icon="close" onClick={onExit} />}
       title={`${ticked} selected`}
     >
@@ -242,6 +263,58 @@ export function SelectionBar({
           <MenuAction key={action.label} action={action} disabled={none} />
         ))}
       </Menu>
+    </AppBar>
+  )
+}
+
+// A list's bar along the top, at phone width: the page's bar with the
+// page's own buttons and the list's ⋮, or selection mode's. As one takes
+// the other's place, the focus goes to ✕, or back to the ⋮.
+export function ListBar({
+  select,
+  ticks,
+  actions,
+  listed,
+  empty,
+  bare = false,
+  items,
+  children,
+}: {
+  select: SelectMode
+  ticks: Ticks
+  actions: BulkAction[] // for the mail ticked
+  listed: boolean // the list shows mail
+  empty?: BulkAction
+  bare?: boolean // as AppBar's
+  items?: ReactNode // the page's own, first in the ⋮
+  children?: ReactNode // the page's own buttons, before the ⋮
+}) {
+  const phone = usePhone()
+  const bar = useRef<HTMLDivElement>(null)
+  const selecting = useRef(select.on)
+  useEffect(() => {
+    if (selecting.current === select.on) return
+    selecting.current = select.on
+    const to = select.on ? 'Stop selecting' : 'List actions'
+    bar.current?.querySelector<HTMLElement>(`[aria-label="${to}"]`)?.focus()
+  }, [select.on])
+  if (!phone) return null
+  if (select.on) {
+    return (
+      <SelectionBar
+        ref={bar}
+        ticks={ticks}
+        actions={actions}
+        onExit={select.exit}
+      />
+    )
+  }
+  return (
+    <AppBar ref={bar} bare={bare}>
+      {children}
+      <ListMenu listed={listed} onSelect={select.start} empty={empty}>
+        {items}
+      </ListMenu>
     </AppBar>
   )
 }

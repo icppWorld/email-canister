@@ -10,22 +10,24 @@ import {
   useContext,
   useSyncExternalStore,
   type ReactNode,
+  type Ref,
 } from 'react'
 
 import { IconButton } from './Buttons'
 
-// The phone layout's breakpoint, as in styles.css: matches says, at the
-// moment of an event, whether the page is at phone width
-export const phoneWidth = window.matchMedia('(max-width: 760px)')
+// The phone layout's breakpoint, as in styles.css, made on first use
+let query: MediaQueryList | undefined
+const phoneWidth = () => (query ??= window.matchMedia('(max-width: 760px)'))
 
 const watchWidth = (changed: () => void) => {
-  phoneWidth.addEventListener('change', changed)
-  return () => phoneWidth.removeEventListener('change', changed)
+  const width = phoneWidth()
+  width.addEventListener('change', changed)
+  return () => width.removeEventListener('change', changed)
 }
 
 // Whether the page is at phone width, rendered again as that changes
 export const usePhone = () =>
-  useSyncExternalStore(watchWidth, () => phoneWidth.matches)
+  useSyncExternalStore(watchWidth, () => phoneWidth().matches)
 
 // What App gives every page's bar
 export const PageBar = createContext({
@@ -38,16 +40,18 @@ export function AppBar({
   lead,
   title,
   bare = false,
+  ref,
   children,
 }: {
   lead?: ReactNode // in place of ☰
   title?: string // a mode's own, in place of the page's title and address
   bare?: boolean // only the children, with no ☰ or title
+  ref?: Ref<HTMLDivElement>
   children?: ReactNode
 }) {
   const page = useContext(PageBar)
   return (
-    <div className="appbar">
+    <div className="appbar" ref={ref}>
       {!bare && (
         <>
           {lead ?? (
