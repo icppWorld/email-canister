@@ -1,4 +1,4 @@
-icpp-pro==7.1.0
+icpp-pro==7.2.0rc1
 pytest
 # The static checks (make check-static), at the versions the toolchain uses
 black==26.10.1

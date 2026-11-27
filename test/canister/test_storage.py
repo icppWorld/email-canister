@@ -174,6 +174,15 @@ def test__accepting_mail_stays_cheap() -> None:
     wait_until_drained()
     assert_cost("ingest_move", "ingest_move of 100 KB", 30_000_000)
 
+    # Near the largest message: decoding its argument costs about 15M
+    # instructions, against about 140M before the faster Candid decoder
+    output = deliver(
+        "Largest", "<largest@sender.example>", to="alice", body=b"z" * 1_900_000
+    )
+    assert re.search(OK, output), output
+    assert_cost("smtp_request", "smtp_request of 1.9 MB", 100_000_000)
+    wait_until_drained()
+
 
 def test__a_full_mailbox_defers_only_the_mail_for_it() -> None:
     call("dev_pause", "(true)")
