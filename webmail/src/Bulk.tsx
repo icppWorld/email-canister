@@ -269,7 +269,8 @@ export function SelectionBar({
 // and the list's ⋮, or the selection bar while messages are ticked, which at
 // phone width is selection mode. As one takes the other's place at phone
 // width, the focus goes to ✕, or back to the ⋮; at a wider one, where a
-// row's box ticks and keeps the focus, only focus the swap took moves
+// row's box ticks and keeps the focus, only focus the swap took moves. At
+// phone width it gives way to the reader's toolbar while a message is open.
 export function ListBar({
   select,
   ticks,
@@ -277,6 +278,7 @@ export function ListBar({
   listed,
   empty,
   bare = false,
+  reading,
   items,
   children,
 }: {
@@ -286,6 +288,7 @@ export function ListBar({
   listed: boolean // the list shows mail
   empty?: BulkAction
   bare?: boolean // as AppBar's
+  reading: boolean // a message is open beside the list
   items?: ReactNode // the page's own, first in the ⋮
   children?: ReactNode // the page's own buttons, before the ⋮
 }) {
@@ -296,13 +299,12 @@ export function ListBar({
   useEffect(() => {
     if (wasSelecting.current === selecting) return
     wasSelecting.current = selecting
-    const lost =
-      document.activeElement === document.body ||
-      bar.current?.contains(document.activeElement)
-    if (!phone && !lost) return
+    // Each bar is a new element: a focus it held is lost with the other
+    if (!phone && document.activeElement !== document.body) return
     const to = selecting ? 'Stop selecting' : 'List actions'
     bar.current?.querySelector<HTMLElement>(`[aria-label="${to}"]`)?.focus()
   }, [selecting, phone])
+  if (phone && reading) return null
   if (selecting) {
     return (
       <SelectionBar

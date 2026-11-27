@@ -364,7 +364,6 @@ export function Sent({
   const act = (run: () => Promise<unknown>) => attempt(run, setActionError)
 
   const selected = items.find((m) => m.id === selectedId) ?? null
-  const phone = usePhone()
 
   const deleteTicked: BulkAction = {
     label: 'Delete',
@@ -385,17 +384,15 @@ export function Sent({
         className={select.on ? 'list selecting' : 'list'}
         aria-label="Sent mail"
       >
-        {/* The page's bar, or the selection bar; at phone width the
-            reader's toolbar is the bar while a message is open */}
-        {!(phone && selected) && (
-          <ListBar
-            select={select}
-            ticks={ticks}
-            actions={[deleteTicked]}
-            listed={items.length > 0}
-            empty={emptySent}
-          />
-        )}
+        {/* The page's bar, or the selection bar */}
+        <ListBar
+          select={select}
+          ticks={ticks}
+          actions={[deleteTicked]}
+          listed={items.length > 0}
+          empty={emptySent}
+          reading={selected !== null}
+        />
         {error && (
           <p className="error" role="alert">
             {error}

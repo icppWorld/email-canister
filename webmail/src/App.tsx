@@ -531,6 +531,7 @@ export function App() {
                 {/* The one shown is current, unless Admin is */}
                 <button
                   aria-current={m.local === shown.local && current !== 'admin'}
+                  title={m.address}
                   onClick={() => choose(m.local)}
                 >
                   <Icon name="mail" />
