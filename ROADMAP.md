@@ -27,6 +27,7 @@ email-canister grows in small releases, driven by running it for real mailboxes.
 - A reader for the phone (v0.10.0): the webmail names its release and offers a Reload in the header menu, and shows a banner when a newer one is deployed, as a phone can keep an old webmail; Reload asks first while a message is being written or a copy downloading; a message laid out wider than the reader shrunk to fit it, as phone mail apps do.
 - An HTML file as the message (v0.11.0): Compose sends an HTML file, or HTML pasted into an empty message, as it is, with a preview.
 - A calendar per mailbox (v0.12.0): one-off events, entered in the browser's time zone and stored in UTC, or all-day, that every member sees and changes, and a secret address at which any calendar app that subscribes by URL follows it as an iCalendar file.
+- The webmail on a phone (v0.13.0): at phone width one bar along the top, with the page's title and actions, in place of the header, the folder list and the search row; a ☰ drawer with the mailboxes, the folders, the account items and Sign out; search in the bar; a selection mode started by a long press, with the bulk actions in the bar; an open message's toolbar as the bar; and Compose floating at the bottom right.
 
 ## Next
 
