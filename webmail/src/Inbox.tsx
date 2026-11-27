@@ -42,10 +42,12 @@ import {
   saveFile,
   type ParsedMail,
 } from './mime'
-import { AppBar } from './AppBar'
-import { BackButton, IconButton, StarButton } from './Buttons'
+import { AppBar, usePhone } from './AppBar'
+import { BackButton, IconButton, StarButton, starLabel } from './Buttons'
 import {
   Bulk,
+  ListMenu,
+  MenuAction,
   RowPick,
   SelectionBar,
   useSelectMode,
@@ -401,16 +403,39 @@ function Reader({
     ? deliveredVia(mail.fromAddress, summary.envelope_from)
     : null
   const files = mail?.attachments.filter((a) => !a.inline || !a.contentId) ?? []
+  const subject = summary.subject || '(no subject)'
+  const phone = usePhone()
   const flagged = (summary.flags & FLAG_FLAGGED) !== 0n
+  const star: BulkAction = {
+    label: starLabel(flagged),
+    icon: 'star',
+    run: () => act(onStar),
+  }
+  const spam: BulkAction | undefined = onSpam && {
+    label: 'Spam',
+    icon: 'spam',
+    run: () => act(() => onSpam(read)),
+  }
+  // The ⋮'s items: the folder's own, after the star and Spam at phone width,
+  // where the toolbar has no room for them
+  const menuItems = [
+    ...(phone ? [star, spam] : [])
+      .filter((action) => action !== undefined)
+      .map((action) => ({ action, disabled: false })),
+    ...more.map((action) => ({
+      action: { ...action, run: () => act(() => action.run(sender)) },
+      disabled:
+        (action.needs === 'sender' && !sender) ||
+        (action.needs === 'mark' && !settled),
+    })),
+  ]
 
   return (
     <article className="reader">
       {/* At phone width, the bar along the top */}
       <div className="toolbar">
         <BackButton onClick={onBack} />
-        <strong className="toolbar-title">
-          {summary.subject || '(no subject)'}
-        </strong>
+        {phone && <strong className="toolbar-title">{subject}</strong>}
         <IconButton
           label="Reply"
           icon="reply"
@@ -426,14 +451,9 @@ function Reader({
             onClick={() => act(() => action.run([summary.uid], read))}
           />
         ))}
-        <StarButton flagged={flagged} onClick={() => act(onStar)} />
-        {onSpam && (
-          <IconButton
-            className="desk-only"
-            label="Spam"
-            icon="spam"
-            onClick={() => act(() => onSpam(read))}
-          />
+        {!phone && <StarButton flagged={flagged} onClick={star.run} />}
+        {!phone && spam && (
+          <IconButton label={spam.label} icon={spam.icon} onClick={spam.run} />
         )}
         {framed?.remote && !images && (
           <IconButton
@@ -442,38 +462,17 @@ function Reader({
             onClick={() => setImages(true)}
           />
         )}
-        {/* At phone width the star and Spam are in it too */}
-        <Menu
-          label="More actions"
-          className={more.length === 0 ? 'phone-only' : undefined}
-        >
-          <button className="phone-only" onClick={() => act(onStar)}>
-            <Icon name="star" />
-            {flagged ? 'Unstar' : 'Star'}
-          </button>
-          {onSpam && (
-            <button
-              className="phone-only"
-              onClick={() => act(() => onSpam(read))}
-            >
-              <Icon name="spam" />
-              Spam
-            </button>
-          )}
-          {more.map((action) => (
-            <button
-              key={action.label}
-              disabled={
-                (action.needs === 'sender' && !sender) ||
-                (action.needs === 'mark' && !settled)
-              }
-              onClick={() => act(() => action.run(sender))}
-            >
-              <Icon name={action.icon} />
-              {action.label}
-            </button>
-          ))}
-        </Menu>
+        {menuItems.length > 0 && (
+          <Menu label="More actions">
+            {menuItems.map(({ action, disabled }) => (
+              <MenuAction
+                key={action.label}
+                action={action}
+                disabled={disabled}
+              />
+            ))}
+          </Menu>
+        )}
         {(shared ||
           seenBy.some((seen) => seen.principal.toText() !== principal)) && (
           <details className="seen-by">
@@ -604,6 +603,7 @@ export function Inbox({
   // The messages ticked for an action on all of them
   const ticks = useTicks(items.map((m) => m.uid))
   const select = useSelectMode(ticks)
+  const phone = usePhone()
   const [query, setQuery] = useState('')
   // At phone width, the bar along the top is a search field
   const [searching, setSearching] = useState(false)
@@ -981,22 +981,15 @@ export function Inbox({
     folder === 'inbox' ? 'Search mail' : `Search ${FOLDERS[folder].name}`
   // The list's ⋮ in the bar along the top, at phone width
   const listMenu = (
-    <Menu label="List actions">
-      <button onClick={onRefresh}>
-        <Icon name="refresh" />
-        Refresh
-      </button>
-      <button disabled={items.length === 0} onClick={select.start}>
-        <Icon name="select" />
-        Select messages
-      </button>
-      {items.length > 0 && emptyFolder && (
-        <button onClick={emptyFolder.run}>
-          <Icon name={emptyFolder.icon} />
-          {emptyFolder.label}
-        </button>
-      )}
-    </Menu>
+    <ListMenu
+      listed={items.length > 0}
+      onSelect={select.start}
+      empty={emptyFolder}
+    >
+      <MenuAction
+        action={{ label: 'Refresh', icon: 'refresh', run: onRefresh }}
+      />
+    </ListMenu>
   )
 
   // Only the search shown now goes on, from where its own pages ended
@@ -1020,47 +1013,48 @@ export function Inbox({
       >
         {/* At phone width: the page's bar, a search field, or selection
             mode's actions */}
-        {select.on ? (
-          <SelectionBar
-            ticks={ticks}
-            actions={bulk([...bulkActions, star])}
-            onExit={select.exit}
-          />
-        ) : searching ? (
-          <div className="appbar">
-            <form
-              className="appbar-search"
-              role="search"
-              onSubmit={submitSearch}
-            >
-              <input
-                aria-label="Search mail"
-                placeholder={placeholder}
-                autoFocus
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
+        {phone &&
+          (select.on ? (
+            <SelectionBar
+              ticks={ticks}
+              actions={bulk([...bulkActions, star])}
+              onExit={select.exit}
+            />
+          ) : searching ? (
+            <AppBar bare>
+              <form
+                className="appbar-search"
+                role="search"
+                onSubmit={submitSearch}
+              >
+                <input
+                  aria-label="Search mail"
+                  placeholder={placeholder}
+                  autoFocus
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                />
+              </form>
+              <IconButton
+                label="Close search"
+                icon="close"
+                onClick={() => {
+                  clearSearch()
+                  setSearching(false)
+                }}
               />
-            </form>
-            <IconButton
-              label="Close search"
-              icon="close"
-              onClick={() => {
-                clearSearch()
-                setSearching(false)
-              }}
-            />
-            {listMenu}
-          </div>
-        ) : (
-          <AppBar>
-            <IconButton
-              label="Search"
-              icon="search"
-              onClick={() => setSearching(true)}
-            />
-            {listMenu}
-          </AppBar>
-        )}
+              {listMenu}
+            </AppBar>
+          ) : (
+            <AppBar>
+              <IconButton
+                label="Search"
+                icon="search"
+                onClick={() => setSearching(true)}
+              />
+              {listMenu}
+            </AppBar>
+          ))}
         <div className="list-head">
           <form className="search" role="search" onSubmit={submitSearch}>
             <input

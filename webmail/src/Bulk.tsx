@@ -11,9 +11,10 @@ import {
   useState,
   type MouseEvent,
   type PointerEvent,
+  type ReactNode,
 } from 'react'
 
-import { AppBar, atPhoneWidth } from './AppBar'
+import { AppBar, phoneWidth } from './AppBar'
 import { IconButton } from './Buttons'
 import { Icon, type IconName } from './Icon'
 import { Menu } from './Menu'
@@ -141,7 +142,9 @@ export function useSelectMode(ticks: Ticks) {
   const from = useRef({ x: 0, y: 0 })
   // The press ran its full time: the click that ends it opens nothing
   const fired = useRef(false)
+  // Nothing to do while no press is pending
   const cancel = () => {
+    if (timer.current === undefined) return
     window.clearTimeout(timer.current)
     timer.current = undefined
   }
@@ -164,11 +167,12 @@ export function useSelectMode(ticks: Ticks) {
       onPointerDown: (e: PointerEvent) => {
         fired.current = false
         cancel()
-        if (e.button !== 0 || !e.isPrimary || !atPhoneWidth()) return
+        if (e.button !== 0 || !e.isPrimary || !phoneWidth.matches) return
         from.current = { x: e.clientX, y: e.clientY }
         timer.current = window.setTimeout(() => press(id), LONG_PRESS_MS)
       },
       onPointerMove: (e: PointerEvent) => {
+        if (timer.current === undefined) return
         const moved = Math.hypot(
           e.clientX - from.current.x,
           e.clientY - from.current.y
@@ -180,14 +184,14 @@ export function useSelectMode(ticks: Ticks) {
       onPointerLeave: cancel,
       // In place of the browser's own menu
       onContextMenu: (e: MouseEvent) => {
-        if (!atPhoneWidth()) return
+        if (!phoneWidth.matches) return
         e.preventDefault()
         press(id)
       },
       onClick: () => {
         if (fired.current) {
           fired.current = false
-        } else if (on && atPhoneWidth()) {
+        } else if (on && phoneWidth.matches) {
           ticks.tick(id, !ticks.has(id))
         } else {
           open()
@@ -226,20 +230,59 @@ export function SelectionBar({
         />
       ))}
       <Menu label="Selection actions">
-        <button
+        <MenuAction
+          action={{
+            label: 'Select all',
+            icon: 'selectAll',
+            run: () => ticks.all(true),
+          }}
           disabled={ticks.total === 0 || ticked === ticks.total}
-          onClick={() => ticks.all(true)}
-        >
-          <Icon name="selectAll" />
-          Select all
-        </button>
+        />
         {actions.slice(2).map((action) => (
-          <button key={action.label} disabled={none} onClick={action.run}>
-            <Icon name={action.icon} />
-            {action.label}
-          </button>
+          <MenuAction key={action.label} action={action} disabled={none} />
         ))}
       </Menu>
     </AppBar>
+  )
+}
+
+// An action as an item of a ⋮ menu
+export function MenuAction({
+  action,
+  disabled = false,
+}: {
+  action: BulkAction
+  disabled?: boolean
+}) {
+  return (
+    <button disabled={disabled} onClick={action.run}>
+      <Icon name={action.icon} />
+      {action.label}
+    </button>
+  )
+}
+
+// A list's ⋮ in the bar along the top: the page's own items, Select
+// messages, and the action that empties the folder, while it lists mail
+export function ListMenu({
+  listed,
+  onSelect,
+  empty,
+  children,
+}: {
+  listed: boolean // the list shows mail
+  onSelect: () => void // starts selection mode
+  empty?: BulkAction
+  children?: ReactNode
+}) {
+  return (
+    <Menu label="List actions">
+      {children}
+      <MenuAction
+        action={{ label: 'Select messages', icon: 'select', run: onSelect }}
+        disabled={!listed}
+      />
+      {listed && empty && <MenuAction action={empty} />}
+    </Menu>
   )
 }

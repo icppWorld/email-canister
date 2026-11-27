@@ -6,13 +6,14 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
 } from 'react'
 import type { Identity } from '@icp-sdk/core/agent'
 
 import { createBackend, errorText, mailbox, type Backend, type Me } from './api'
 import { createSession, type Session } from './auth'
 import { AdminPanel } from './AdminPanel'
-import { AppBar, PageBar } from './AppBar'
+import { AppBar, PageBar, usePhone } from './AppBar'
 import { BlockedSenders } from './Blocked'
 import { IconButton } from './Buttons'
 import { formatBytes } from './format'
@@ -72,14 +73,20 @@ const PAGES = {
 type Page = keyof typeof PAGES
 type View = Page | 'admin'
 
-// The folders and the calendar, as the ☰ drawer lists them
-const DRAWER_PAGES: [Page, IconName][] = [
-  ['inbox', 'inbox'],
-  ['sent', 'send'],
-  ['spam', 'spam'],
-  ['trash', 'trash'],
-  ['calendar', 'calendar'],
-]
+// Each page's icon, where the ☰ drawer lists it
+const PAGE_ICONS: Record<Page, IconName> = {
+  inbox: 'inbox',
+  sent: 'send',
+  spam: 'spam',
+  trash: 'trash',
+  calendar: 'calendar',
+  blocked: 'block',
+}
+
+// The folders and the calendar: Blocked senders is in the menu
+const FOLDER_PAGES = (Object.keys(PAGES) as Page[]).filter(
+  (page) => page !== 'blocked'
+)
 
 // How long a note about what was just done stays shown
 const TOAST_MS = 8_000
@@ -207,6 +214,7 @@ export function App() {
   const [draft, setDraft] = useState<Draft | null>(null)
   // The ☰ drawer, at phone width
   const [drawer, setDrawer] = useState(false)
+  const phone = usePhone()
   const [toast, setToast] = useState<ShownToast | null>(null)
   const toastIds = useRef(0)
   // Under the pointer or holding the focus, the note stays until let go
@@ -487,19 +495,65 @@ export function App() {
           onClick={refreshInbox}
         />
       </div>
-      {(Object.keys(PAGES) as Page[])
-        // Blocked senders is in the menu
-        .filter((page) => page !== 'inbox' && page !== 'blocked')
-        .map((page) => (
-          <button
-            key={page}
-            aria-current={current === page}
-            onClick={() => setView(page)}
-          >
-            {PAGES[page]}
-          </button>
-        ))}
+      {FOLDER_PAGES.filter((page) => page !== 'inbox').map((page) => (
+        <button
+          key={page}
+          aria-current={current === page}
+          onClick={() => setView(page)}
+        >
+          {PAGES[page]}
+        </button>
+      ))}
     </div>
+  )
+
+  const address = shown?.address ?? 'Administrator'
+  const brand = (
+    <strong className="brand">
+      <Logo />
+      {deployment().brand.label}
+    </strong>
+  )
+  // The header menu's items, which the ☰ drawer lists too, with what it
+  // shows before Reload
+  const accountItems = (beforeReload?: ReactNode) => (
+    <>
+      {box && (
+        <>
+          <button
+            aria-current={current === 'blocked'}
+            onClick={() => setView('blocked')}
+          >
+            <Icon name={PAGE_ICONS.blocked} />
+            Blocked senders
+          </button>
+          <button onClick={download.start} disabled={download.busy}>
+            <Icon name="download" />
+            Download a copy
+          </button>
+        </>
+      )}
+      {me.is_controller && (
+        <button
+          aria-current={current === 'admin'}
+          onClick={() => setView('admin')}
+        >
+          <Icon name="admin" />
+          Admin
+        </button>
+      )}
+      {beforeReload}
+      {/* The page again from the server, as a phone can keep an old one */}
+      <button onClick={reload}>
+        <Icon name="refresh" />
+        Reload
+      </button>
+      {/* One at a time: the header is not there at phone width, and the
+          drawer only there */}
+      <p className="menu-note" data-testid="version">
+        Webmail v{VERSION}
+      </p>
+    </>
   )
 
   // At phone width each page has a bar along the top: a folder's list has
@@ -508,13 +562,10 @@ export function App() {
 
   const app = (
     <div className="app">
-      {!listed && <AppBar />}
-      {drawer && (
+      {phone && !listed && <AppBar />}
+      {phone && drawer && (
         <Drawer onClose={() => setDrawer(false)}>
-          <strong className="brand">
-            <Logo />
-            {deployment().brand.label}
-          </strong>
+          {brand}
           {box && shown && (
             <>
               <ul aria-label="Mailboxes">
@@ -534,108 +585,59 @@ export function App() {
                 ))}
               </ul>
               <ul className="drawer-folders" aria-label="Folders">
-                {DRAWER_PAGES.map(([page, icon]) => (
+                {FOLDER_PAGES.map((page) => (
                   <li key={page}>
                     <button
                       aria-current={current === page}
                       onClick={() => setView(page)}
                     >
-                      <Icon name={icon} />
+                      <Icon name={PAGE_ICONS[page]} />
                       {PAGES[page]}
                     </button>
                   </li>
                 ))}
               </ul>
               <hr />
-              <button
-                aria-current={current === 'blocked'}
-                onClick={() => setView('blocked')}
-              >
-                <Icon name="block" />
-                Blocked senders
-              </button>
-              <button onClick={download.start} disabled={download.busy}>
-                <Icon name="download" />
-                Download a copy
-              </button>
             </>
           )}
-          {me.is_controller && (
-            <button
-              aria-current={current === 'admin'}
-              onClick={() => setView('admin')}
-            >
-              <Icon name="admin" />
-              Admin
-            </button>
+          {accountItems(
+            <>
+              <hr />
+              {usage && <p className="usage">{usage}</p>}
+            </>
           )}
-          <hr />
-          {usage && <p className="usage">{usage}</p>}
-          <button onClick={reload}>
-            <Icon name="refresh" />
-            Reload
-          </button>
-          <p className="menu-note">Webmail v{VERSION}</p>
           <button onClick={signOut}>
             <Icon name="signOut" />
             Sign out
           </button>
         </Drawer>
       )}
-      <header>
-        <strong className="brand">
-          <Logo />
-          {deployment().brand.label}
-        </strong>
-        <span className="address" data-testid="address">
-          {shown?.address ?? 'Administrator'}
-        </span>
-        <Menu label="More">
-          {box && (
-            <>
-              <button
-                aria-current={current === 'blocked'}
-                onClick={() => setView('blocked')}
-              >
-                <Icon name="block" />
-                Blocked senders
-              </button>
-              <button onClick={download.start} disabled={download.busy}>
-                <Icon name="download" />
-                Download a copy
-              </button>
-            </>
-          )}
-          {me.is_controller && (
-            <button
-              aria-current={current === 'admin'}
-              onClick={() => setView('admin')}
-            >
-              <Icon name="admin" />
-              Admin
-            </button>
-          )}
-          {/* The page again from the server, as a phone can keep an old one */}
-          <button onClick={reload}>
-            <Icon name="refresh" />
-            Reload
-          </button>
-          <p className="menu-note" data-testid="version">
-            Webmail v{VERSION}
-          </p>
-        </Menu>
-        <IconButton label="Sign out" icon="signOut" onClick={signOut} />
-      </header>
+      {!phone && (
+        <header>
+          {brand}
+          <span className="address" data-testid="address">
+            {address}
+          </span>
+          <Menu label="More">{accountItems()}</Menu>
+          <IconButton label="Sign out" icon="signOut" onClick={signOut} />
+        </header>
+      )}
       <nav aria-label="Folders">
         {box && shown && (
           <>
-            <IconButton
-              className="compose"
-              variant="primary"
-              label="Compose"
-              icon="compose"
-              onClick={() => setDraft((open) => open ?? { from: shown.local })}
-            />
+            {/* At phone width it floats at the bottom right, and gives way
+                to a message being written, whose minimised bar is there */}
+            {!(phone && draft) && (
+              <IconButton
+                className="compose"
+                variant="primary"
+                label="Compose"
+                icon="compose"
+                onClick={() =>
+                  setDraft((open) => open ?? { from: shown.local })
+                }
+              />
+            )}
             <ul className="mailboxes" aria-label="Mailboxes">
               {me.mailboxes.map((m) => {
                 const isOpen = m.local === shown.local
@@ -776,7 +778,7 @@ export function App() {
     <PageBar.Provider
       value={{
         title: current === 'admin' ? 'Admin' : PAGES[current],
-        address: shown?.address ?? 'Administrator',
+        address,
         openDrawer: () => setDrawer(true),
       }}
     >

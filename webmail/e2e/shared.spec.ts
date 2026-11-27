@@ -1,7 +1,7 @@
 // The webmail tests of shared mailboxes and of several mailboxes per person.
 // Each spec file runs on a backend of its own (freshBackend in support.ts).
 
-import { expect, type Page, test } from '@playwright/test'
+import { expect, test } from '@playwright/test'
 import { asUser } from './as_user'
 import { env } from './local'
 import {
@@ -16,6 +16,7 @@ import {
   downloadCopy,
   downloadStatus,
   drawer,
+  drawerButton,
   endSignIn,
   FLAG_FLAGGED,
   FLAG_SEEN,
@@ -23,15 +24,16 @@ import {
   hold,
   joinMailbox,
   joinTeam,
+  mailboxButton,
   menu,
   menuItem,
   openDrawer,
   openMail,
-  PHONE,
   phoneOpenMail,
   principalOf,
   send,
   signedIn,
+  signedInPhone,
   signInAgain,
   uidOf,
   USER_A,
@@ -255,11 +257,6 @@ function fernAndGail(): void {
   fernAndGailReady = true
 }
 
-const mailboxButton = (page: Page, local: string) =>
-  page
-    .getByRole('list', { name: 'Mailboxes' })
-    .getByRole('button', { name: new RegExp(`^${local}`) })
-
 test('a person with several mailboxes switches between them, by the list or the address', async ({
   browser,
 }) => {
@@ -390,20 +387,16 @@ test("at phone width the drawer chooses the mailbox, and lists the open one's fo
   browser,
 }) => {
   fernAndGail()
-  const { context, page } = await signedIn(browser, FERN, {
-    viewport: PHONE,
-  })
+  const { context, page } = await signedInPhone(browser, FERN)
   await expect(appBar(page)).toContainText(`heron@${DOMAIN}`)
   await expect(mailboxButton(page, 'heron')).toBeHidden()
   await openDrawer(page)
-  await mailboxButton(page, 'shore').click()
+  await mailboxButton(page, 'shore', drawer(page)).click()
   await expect(drawer(page)).toHaveCount(0)
   await expect(appBar(page)).toContainText(`shore@${DOMAIN}`)
   await openDrawer(page)
   for (const name of ['Inbox', 'Sent']) {
-    await expect(
-      drawer(page).getByRole('button', { name, exact: true })
-    ).toBeVisible()
+    await expect(drawerButton(page, name)).toBeVisible()
   }
   await page.keyboard.press('Escape')
   await expect(drawer(page)).toHaveCount(0)

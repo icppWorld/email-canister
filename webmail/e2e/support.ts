@@ -12,6 +12,7 @@ import {
   type Browser,
   type BrowserContext,
   expect,
+  type Locator,
   type Page,
   type Request,
 } from '@playwright/test'
@@ -270,6 +271,21 @@ export const viewSent = (page: Page) => toastButton(page, 'View in Sent')
 export const messageRow = (page: Page, text: string) =>
   page.locator('button.message', { hasText: text })
 
+// The box that ticks a row
+export const rowBox = (page: Page, text: string) =>
+  page.locator('li.message-row', { hasText: text }).getByRole('checkbox')
+
+// A mailbox's button in a list of them: beside the mail, or in `scope`, such
+// as the ☰ drawer
+export const mailboxButton = (
+  page: Page,
+  local: string,
+  scope: Page | Locator = page
+) =>
+  scope
+    .getByRole('list', { name: 'Mailboxes' })
+    .getByRole('button', { name: new RegExp(`^${local}`) })
+
 // A ⋮ menu, by the label of its button: More in the header, More actions in
 // the reader
 export const menu = (page: Page, label: string) =>
@@ -298,14 +314,20 @@ export const downloadCopy = (page: Page) =>
 export const nav = (page: Page) =>
   page.getByRole('navigation', { name: 'Folders' })
 
-// At phone width: the screen's size, the bar along the top shown now, the ☰
-// drawer, and the bar's 🔍 search
+// At phone width: the screen's size, the bar along the top, which is there
+// only then, the ☰ drawer, the bar's 🔍 search, and selection mode
 export const PHONE = { width: 390, height: 844 }
 
-export const appBar = (page: Page) => page.locator('.appbar:visible')
+export const signedInPhone = (browser: Browser, seed: string, options = {}) =>
+  signedIn(browser, seed, { viewport: PHONE, ...options })
+
+export const appBar = (page: Page) => page.locator('.appbar')
 
 export const drawer = (page: Page) =>
   page.getByRole('dialog', { name: 'Navigation' })
+
+export const drawerButton = (page: Page, name: string) =>
+  drawer(page).getByRole('button', { name, exact: true })
 
 export async function openDrawer(page: Page): Promise<void> {
   await page.getByRole('button', { name: 'Menu', exact: true }).click()
@@ -315,7 +337,7 @@ export async function openDrawer(page: Page): Promise<void> {
 // Opens the drawer and chooses one of its buttons, which closes it
 export async function drawerItem(page: Page, name: string): Promise<void> {
   await openDrawer(page)
-  await drawer(page).getByRole('button', { name, exact: true }).click()
+  await drawerButton(page, name).click()
   await expect(drawer(page)).toHaveCount(0)
 }
 
@@ -327,30 +349,38 @@ export async function phoneSearch(page: Page, text: string): Promise<void> {
       .getByRole('button', { name: 'Search', exact: true })
       .click()
   }
-  await field.fill(text)
-  await field.press('Enter')
+  await searchIn(field, text)
 }
 
 export async function phoneOpenMail(page: Page, text: string): Promise<void> {
   await drawerItem(page, 'Inbox')
   await phoneSearch(page, text)
-  await messageRow(page, text).first().click()
+  await openFound(page, text)
 }
+
+export const stopSelecting = (page: Page) =>
+  page.getByRole('button', { name: 'Stop selecting', exact: true }).click()
 
 // What a download shows while it runs, below the folders. Gone once it has
 // ended, its thaw included: the menu's button is enabled again then.
 export const downloadStatus = (page: Page) => nav(page).getByRole('status')
 
-export async function search(page: Page, text: string): Promise<void> {
-  await page.getByLabel('Search mail').fill(text)
-  await page.getByLabel('Search mail').press('Enter')
+async function searchIn(field: Locator, text: string): Promise<void> {
+  await field.fill(text)
+  await field.press('Enter')
 }
+
+export const search = (page: Page, text: string) =>
+  searchIn(page.getByLabel('Search mail'), text)
+
+// By its text: until the search returns, the list still shows earlier mail
+const openFound = (page: Page, text: string) =>
+  messageRow(page, text).first().click()
 
 export async function openMail(page: Page, text: string): Promise<void> {
   await page.getByRole('button', { name: 'Inbox' }).click()
   await search(page, text)
-  // By its text: until the search returns, the list still shows earlier mail
-  await messageRow(page, text).first().click()
+  await openFound(page, text)
 }
 
 // The colour a brand role resolves to on the page, as the browser reports it

@@ -25,6 +25,7 @@ import {
   type EventFields,
   type Occurrence,
 } from './ical'
+import { useModal } from './modal'
 import { deployment } from './settings'
 
 // Seconds since 1970, and none before: the backend's times are unsigned
@@ -365,19 +366,18 @@ function Dialog({
     document.addEventListener('keydown', keys)
     return () => document.removeEventListener('keydown', keys)
   }, [])
+  // Before it opens, in the order the effects run
   useEffect(() => {
-    const before = document.activeElement
     box.current?.setAttribute('closedby', 'none')
-    box.current?.showModal()
+  }, [])
+  useModal(box)
+  useEffect(() => {
     // The first control, or the dialog itself while its content loads
     const first = box.current?.querySelector<HTMLElement>(
       'input:not(:disabled), select:not(:disabled), textarea:not(:disabled), .compose-body button:not(:disabled)'
     )
     const target = first ?? box.current
     target?.focus()
-    return () => {
-      if (before instanceof HTMLElement && before.isConnected) before.focus()
-    }
   }, [])
   return (
     <dialog

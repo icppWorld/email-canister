@@ -47,6 +47,9 @@ export function BackButton({ onClick }: { onClick: () => void }) {
   )
 }
 
+// What a message's star does: on, or off again
+export const starLabel = (flagged: boolean) => (flagged ? 'Unstar' : 'Star')
+
 // A message's star; name says which message, where there are several
 export function StarButton({
   flagged,
@@ -57,7 +60,7 @@ export function StarButton({
   name?: string
   onClick: () => void
 }) {
-  const label = flagged ? 'Unstar' : 'Star'
+  const label = starLabel(flagged)
   return (
     <button
       className={flagged ? 'bare star on' : 'bare star'}

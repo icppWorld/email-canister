@@ -209,23 +209,27 @@ nav {
   background: var(--surface-muted);
   border-right: 1px solid var(--border);
 }
-nav button {
+nav button,
+.drawer-body button {
   text-align: left;
   border-color: transparent;
   background: transparent;
 }
-nav button:hover:not(:disabled) {
+nav button:hover:not(:disabled),
+.drawer-body button:hover:not(:disabled) {
   background: var(--selected);
 }
 nav button.compose {
   margin-bottom: 8px;
 }
-nav button[aria-current='true'] {
+nav button[aria-current='true'],
+.drawer-body button[aria-current='true'] {
   background: var(--selected);
 }
 /* The folder shown: more than the hover's tint, bold with a bar in the
    brand's colour */
-.folders button[aria-current='true'] {
+.folders button[aria-current='true'],
+.drawer-folders button[aria-current='true'] {
   font-weight: 700;
   box-shadow: inset 3px 0 0 var(--action-text);
 }
@@ -268,7 +272,8 @@ nav button.mailbox {
   gap: 6px;
   font-weight: 600;
 }
-.mailbox .name {
+.mailbox .name,
+.drawer-body .name {
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -887,14 +892,8 @@ th {
   flex-wrap: wrap;
   gap: 6px;
 }
-/* At phone width only: the bar along the top (AppBar.tsx), the open
-   message's subject in its toolbar, and what joins a ⋮ menu there */
-.appbar,
-.toolbar-title,
-details.menu.phone-only,
-.menu-items button.phone-only {
-  display: none;
-}
+/* At phone width only: the bar along the top (AppBar.tsx), and the open
+   message's subject in the reader's toolbar */
 .appbar-title {
   flex: 1;
   min-width: 0;
@@ -912,6 +911,11 @@ details.menu.phone-only,
 .appbar-title strong,
 .toolbar-title {
   font: 600 18px/1.25 var(--font-heading);
+}
+.toolbar-title {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 0 4px;
 }
 .appbar-title span {
   color: var(--ink-muted);
@@ -979,25 +983,6 @@ dialog.drawer::backdrop {
   display: flex;
   align-items: center;
   gap: 10px;
-  text-align: left;
-  border-color: transparent;
-  background: transparent;
-}
-.drawer-body button:hover:not(:disabled),
-.drawer-body button[aria-current='true'] {
-  background: var(--selected);
-}
-/* The folder shown, as beside the mail */
-.drawer-folders button[aria-current='true'] {
-  font-weight: 700;
-  box-shadow: inset 3px 0 0 var(--action-text);
-}
-.drawer-body .name {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .drawer-body hr {
   width: 100%;
@@ -1020,9 +1005,9 @@ dialog.drawer::backdrop {
        as a long mailbox address */
     grid-template: 'head' auto 'nav' auto 'main' 1fr / minmax(0, 1fr);
   }
-  /* The bar along the top and the ☰ drawer take the place of the header and
-     the folders beside the mail: only a download's progress stays */
-  header,
+  /* The bar along the top and the ☰ drawer take the place of the header,
+     which is not there, and of the folders beside the mail: only a
+     download's progress stays */
   nav .mailboxes,
   nav .usage,
   nav .hint {
@@ -1040,8 +1025,8 @@ dialog.drawer::backdrop {
     padding: 6px 12px;
     border-bottom: 1px solid var(--border);
   }
-  /* Compose floats at the bottom right, and gives way to a message being
-     written, whose minimised bar is there */
+  /* Compose floats at the bottom right (App.tsx takes it away while a
+     message is being written) */
   nav button.compose {
     position: fixed;
     right: 16px;
@@ -1053,21 +1038,33 @@ dialog.drawer::backdrop {
     border-radius: var(--radius-lg);
     box-shadow: var(--shadow-dialog);
   }
-  body:has(.dialog.compose) nav button.compose {
-    display: none;
-  }
-  .appbar {
-    grid-area: head;
+  /* The bar along the top, and the reader's toolbar, which is its bar
+     there, named by the subject. Seen by takes a line below. */
+  .appbar,
+  .reader > .toolbar {
     position: sticky;
     top: 0;
     z-index: 2;
     display: flex;
     align-items: center;
-    gap: 2px;
+    gap: 4px;
     min-height: 56px;
     padding: 4px 8px;
     background: var(--surface);
     border-bottom: 1px solid var(--border);
+  }
+  .appbar {
+    grid-area: head;
+  }
+  .reader {
+    padding-top: 0;
+  }
+  .reader > .toolbar {
+    margin: 0 -18px 8px;
+  }
+  .reader > .toolbar > .seen-by {
+    flex-basis: 100%;
+    padding: 0 0 4px 4px;
   }
   /* The list's search and its Select all are in the bar; the rows' boxes
      wait for selection mode. The last row scrolls clear of Compose. */
@@ -1083,41 +1080,6 @@ dialog.drawer::backdrop {
     -webkit-touch-callout: none;
     -webkit-user-select: none;
     user-select: none;
-  }
-  /* The reader's toolbar is its bar along the top, named by the subject.
-     The star and Spam move into its ⋮; Seen by takes a line below. */
-  .reader {
-    padding-top: 0;
-  }
-  .reader > .toolbar {
-    position: sticky;
-    top: 0;
-    z-index: 2;
-    min-height: 56px;
-    margin: 0 -18px 8px;
-    padding: 4px 8px;
-    background: var(--surface);
-    border-bottom: 1px solid var(--border);
-  }
-  .toolbar-title {
-    display: block;
-    flex: 1 1 0;
-    min-width: 0;
-    padding: 0 4px;
-  }
-  .reader > .toolbar > .star,
-  button.desk-only {
-    display: none;
-  }
-  details.menu.phone-only {
-    display: block;
-  }
-  .menu-items button.phone-only {
-    display: flex;
-  }
-  .reader > .toolbar > .seen-by {
-    flex-basis: 100%;
-    padding: 0 0 4px 4px;
   }
   /* The bars' buttons are flat */
   .appbar button.icon-button:not(.primary),
@@ -1141,10 +1103,6 @@ dialog.drawer::backdrop {
   }
   button.back {
     display: inline-grid;
-  }
-  /* A little tighter, so a message's actions fit on one line */
-  .reader > .toolbar {
-    gap: 4px;
   }
   /* Compose fills the screen, or minimised, a bar along its foot */
   .dialog.compose,

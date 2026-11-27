@@ -3,7 +3,9 @@
 // Escape, a click on the backdrop beside it, and choosing one of its buttons
 // close it.
 
-import { useEffect, useRef, type ReactNode } from 'react'
+import { useRef, type ReactNode } from 'react'
+
+import { useModal } from './modal'
 
 export function Drawer({
   onClose,
@@ -13,14 +15,7 @@ export function Drawer({
   children: ReactNode
 }) {
   const box = useRef<HTMLDialogElement>(null)
-  useEffect(() => {
-    const dialog = box.current
-    const before = document.activeElement
-    if (dialog && !dialog.open) dialog.showModal()
-    return () => {
-      if (before instanceof HTMLElement && before.isConnected) before.focus()
-    }
-  }, [])
+  useModal(box)
   return (
     <dialog
       ref={box}

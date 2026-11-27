@@ -12,10 +12,11 @@ import {
   type OutboxSummary,
 } from './api'
 import { attempt, BATCH, inBatches, MAX_BATCH } from './batch'
-import { AppBar } from './AppBar'
+import { AppBar, usePhone } from './AppBar'
 import { BackButton, IconButton } from './Buttons'
 import {
   Bulk,
+  ListMenu,
   RowPick,
   SelectionBar,
   useSelectMode,
@@ -24,7 +25,6 @@ import {
 } from './Bulk'
 import { memberName, messages, noteOf, shown, was } from './format'
 import { Icon } from './Icon'
-import { Menu } from './Menu'
 import { MessageBody } from './MessageBody'
 import { frameBody, saveFile } from './mime'
 import { Split } from './Splitter'
@@ -146,15 +146,15 @@ function Details({
 
   const canResend =
     summary.state === OUTBOX_REJECTED || summary.state === OUTBOX_UNKNOWN
+  const subject = shown(summary.subject) || '(no subject)'
+  const phone = usePhone()
 
   return (
     <article className="reader">
       {/* At phone width, the bar along the top */}
       <div className="toolbar">
         <BackButton onClick={onBack} />
-        <strong className="toolbar-title">
-          {shown(summary.subject) || '(no subject)'}
-        </strong>
+        {phone && <strong className="toolbar-title">{subject}</strong>}
         {canResend && (
           <IconButton
             variant="primary"
@@ -176,7 +176,7 @@ function Details({
           {error}
         </p>
       )}
-      <h2>{shown(summary.subject) || '(no subject)'}</h2>
+      <h2>{subject}</h2>
       <p className="status" data-testid="outbox-state">
         {stateLabel(summary.state)}
       </p>
@@ -263,6 +263,7 @@ export function Sent({
     items.filter((m) => m.state !== OUTBOX_SENDING).map((m) => m.id)
   )
   const select = useSelectMode(ticks)
+  const phone = usePhone()
   // The list's own error, which a reload clears, and an action's refusal
   const [error, setError] = useState('')
   const [actionError, setActionError] = useState('')
@@ -387,28 +388,22 @@ export function Sent({
         aria-label="Sent mail"
       >
         {/* At phone width: the page's bar, or selection mode's actions */}
-        {select.on ? (
-          <SelectionBar
-            ticks={ticks}
-            actions={[deleteTicked]}
-            onExit={select.exit}
-          />
-        ) : (
-          <AppBar>
-            <Menu label="List actions">
-              <button disabled={items.length === 0} onClick={select.start}>
-                <Icon name="select" />
-                Select messages
-              </button>
-              {items.length > 0 && (
-                <button onClick={emptySent.run}>
-                  <Icon name={emptySent.icon} />
-                  {emptySent.label}
-                </button>
-              )}
-            </Menu>
-          </AppBar>
-        )}
+        {phone &&
+          (select.on ? (
+            <SelectionBar
+              ticks={ticks}
+              actions={[deleteTicked]}
+              onExit={select.exit}
+            />
+          ) : (
+            <AppBar>
+              <ListMenu
+                listed={items.length > 0}
+                onSelect={select.start}
+                empty={emptySent}
+              />
+            </AppBar>
+          ))}
         {items.length > 0 && (
           <div className="list-head">
             <Bulk ticks={ticks} actions={[deleteTicked]} empty={emptySent} />
