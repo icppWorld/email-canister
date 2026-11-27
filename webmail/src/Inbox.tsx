@@ -4,6 +4,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type FormEvent,
   type RefObject,
 } from 'react'
 import { Principal } from '@icp-sdk/core/principal'
@@ -41,8 +42,16 @@ import {
   saveFile,
   type ParsedMail,
 } from './mime'
+import { AppBar } from './AppBar'
 import { BackButton, IconButton, StarButton } from './Buttons'
-import { Bulk, RowPick, useTicks } from './Bulk'
+import {
+  Bulk,
+  RowPick,
+  SelectionBar,
+  useSelectMode,
+  useTicks,
+  type BulkAction,
+} from './Bulk'
 import { Menu } from './Menu'
 import { Split } from './Splitter'
 import type { Toast, ToastAction } from './Toast'
@@ -392,11 +401,16 @@ function Reader({
     ? deliveredVia(mail.fromAddress, summary.envelope_from)
     : null
   const files = mail?.attachments.filter((a) => !a.inline || !a.contentId) ?? []
+  const flagged = (summary.flags & FLAG_FLAGGED) !== 0n
 
   return (
     <article className="reader">
+      {/* At phone width, the bar along the top */}
       <div className="toolbar">
         <BackButton onClick={onBack} />
+        <strong className="toolbar-title">
+          {summary.subject || '(no subject)'}
+        </strong>
         <IconButton
           label="Reply"
           icon="reply"
@@ -412,12 +426,10 @@ function Reader({
             onClick={() => act(() => action.run([summary.uid], read))}
           />
         ))}
-        <StarButton
-          flagged={(summary.flags & FLAG_FLAGGED) !== 0n}
-          onClick={() => act(onStar)}
-        />
+        <StarButton flagged={flagged} onClick={() => act(onStar)} />
         {onSpam && (
           <IconButton
+            className="desk-only"
             label="Spam"
             icon="spam"
             onClick={() => act(() => onSpam(read))}
@@ -430,23 +442,38 @@ function Reader({
             onClick={() => setImages(true)}
           />
         )}
-        {more.length > 0 && (
-          <Menu label="More actions">
-            {more.map((action) => (
-              <button
-                key={action.label}
-                disabled={
-                  (action.needs === 'sender' && !sender) ||
-                  (action.needs === 'mark' && !settled)
-                }
-                onClick={() => act(() => action.run(sender))}
-              >
-                <Icon name={action.icon} />
-                {action.label}
-              </button>
-            ))}
-          </Menu>
-        )}
+        {/* At phone width the star and Spam are in it too */}
+        <Menu
+          label="More actions"
+          className={more.length === 0 ? 'phone-only' : undefined}
+        >
+          <button className="phone-only" onClick={() => act(onStar)}>
+            <Icon name="star" />
+            {flagged ? 'Unstar' : 'Star'}
+          </button>
+          {onSpam && (
+            <button
+              className="phone-only"
+              onClick={() => act(() => onSpam(read))}
+            >
+              <Icon name="spam" />
+              Spam
+            </button>
+          )}
+          {more.map((action) => (
+            <button
+              key={action.label}
+              disabled={
+                (action.needs === 'sender' && !sender) ||
+                (action.needs === 'mark' && !settled)
+              }
+              onClick={() => act(() => action.run(sender))}
+            >
+              <Icon name={action.icon} />
+              {action.label}
+            </button>
+          ))}
+        </Menu>
         {(shared ||
           seenBy.some((seen) => seen.principal.toText() !== principal)) && (
           <details className="seen-by">
@@ -549,6 +576,7 @@ export function Inbox({
   onCounts,
   refresh,
   onLoaded,
+  onRefresh,
   onBlocked,
   domain,
 }: {
@@ -561,6 +589,7 @@ export function Inbox({
   onReply: (draft: Omit<Draft, 'from'>) => void
   refresh: number
   onLoaded: () => void
+  onRefresh: () => void // the folder and the mailboxes' counts again
   onBlocked: () => void // to the Blocked senders page
   domain: string // the mailbox's own, whose addresses Spam never blocks
 }) {
@@ -574,7 +603,10 @@ export function Inbox({
   const [selected, setSelected] = useState<Summary | null>(null)
   // The messages ticked for an action on all of them
   const ticks = useTicks(items.map((m) => m.uid))
+  const select = useSelectMode(ticks)
   const [query, setQuery] = useState('')
+  // At phone width, the bar along the top is a search field
+  const [searching, setSearching] = useState(false)
   const [activeQuery, setActiveQuery] = useState('')
   // The search shown now, for a reload by work that began under another
   const searched = useRef('')
@@ -879,6 +911,15 @@ export function Inbox({
     searched.current = text
     setActiveQuery(text)
   }
+  const submitSearch = (e: FormEvent) => {
+    e.preventDefault()
+    setSelected(null)
+    searchFor(query.trim())
+  }
+  const clearSearch = () => {
+    setQuery('')
+    searchFor('')
+  }
 
   const toTrash: Action = {
     label: 'Delete',
@@ -912,10 +953,51 @@ export function Inbox({
     icon: 'mail',
     run: (uids) => flag(uids, 0n, FLAG_SEEN),
   }
+  const star: Action = {
+    label: 'Star',
+    icon: 'star',
+    run: (uids) => flag(uids, FLAG_FLAGGED, 0n),
+  }
   // A message's own; the reader has Spam and Mark unread apart
   const actions = folder === 'inbox' ? [toTrash] : [restore, forever]
   const bulkActions =
     folder === 'inbox' ? [toTrash, toSpam, markRead, markUnread] : actions
+  // Each for the messages ticked
+  const bulk = (list: Action[]): BulkAction[] =>
+    list.map((action) => ({
+      ...action,
+      run: () => act(() => action.run(ticks.ticked)),
+    }))
+  const emptyFolder: BulkAction | undefined =
+    folder !== 'inbox' && !activeQuery
+      ? {
+          label: `Empty ${FOLDERS[folder].name}`,
+          icon: 'trash',
+          danger: true,
+          run: () => act(empty),
+        }
+      : undefined
+  const placeholder =
+    folder === 'inbox' ? 'Search mail' : `Search ${FOLDERS[folder].name}`
+  // The list's ⋮ in the bar along the top, at phone width
+  const listMenu = (
+    <Menu label="List actions">
+      <button onClick={onRefresh}>
+        <Icon name="refresh" />
+        Refresh
+      </button>
+      <button disabled={items.length === 0} onClick={select.start}>
+        <Icon name="select" />
+        Select messages
+      </button>
+      {items.length > 0 && emptyFolder && (
+        <button onClick={emptyFolder.run}>
+          <Icon name={emptyFolder.icon} />
+          {emptyFolder.label}
+        </button>
+      )}
+    </Menu>
+  )
 
   // Only the search shown now goes on, from where its own pages ended
   const cursor: [] | [bigint] = more.search === activeQuery ? more.cursor : []
@@ -932,24 +1014,58 @@ export function Inbox({
 
   return (
     <Split reading={selected !== null}>
-      <section className="list" aria-label="Messages">
+      <section
+        className={select.on ? 'list selecting' : 'list'}
+        aria-label="Messages"
+      >
+        {/* At phone width: the page's bar, a search field, or selection
+            mode's actions */}
+        {select.on ? (
+          <SelectionBar
+            ticks={ticks}
+            actions={bulk([...bulkActions, star])}
+            onExit={select.exit}
+          />
+        ) : searching ? (
+          <div className="appbar">
+            <form
+              className="appbar-search"
+              role="search"
+              onSubmit={submitSearch}
+            >
+              <input
+                aria-label="Search mail"
+                placeholder={placeholder}
+                autoFocus
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+              />
+            </form>
+            <IconButton
+              label="Close search"
+              icon="close"
+              onClick={() => {
+                clearSearch()
+                setSearching(false)
+              }}
+            />
+            {listMenu}
+          </div>
+        ) : (
+          <AppBar>
+            <IconButton
+              label="Search"
+              icon="search"
+              onClick={() => setSearching(true)}
+            />
+            {listMenu}
+          </AppBar>
+        )}
         <div className="list-head">
-          <form
-            className="search"
-            role="search"
-            onSubmit={(e) => {
-              e.preventDefault()
-              setSelected(null)
-              searchFor(query.trim())
-            }}
-          >
+          <form className="search" role="search" onSubmit={submitSearch}>
             <input
               aria-label="Search mail"
-              placeholder={
-                folder === 'inbox'
-                  ? 'Search mail'
-                  : `Search ${FOLDERS[folder].name}`
-              }
+              placeholder={placeholder}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
             />
@@ -958,10 +1074,7 @@ export function Inbox({
                 type="button"
                 label="Clear"
                 icon="close"
-                onClick={() => {
-                  setQuery('')
-                  searchFor('')
-                }}
+                onClick={clearSearch}
               />
             )}
           </form>
@@ -977,20 +1090,8 @@ export function Inbox({
           {items.length > 0 && (
             <Bulk
               ticks={ticks}
-              actions={bulkActions.map((action) => ({
-                ...action,
-                run: () => act(() => action.run(ticks.ticked)),
-              }))}
-              empty={
-                folder !== 'inbox' && !activeQuery
-                  ? {
-                      label: `Empty ${FOLDERS[folder].name}`,
-                      icon: 'trash',
-                      danger: true,
-                      run: () => act(empty),
-                    }
-                  : undefined
-              }
+              actions={bulk(bulkActions)}
+              empty={emptyFolder}
             />
           )}
         </div>
@@ -1023,7 +1124,7 @@ export function Inbox({
                 <button
                   className={unread ? 'message unread' : 'message'}
                   aria-current={selected?.uid === m.uid}
-                  onClick={() => setSelected(m)}
+                  {...select.row(m.uid, () => setSelected(m))}
                 >
                   <span className="who">{senderOf(m)}</span>
                   <span className="date">{when(m)}</span>

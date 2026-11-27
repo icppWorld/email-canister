@@ -17,6 +17,7 @@ import { env } from './local'
 import {
   ADMIN,
   answer,
+  appBar,
   argOf,
   asAlice,
   backend,
@@ -25,6 +26,8 @@ import {
   compose,
   deliver,
   DOMAIN,
+  drawer,
+  drawerItem,
   FLAG_SEEN,
   folder,
   FOLDER_INBOX,
@@ -37,8 +40,12 @@ import {
   menuItem,
   messageRow,
   nav,
+  openDrawer,
   openMail,
   openMenu,
+  PHONE,
+  phoneOpenMail,
+  phoneSearch,
   reader,
   roleColour,
   search,
@@ -213,11 +220,18 @@ test('the selected folder is bold, with a bar in the action-text colour, and a h
   expect(hovered.weight).not.toBe('700')
   expect(hovered.shadow).toBe('none')
 
-  // At phone width the folders are tabs, with the bar below
-  await page.setViewportSize({ width: 390, height: 844 })
-  await expect.poll(async () => (await style(inbox)).shadow).toContain('-3px')
-  const tab = await style(inbox)
-  expect(tab.shadow).toContain(bar)
+  // At phone width the drawer marks it the same way
+  await page.setViewportSize(PHONE)
+  await openDrawer(page)
+  const current = drawer(page).getByRole('button', {
+    name: 'Inbox',
+    exact: true,
+  })
+  await expect(current).toHaveAttribute('aria-current', 'true')
+  const marked = await style(current)
+  expect(marked.weight).toBe('700')
+  expect(marked.shadow).toContain(bar)
+  expect(marked.shadow).toContain('inset')
   await context.close()
 })
 
@@ -226,9 +240,9 @@ test("at phone width the reader's actions keep to one row, and its menu opens on
 }) => {
   deliver({ subject: 'Narrow sanderling', body: '<p>A sanderling.</p>' })
   await waitDrained()
-  const viewport = { width: 390, height: 844 }
+  const viewport = PHONE
   const { context, page } = await signedIn(browser, USER_A, { viewport })
-  await openMail(page, 'Narrow sanderling')
+  await phoneOpenMail(page, 'Narrow sanderling')
   await expect(page.getByTestId('subject')).toHaveText('Narrow sanderling')
   await openMenu(page, 'More actions')
   const list = menu(page, 'More actions').locator('.menu-items')
@@ -247,7 +261,7 @@ test("at phone width the reader's actions keep to one row, and its menu opens on
     return found.y + found.height / 2
   }
   const more = await middle(page.getByLabel('More actions', { exact: true }))
-  for (const name of ['Back', 'Spam']) {
+  for (const name of ['Back', 'Reply', 'Delete']) {
     const button = reader(page).getByRole('button', { name, exact: true })
     expect(Math.abs((await middle(button)) - more), name).toBeLessThan(2)
   }
@@ -262,9 +276,9 @@ test('at phone width a ⋮ in the left half opens its list from the left', async
   const alice = await asAlice()
   const uid = await uidOf(alice, 'alice', 'Wrapped skua')
   await alice.mail_move('alice', [uid], FOLDER_SPAM)
-  const viewport = { width: 390, height: 844 }
+  const viewport = PHONE
   const { context, page } = await signedIn(browser, USER_A, { viewport })
-  await folder(page, 'Spam')
+  await drawerItem(page, 'Spam')
   await messageRow(page, 'Wrapped skua').click()
   await expect(page.getByTestId('subject')).toHaveText('Wrapped skua')
   // Spam's icons fit on one row, so the ⋮ is put first, at the left, where a
@@ -481,10 +495,10 @@ test('at phone width the list and the open message take turns, and compose fills
   deliver({ subject: 'Phone plover', body: '<p>A plover.</p>' })
   await waitDrained()
   const { context, page } = await signedIn(browser, USER_A, {
-    viewport: { width: 390, height: 844 },
+    viewport: PHONE,
   })
   const list = page.getByRole('region', { name: 'Messages' })
-  await openMail(page, 'plover')
+  await phoneOpenMail(page, 'plover')
   await expect(page.getByTestId('subject')).toHaveText('Phone plover')
   await expect(list).toBeHidden()
   // Its actions wrap rather than run off the side
@@ -528,16 +542,19 @@ test('on a touch screen the row box and star are large enough to tap', async ({
   deliver({ subject: 'Tapped dunlin', body: '<p>A dunlin.</p>' })
   await waitDrained()
   const { context, page } = await signedIn(browser, USER_A, {
-    viewport: { width: 390, height: 844 },
+    viewport: PHONE,
     hasTouch: true,
     isMobile: true,
   })
   expect(
     await page.evaluate(() => matchMedia('(pointer: coarse)').matches)
   ).toBe(true)
-  await search(page, 'dunlin')
+  await phoneSearch(page, 'dunlin')
   const row = page.locator('li.message-row', { hasText: 'Tapped dunlin' })
   await expect(row).toHaveCount(1)
+  // The boxes show in selection mode
+  await expect(row.getByRole('checkbox')).toBeHidden()
+  await menuItem(page, 'List actions', 'Select messages')
   for (const target of [
     row.locator('.pick-area'),
     row.getByRole('button', { name: 'Star Tapped dunlin', exact: true }),
@@ -576,6 +593,387 @@ test('on a touch screen the row box and star are large enough to tap', async ({
     .boundingBox()
   if (!bar || !list) throw new Error('no bar or list')
   expect(list.y + list.height).toBeLessThanOrEqual(bar.y + 1)
+  await context.close()
+})
+
+// The title in the bar along the top, at phone width
+const barTitle = (page: Page) => appBar(page).locator('.appbar-title strong')
+
+test('at phone width one bar along the top takes the place of the header and the folders, and the mail starts near the top', async ({
+  browser,
+}) => {
+  deliver({ subject: 'Topmost knot', body: '<p>A knot.</p>' })
+  await waitDrained()
+  const { context, page } = await signedIn(browser, USER_A, {
+    viewport: PHONE,
+  })
+  const first = page.locator('li.message-row').first()
+  await expect(first).toContainText('Topmost knot')
+  await expect(barTitle(page)).toHaveText('Inbox')
+  await expect(appBar(page)).toContainText(`alice@${DOMAIN}`)
+  const bar = await appBar(page).boundingBox()
+  if (!bar) throw new Error('no bar')
+  expect(bar.y).toBeLessThan(1)
+  expect(bar.height).toBeLessThan(80)
+  const row = await first.boundingBox()
+  if (!row) throw new Error('no row')
+  expect(row.y).toBeLessThan(PHONE.height * 0.2)
+  // What the bar and the drawer hold instead
+  for (const hidden of [
+    page.getByRole('button', { name: 'Sign out' }),
+    page.getByRole('button', { name: 'Inbox', exact: true }),
+    page.getByRole('list', { name: 'Mailboxes' }),
+    page.getByRole('textbox', { name: 'Search mail' }),
+    page.getByRole('toolbar', { name: 'Selected messages' }),
+    first.getByRole('checkbox'),
+  ]) {
+    await expect(hidden).toBeHidden()
+  }
+  await expect(page.getByTestId('address')).toBeHidden()
+  await context.close()
+})
+
+const LINNET = '58'.repeat(32)
+
+test('at phone width the ☰ drawer goes to each folder and switches mailbox, and closes on Escape or beside it', async ({
+  browser,
+}) => {
+  joinMailbox('linnet', LINNET)
+  joinMailbox('rookery', LINNET)
+  deliver({ subject: 'Rookery note', body: '<p>A rook.</p>', to: 'rookery' })
+  await waitDrained()
+  const { context, page } = await signedIn(browser, LINNET, {
+    viewport: PHONE,
+  })
+  await openDrawer(page)
+  // The focus is in it
+  expect(
+    await drawer(page).evaluate((d) => d.contains(document.activeElement))
+  ).toBe(true)
+  await page.keyboard.press('Escape')
+  await expect(drawer(page)).toHaveCount(0)
+  await openDrawer(page)
+  await page.mouse.click(PHONE.width - 20, PHONE.height / 2)
+  await expect(drawer(page)).toHaveCount(0)
+
+  // Each mailbox, with its unread count
+  const mailbox = (local: string) =>
+    drawer(page).getByRole('button', { name: new RegExp(`^${local}@`) })
+  await openDrawer(page)
+  await mailbox('linnet').click()
+  await expect(appBar(page)).toContainText(`linnet@${DOMAIN}`)
+  await openDrawer(page)
+  await expect(mailbox('linnet')).toHaveAttribute('aria-current', 'true')
+  await expect(mailbox('rookery').locator('.badge')).toHaveText('1')
+  await mailbox('rookery').click()
+  await expect(drawer(page)).toHaveCount(0)
+  await expect(appBar(page)).toContainText(`rookery@${DOMAIN}`)
+  await expect(messageRow(page, 'Rookery note')).toBeVisible()
+
+  // Each folder, marked in the drawer and named in the bar
+  for (const [name, region, hash] of [
+    ['Sent', 'Sent mail', '#rookery/sent'],
+    ['Spam', 'Messages', '#rookery/spam'],
+    ['Trash', 'Messages', '#rookery/trash'],
+    ['Calendar', 'Calendar', '#rookery/calendar'],
+    ['Inbox', 'Messages', '#rookery'],
+  ]) {
+    await drawerItem(page, name)
+    await expect(page.getByRole('region', { name: region })).toBeVisible()
+    await expect(barTitle(page)).toHaveText(name)
+    await expect(appBar(page)).toContainText(`rookery@${DOMAIN}`)
+    await expect(page).toHaveURL(new RegExp(`${hash}$`))
+    await openDrawer(page)
+    await expect(
+      drawer(page).getByRole('button', { name, exact: true })
+    ).toHaveAttribute('aria-current', 'true')
+    await page.keyboard.press('Escape')
+  }
+  // The calendar keeps its own month controls
+  await drawerItem(page, 'Calendar')
+  await expect(
+    page.getByRole('button', { name: 'Next month', exact: true })
+  ).toBeVisible()
+  await context.close()
+})
+
+test('at phone width the drawer holds Blocked senders, Download a copy, the usage, Reload with the release, and Sign out', async ({
+  browser,
+}) => {
+  const { context, page } = await signedIn(browser, USER_A, {
+    viewport: PHONE,
+  })
+  await openDrawer(page)
+  const items = drawer(page)
+  for (const name of ['Blocked senders', 'Download a copy', 'Reload']) {
+    await expect(items.getByRole('button', { name, exact: true })).toBeVisible()
+  }
+  // Admin only for a controller
+  await expect(items.getByRole('button', { name: 'Admin' })).toHaveCount(0)
+  await expect(items).toContainText(/[\d.]+ [KMG]B of [\d.]+ [KMG]B used/)
+  await expect(items).toContainText(/Webmail v\d/)
+  await items.getByRole('button', { name: 'Blocked senders' }).click()
+  await expect(
+    page.getByRole('region', { name: 'Blocked senders' })
+  ).toBeVisible()
+  await expect(barTitle(page)).toHaveText('Blocked senders')
+  await drawerItem(page, 'Sign out')
+  await expect(
+    page.getByRole('button', { name: 'Sign in with Internet Identity' })
+  ).toBeVisible()
+  await context.close()
+
+  const admin = await signedIn(browser, ADMIN, { viewport: PHONE })
+  await expect(barTitle(admin.page)).toHaveText('Admin')
+  await expect(appBar(admin.page)).toContainText('Administrator')
+  await openDrawer(admin.page)
+  await expect(
+    drawer(admin.page).getByRole('button', { name: 'Admin', exact: true })
+  ).toHaveAttribute('aria-current', 'true')
+  await admin.context.close()
+})
+
+test("at phone width the bar's 🔍 searches the folder, and its ✕ closes the search and clears it", async ({
+  browser,
+}) => {
+  deliver({ subject: 'Sought curlew', body: '<p>A curlew.</p>' })
+  deliver({ subject: 'Unsought whimbrel', body: '<p>A whimbrel.</p>' })
+  await waitDrained()
+  const { context, page } = await signedIn(browser, USER_A, {
+    viewport: PHONE,
+  })
+  await expect(messageRow(page, 'Unsought whimbrel')).toBeVisible()
+  await phoneSearch(page, 'curlew')
+  await expect(messageRow(page, 'Sought curlew')).toBeVisible()
+  await expect(messageRow(page, 'Unsought whimbrel')).toHaveCount(0)
+  await page.getByRole('button', { name: 'Close search', exact: true }).click()
+  await expect(page.getByRole('textbox', { name: 'Search mail' })).toBeHidden()
+  await expect(barTitle(page)).toHaveText('Inbox')
+  await expect(messageRow(page, 'Unsought whimbrel')).toBeVisible()
+  await context.close()
+})
+
+test('at phone width selection mode starts from the ⋮ or a long press, acts on the mail ticked, and its ✕ ends it', async ({
+  browser,
+}) => {
+  deliver({ subject: 'Picked smew', body: '<p>A smew.</p>' })
+  deliver({ subject: 'Pressed smew', body: '<p>Another smew.</p>' })
+  await waitDrained()
+  const { context, page } = await signedIn(browser, USER_A, {
+    viewport: PHONE,
+  })
+  const box = (text: string) =>
+    page.locator('li.message-row', { hasText: text }).getByRole('checkbox')
+  await expect(messageRow(page, 'Pressed smew')).toBeVisible()
+  await expect(box('Picked smew')).toBeHidden()
+
+  // From the list's ⋮, with none ticked
+  await menuItem(page, 'List actions', 'Select messages')
+  await expect(barTitle(page)).toHaveText('0 selected')
+  await expect(box('Picked smew')).toBeVisible()
+  const bar = appBar(page)
+  await expect(
+    bar.getByRole('button', { name: 'Delete', exact: true })
+  ).toBeDisabled()
+  // A tap ticks a row, rather than opening it
+  await messageRow(page, 'Picked smew').click()
+  await expect(box('Picked smew')).toBeChecked()
+  await expect(barTitle(page)).toHaveText('1 selected')
+  await expect(page.getByTestId('subject')).toHaveCount(0)
+  // Select all, in the ⋮
+  await menuItem(page, 'Selection actions', 'Select all')
+  const rows = await page.locator('li.message-row').count()
+  await expect(barTitle(page)).toHaveText(`${rows} selected`)
+  // ✕ ends it, and unticks the mail
+  await page
+    .getByRole('button', { name: 'Stop selecting', exact: true })
+    .click()
+  await expect(barTitle(page)).toHaveText('Inbox')
+  await expect(box('Picked smew')).toBeHidden()
+  await expect(box('Picked smew')).not.toBeChecked()
+
+  // A long press starts it with that row ticked, and opens nothing
+  await messageRow(page, 'Pressed smew').hover()
+  await page.mouse.down()
+  await page.waitForTimeout(800)
+  await page.mouse.up()
+  await expect(barTitle(page)).toHaveText('1 selected')
+  await expect(box('Pressed smew')).toBeChecked()
+  await expect(box('Picked smew')).not.toBeChecked()
+  await expect(page.getByTestId('subject')).toHaveCount(0)
+
+  // The ⋮'s actions and the bar's act on the mail ticked
+  await messageRow(page, 'Picked smew').click()
+  await expect(barTitle(page)).toHaveText('2 selected')
+  await menuItem(page, 'Selection actions', 'Star')
+  for (const subject of ['Picked smew', 'Pressed smew']) {
+    await expect(
+      page.getByRole('button', { name: `Unstar ${subject}`, exact: true })
+    ).toBeVisible()
+  }
+  await bar.getByRole('button', { name: 'Delete', exact: true }).click()
+  await expect(page.getByTestId('toast').locator('span')).toHaveText(
+    '2 messages moved to Trash'
+  )
+  await expect(messageRow(page, 'smew')).toHaveCount(0)
+  await expect(barTitle(page)).toHaveText('0 selected')
+  await page
+    .getByRole('button', { name: 'Stop selecting', exact: true })
+    .click()
+  await expect(barTitle(page)).toHaveText('Inbox')
+  await context.close()
+})
+
+test('at phone width a right click on a row, as a touch screen sends for its long press, starts selection mode', async ({
+  browser,
+}) => {
+  deliver({ subject: 'Clicked stilt', body: '<p>A stilt.</p>' })
+  await waitDrained()
+  const { context, page } = await signedIn(browser, USER_A, {
+    viewport: PHONE,
+  })
+  await messageRow(page, 'Clicked stilt').click({ button: 'right' })
+  await expect(barTitle(page)).toHaveText('1 selected')
+  await expect(
+    page
+      .locator('li.message-row', { hasText: 'Clicked stilt' })
+      .getByRole('checkbox')
+  ).toBeChecked()
+  await context.close()
+})
+
+test("at phone width the reader's toolbar is the bar along the top: Back, the subject, Reply, Delete, and a ⋮ with Star, Spam and Mark unread", async ({
+  browser,
+}) => {
+  deliver({
+    subject: 'Barred godwit',
+    body: '<p>A godwit.</p>',
+    from: 'Godwit <godwit@sender.example>',
+  })
+  deliver({ subject: 'Barred dowitcher', body: '<p>A dowitcher.</p>' })
+  await waitDrained()
+  const { context, page } = await signedIn(browser, USER_A, {
+    viewport: PHONE,
+  })
+  const list = page.getByRole('region', { name: 'Messages' })
+  await phoneOpenMail(page, 'Barred godwit')
+  const bar = reader(page).locator('.toolbar')
+  await expect(bar.locator('.toolbar-title')).toHaveText('Barred godwit')
+  const box = await bar.boundingBox()
+  if (!box) throw new Error('no bar')
+  expect(box.y).toBeLessThan(1)
+  expect(box.height).toBeLessThan(80)
+  // The star and Spam are in its ⋮
+  for (const name of ['Star', 'Spam']) {
+    await expect(bar.getByRole('button', { name, exact: true })).toBeHidden()
+  }
+  await expect(
+    bar.getByRole('button', { name: 'Reply', exact: true })
+  ).toBeEnabled()
+  await menuItem(page, 'More actions', 'Star')
+  await openMenu(page, 'More actions')
+  await expect(
+    menu(page, 'More actions').getByRole('button', {
+      name: 'Unstar',
+      exact: true,
+    })
+  ).toBeVisible()
+  await page.keyboard.press('Escape')
+  // Mark unread goes back to the list
+  await menuItem(page, 'More actions', 'Mark unread')
+  await expect(list).toBeVisible()
+  await expect(
+    page.locator('button.message.unread', { hasText: 'Barred godwit' })
+  ).toHaveCount(1)
+
+  // Reply
+  await messageRow(page, 'Barred godwit').click()
+  await bar.getByRole('button', { name: 'Reply', exact: true }).click()
+  const window = page.getByRole('dialog', { name: 'New message' })
+  await expect(window.getByLabel('Subject', { exact: true })).toHaveValue(
+    'Re: Barred godwit'
+  )
+  await window.getByRole('button', { name: 'Close' }).click()
+  // Back
+  await bar.getByRole('button', { name: 'Back', exact: true }).click()
+  await expect(list).toBeVisible()
+  // Spam, from the ⋮
+  await messageRow(page, 'Barred godwit').click()
+  await expect(
+    bar.getByRole('button', { name: 'Reply', exact: true })
+  ).toBeEnabled()
+  await menuItem(page, 'More actions', 'Spam')
+  await expect(page.getByTestId('toast').locator('span')).toHaveText(
+    'Message moved to Spam and godwit@sender.example blocked'
+  )
+  await expect(list).toBeVisible()
+  // Delete
+  await phoneSearch(page, 'dowitcher')
+  await messageRow(page, 'Barred dowitcher').click()
+  await expect(bar.locator('.toolbar-title')).toHaveText('Barred dowitcher')
+  await bar.getByRole('button', { name: 'Delete', exact: true }).click()
+  await expect(page.getByTestId('toast').locator('span')).toHaveText(
+    'Message moved to Trash'
+  )
+  await expect(messageRow(page, 'Barred dowitcher')).toHaveCount(0)
+  await context.close()
+})
+
+test('at phone width Compose floats at the bottom right, opens compose, and gives way to the minimised window', async ({
+  browser,
+}) => {
+  const { context, page } = await signedIn(browser, USER_A, {
+    viewport: PHONE,
+  })
+  const button = page.getByRole('button', { name: 'Compose' })
+  const at = await button.boundingBox()
+  if (!at) throw new Error('no Compose')
+  expect(at.x + at.width).toBeGreaterThan(PHONE.width - 40)
+  expect(at.y + at.height).toBeGreaterThan(PHONE.height - 40)
+  await button.click()
+  const window = page.getByRole('dialog', { name: 'New message' })
+  await expect(window).toBeVisible()
+  await window.getByRole('button', { name: 'Minimise' }).click()
+  await expect(button).toBeHidden()
+  await window.getByRole('button', { name: 'Close' }).click()
+  await expect(window).toHaveCount(0)
+  await expect(button).toBeVisible()
+  await context.close()
+})
+
+const THRIFT = '59'.repeat(32)
+
+test("at phone width Sent has the bar, selection mode deletes the mail ticked, and a message's toolbar is the bar", async ({
+  browser,
+}) => {
+  await sentMail('thrift', THRIFT, ['Thrift 1', 'Thrift 2'])
+  const { context, page } = await signedIn(browser, THRIFT, {
+    viewport: PHONE,
+  })
+  await drawerItem(page, 'Sent')
+  const sent = page.getByRole('region', { name: 'Sent mail' })
+  await expect(sent.getByRole('listitem')).toHaveCount(2)
+  await expect(barTitle(page)).toHaveText('Sent')
+  // A message's toolbar, named by its subject
+  await messageRow(page, 'Thrift 1').click()
+  const bar = reader(page).locator('.toolbar')
+  await expect(bar.locator('.toolbar-title')).toHaveText('Thrift 1')
+  await bar.getByRole('button', { name: 'Back', exact: true }).click()
+  await expect(sent).toBeVisible()
+  // Selection mode
+  await menuItem(page, 'List actions', 'Select messages')
+  await messageRow(page, 'Thrift 2').click()
+  await expect(barTitle(page)).toHaveText('1 selected')
+  const dialogs = answer(page, true)
+  await appBar(page)
+    .getByRole('button', { name: 'Delete', exact: true })
+    .click()
+  await expect(page.getByTestId('toast').locator('span')).toHaveText(
+    '1 sent message deleted'
+  )
+  expect(dialogs).toEqual(['Delete this sent message for good?'])
+  await expect(sent.getByRole('listitem')).toHaveCount(1)
+  await expect(sent).toContainText('Thrift 1')
   await context.close()
 })
 
@@ -1001,7 +1399,7 @@ test('the arrow keys move the divider, Home and End take it to its limits, and i
 test('at phone width the divider is hidden, and the list keeps the whole width', async ({
   browser,
 }) => {
-  const viewport = { width: 390, height: 844 }
+  const viewport = PHONE
   const { context, page } = await signedIn(browser, USER_A, { viewport })
   // Also with a width chosen on a wider screen
   await page.evaluate(() => window.localStorage.setItem('list-width', '600'))

@@ -298,6 +298,45 @@ export const downloadCopy = (page: Page) =>
 export const nav = (page: Page) =>
   page.getByRole('navigation', { name: 'Folders' })
 
+// At phone width: the screen's size, the bar along the top shown now, the ☰
+// drawer, and the bar's 🔍 search
+export const PHONE = { width: 390, height: 844 }
+
+export const appBar = (page: Page) => page.locator('.appbar:visible')
+
+export const drawer = (page: Page) =>
+  page.getByRole('dialog', { name: 'Navigation' })
+
+export async function openDrawer(page: Page): Promise<void> {
+  await page.getByRole('button', { name: 'Menu', exact: true }).click()
+  await expect(drawer(page)).toBeVisible()
+}
+
+// Opens the drawer and chooses one of its buttons, which closes it
+export async function drawerItem(page: Page, name: string): Promise<void> {
+  await openDrawer(page)
+  await drawer(page).getByRole('button', { name, exact: true }).click()
+  await expect(drawer(page)).toHaveCount(0)
+}
+
+// Opens the field, unless a search has it open already
+export async function phoneSearch(page: Page, text: string): Promise<void> {
+  const field = page.getByRole('textbox', { name: 'Search mail' })
+  if (!(await field.isVisible())) {
+    await appBar(page)
+      .getByRole('button', { name: 'Search', exact: true })
+      .click()
+  }
+  await field.fill(text)
+  await field.press('Enter')
+}
+
+export async function phoneOpenMail(page: Page, text: string): Promise<void> {
+  await drawerItem(page, 'Inbox')
+  await phoneSearch(page, text)
+  await messageRow(page, text).first().click()
+}
+
 // What a download shows while it runs, below the folders. Gone once it has
 // ended, its thaw included: the menu's button is enabled again then.
 export const downloadStatus = (page: Page) => nav(page).getByRole('status')

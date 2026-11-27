@@ -12,12 +12,14 @@ import type { Identity } from '@icp-sdk/core/agent'
 import { createBackend, errorText, mailbox, type Backend, type Me } from './api'
 import { createSession, type Session } from './auth'
 import { AdminPanel } from './AdminPanel'
+import { AppBar, PageBar } from './AppBar'
 import { BlockedSenders } from './Blocked'
 import { IconButton } from './Buttons'
 import { formatBytes } from './format'
-import { Icon } from './Icon'
+import { Icon, type IconName } from './Icon'
 import { Compose, type Draft } from './Compose'
 import { useDownload } from './Download'
+import { Drawer } from './Drawer'
 import { Inbox, isFolder } from './Inbox'
 import { Menu } from './Menu'
 import { Sent } from './Sent'
@@ -69,6 +71,15 @@ const PAGES = {
 } as const
 type Page = keyof typeof PAGES
 type View = Page | 'admin'
+
+// The folders and the calendar, as the ☰ drawer lists them
+const DRAWER_PAGES: [Page, IconName][] = [
+  ['inbox', 'inbox'],
+  ['sent', 'send'],
+  ['spam', 'spam'],
+  ['trash', 'trash'],
+  ['calendar', 'calendar'],
+]
 
 // How long a note about what was just done stays shown
 const TOAST_MS = 8_000
@@ -194,6 +205,8 @@ export function App() {
   const [refreshing, setRefreshing] = useState(false)
   const onLoaded = useCallback(() => setRefreshing(false), [])
   const [draft, setDraft] = useState<Draft | null>(null)
+  // The ☰ drawer, at phone width
+  const [drawer, setDrawer] = useState(false)
   const [toast, setToast] = useState<ShownToast | null>(null)
   const toastIds = useRef(0)
   // Under the pointer or holding the focus, the note stays until let go
@@ -439,12 +452,21 @@ export function App() {
     if (latestBackend.current === backend) showToast(note)
   }
 
-  const refreshInbox = () => {
+  // The folder shown again, and the mailboxes' counts
+  const refreshFolder = () => {
     setRefreshing(true)
-    setView('inbox')
     setRefresh((count) => count + 1)
     reloadMailboxes()
   }
+
+  const refreshInbox = () => {
+    setView('inbox')
+    refreshFolder()
+  }
+
+  const usage =
+    shown &&
+    `${formatBytes(shown.used_bytes)} of ${formatBytes(shown.quota_bytes)} used`
 
   // The open mailbox's folders, below its row in the list
   const folders = (
@@ -480,8 +502,86 @@ export function App() {
     </div>
   )
 
-  return (
+  // At phone width each page has a bar along the top: a folder's list has
+  // its own, the other pages this one
+  const listed = box !== null && (isFolder(current) || current === 'sent')
+
+  const app = (
     <div className="app">
+      {!listed && <AppBar />}
+      {drawer && (
+        <Drawer onClose={() => setDrawer(false)}>
+          <strong className="brand">
+            <Logo />
+            {deployment().brand.label}
+          </strong>
+          {box && shown && (
+            <>
+              <ul aria-label="Mailboxes">
+                {me.mailboxes.map((m) => (
+                  <li key={m.local}>
+                    <button
+                      aria-current={m.local === shown.local}
+                      onClick={() => choose(m.local)}
+                    >
+                      <Icon name="mail" />
+                      <span className="name">{m.address}</span>
+                      {m.unseen > 0n && (
+                        <span className="badge">{m.unseen.toString()}</span>
+                      )}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              <ul className="drawer-folders" aria-label="Folders">
+                {DRAWER_PAGES.map(([page, icon]) => (
+                  <li key={page}>
+                    <button
+                      aria-current={current === page}
+                      onClick={() => setView(page)}
+                    >
+                      <Icon name={icon} />
+                      {PAGES[page]}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              <hr />
+              <button
+                aria-current={current === 'blocked'}
+                onClick={() => setView('blocked')}
+              >
+                <Icon name="block" />
+                Blocked senders
+              </button>
+              <button onClick={download.start} disabled={download.busy}>
+                <Icon name="download" />
+                Download a copy
+              </button>
+            </>
+          )}
+          {me.is_controller && (
+            <button
+              aria-current={current === 'admin'}
+              onClick={() => setView('admin')}
+            >
+              <Icon name="admin" />
+              Admin
+            </button>
+          )}
+          <hr />
+          {usage && <p className="usage">{usage}</p>}
+          <button onClick={reload}>
+            <Icon name="refresh" />
+            Reload
+          </button>
+          <p className="menu-note">Webmail v{VERSION}</p>
+          <button onClick={signOut}>
+            <Icon name="signOut" />
+            Sign out
+          </button>
+        </Drawer>
+      )}
       <header>
         <strong className="brand">
           <Logo />
@@ -536,20 +636,6 @@ export function App() {
               icon="compose"
               onClick={() => setDraft((open) => open ?? { from: shown.local })}
             />
-            {/* At phone width a select takes the place of the list */}
-            <select
-              className="mailbox-select"
-              aria-label="Mailbox"
-              value={shown.local}
-              onChange={(e) => choose(e.target.value)}
-            >
-              {me.mailboxes.map((m) => (
-                <option key={m.local} value={m.local}>
-                  {m.address}
-                  {m.unseen > 0n ? ` (${m.unseen} unread)` : ''}
-                </option>
-              ))}
-            </select>
             <ul className="mailboxes" aria-label="Mailboxes">
               {me.mailboxes.map((m) => {
                 const isOpen = m.local === shown.local
@@ -578,10 +664,9 @@ export function App() {
             </ul>
           </>
         )}
-        {shown && (
+        {usage && (
           <p className="usage" data-testid="usage">
-            {formatBytes(shown.used_bytes)} of {formatBytes(shown.quota_bytes)}{' '}
-            used
+            {usage}
           </p>
         )}
         {/* Started from the menu, and shown here while it runs */}
@@ -616,6 +701,7 @@ export function App() {
             onCounts={reloadMailboxes}
             refresh={refresh}
             onLoaded={onLoaded}
+            onRefresh={refreshFolder}
             onBlocked={() => setView('blocked')}
             domain={shown.address.slice(shown.address.indexOf('@') + 1)}
           />
@@ -684,5 +770,17 @@ export function App() {
         onHold={setToastHeld}
       />
     </div>
+  )
+
+  return (
+    <PageBar.Provider
+      value={{
+        title: current === 'admin' ? 'Admin' : PAGES[current],
+        address: shown?.address ?? 'Administrator',
+        openDrawer: () => setDrawer(true),
+      }}
+    >
+      {app}
+    </PageBar.Provider>
   )
 }

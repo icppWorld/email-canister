@@ -8,9 +8,11 @@ import { Icon } from './Icon'
 
 export function Menu({
   label,
+  className,
   children,
 }: {
   label: string // says what the menu holds, as the button has no text
+  className?: string
   children: ReactNode
 }) {
   const ref = useRef<HTMLDetailsElement>(null)
@@ -68,7 +70,7 @@ export function Menu({
 
   return (
     <details
-      className="menu"
+      className={className ? `menu ${className}` : 'menu'}
       ref={ref}
       onToggle={(e) => {
         if (e.currentTarget.open) measure()
