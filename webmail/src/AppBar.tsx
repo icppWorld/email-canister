@@ -40,6 +40,19 @@ export const PageBar = createContext<{
   slot: HTMLElement | null // where the bar is drawn
 }>({ title: '', address: '', menu: () => {}, slot: null })
 
+// ☰, for the navigation
+export function MenuButton() {
+  const page = useContext(PageBar)
+  return (
+    <IconButton
+      label="Menu"
+      icon="menu"
+      aria-expanded={page.expanded}
+      onClick={page.menu}
+    />
+  )
+}
+
 export function AppBar({
   lead,
   title,
@@ -66,14 +79,7 @@ export function AppBar({
     >
       {!bare && (
         <>
-          {lead ?? (
-            <IconButton
-              label="Menu"
-              icon="menu"
-              aria-expanded={page.expanded}
-              onClick={page.menu}
-            />
-          )}
+          {lead ?? <MenuButton />}
           <div className="appbar-title">
             <strong>{title ?? page.title}</strong>
             {title === undefined && (

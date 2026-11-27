@@ -173,7 +173,7 @@ test('unpinned, the navigation is the ☰ drawer over the page, as this browser 
   await context.close()
 })
 
-test("at a wider width the list's bar spans the reader too, a ticked box makes it the selection bar, and its ✕ unticks them all", async ({
+test("at a wider width the list's bar spans the reader too, a ticked box makes it the selection bar, which keeps ☰, and its ✕ unticks them all", async ({
   browser,
 }) => {
   for (const n of [1, 2]) {
@@ -199,12 +199,23 @@ test("at a wider width the list's bar spans the reader too, a ticked box makes i
   await expect(bar).toContainText('1 selected')
   // The box keeps the focus, for the next one
   await expect(box).toBeFocused()
-  // Unpinned meanwhile, the focus the panel held goes to ✕, in ☰'s place
+  // ☰ stays in the bar: it folds the navigation away and back
+  const menuButton = bar.getByRole('button', { name: 'Menu', exact: true })
+  await menuButton.click()
+  await expect(nav(page)).toHaveCount(0)
+  await menuButton.click()
+  await expect(nav(page)).toBeVisible()
+  // Unpinned meanwhile, the focus the panel held goes to ☰, which opens the
+  // drawer with the mail still ticked
   await navButton(page, 'Pin the menu').click()
   await expect(nav(page)).toHaveCount(0)
-  await expect(
-    page.getByRole('button', { name: 'Stop selecting', exact: true })
-  ).toBeFocused()
+  await expect(menuButton).toBeFocused()
+  await menuButton.click()
+  await expect(drawer(page)).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(drawer(page)).toHaveCount(0)
+  await expect(menuButton).toBeFocused()
+  await expect(bar).toContainText('1 selected')
   // Every action is in the bar, where there is room
   for (const name of ['Delete', 'Spam', 'Mark read', 'Mark unread', 'Star']) {
     await expect(bar.getByRole('button', { name, exact: true })).toBeVisible()
@@ -866,6 +877,10 @@ test('at phone width selection mode starts from the ⋮ or a long press, acts on
   await expect(barTitle(page)).toHaveText('0 selected')
   await expect(rowBox(page, 'Picked smew')).toBeVisible()
   const bar = appBar(page)
+  // ✕ in ☰'s place, where there is less room
+  await expect(
+    bar.getByRole('button', { name: 'Menu', exact: true })
+  ).toHaveCount(0)
   await expect(
     bar.getByRole('button', { name: 'Delete', exact: true })
   ).toBeDisabled()
