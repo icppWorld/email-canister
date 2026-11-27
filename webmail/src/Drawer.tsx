@@ -10,9 +10,13 @@ import { useRef, type ReactNode } from 'react'
 import { useModal } from './modal'
 
 // The ☰ of the page shown, as the one the drawer was opened from left with
-// its page
+// its page, or the ✕ in its place while messages are selected
 export const focusMenu = () =>
-  document.querySelector<HTMLElement>('.appbar [aria-label="Menu"]')?.focus()
+  document
+    .querySelector<HTMLElement>(
+      '.appbar [aria-label="Menu"], .appbar [aria-label="Stop selecting"]'
+    )
+    ?.focus()
 
 export function Drawer({
   onClose,

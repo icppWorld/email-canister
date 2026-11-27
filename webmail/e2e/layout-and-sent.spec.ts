@@ -195,6 +195,12 @@ test("at a wider width the list's bar spans the reader too, a ticked box makes i
   await expect(bar).toContainText('1 selected')
   // The box keeps the focus, for the next one
   await expect(box).toBeFocused()
+  // Unpinned meanwhile, the focus the panel held goes to ✕, in ☰'s place
+  await navButton(page, 'Pin the menu').click()
+  await expect(nav(page)).toHaveCount(0)
+  await expect(
+    page.getByRole('button', { name: 'Stop selecting', exact: true })
+  ).toBeFocused()
   // Every action is in the bar, where there is room
   for (const name of ['Delete', 'Spam', 'Mark read', 'Mark unread', 'Star']) {
     await expect(bar.getByRole('button', { name, exact: true })).toBeVisible()
