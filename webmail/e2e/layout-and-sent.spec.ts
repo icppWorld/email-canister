@@ -989,9 +989,15 @@ test('at phone width mail being sent is ticked by neither a tap nor a long press
     await page.mouse.up()
     await expect(barTitle(page)).toHaveText('Sent')
     await expect(reader(page)).toHaveCount(0)
-    // nor does a touch screen's, as a right click sends it
+    // nor does a touch screen's, as a right click sends it, which leaves
+    // the next click, with no press before it, to open the message
     await messageRow(page, 'Held avocet').click({ button: 'right' })
     await expect(barTitle(page)).toHaveText('Sent')
+    await messageRow(page, 'Held avocet').dispatchEvent('click', { detail: 1 })
+    const details = reader(page).locator('.toolbar')
+    await expect(details.locator('.toolbar-title')).toHaveText('Held avocet')
+    await details.getByRole('button', { name: 'Back', exact: true }).click()
+    await expect(reader(page)).toHaveCount(0)
     // In selection mode, a tap or a long press on it ticks nothing
     await menuItem(page, 'List actions', 'Select messages')
     await messageRow(page, 'Held avocet').click()
@@ -1172,19 +1178,27 @@ test('a long press pending as the page leaves phone width starts nothing, and ma
   deliver({ subject: 'Pressed yellowlegs', body: '<p>Another one.</p>' })
   await waitDrained()
   const { context, page } = await signedIn(browser, USER_A)
+  // The page's timers on a clock the test moves on, from the page's load:
+  // the press's time passes only once the resize has gone through
+  await page.clock.install()
+  await page.reload()
   const desktop = { width: 1280, height: 800 }
   await page.setViewportSize(desktop)
   await rowBox(page, 'Ticked yellowlegs').check()
   await page.setViewportSize(PHONE)
   await expect(barTitle(page)).toHaveText('Inbox')
-  // A press made in the page, as a real pointer would meet the rows moving
-  // at the resize and end it by itself
+  // A press made in the page, with the real pointer over no row at either
+  // width: a row moving under it at the resize would end the press by itself
+  await page.mouse.move(0, 0)
   const pressed = messageRow(page, 'Pressed yellowlegs')
   const pointer = { button: 0, isPrimary: true, pointerId: 1 }
+  await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1_000)
   await pressed.dispatchEvent('pointerdown', pointer)
   await page.setViewportSize(desktop)
-  await page.waitForTimeout(700)
+  await expect(appBar(page)).toHaveCount(0)
+  await page.clock.runFor(700)
   await pressed.dispatchEvent('pointerup', pointer)
+  await page.clock.resume()
   await expect(rowBox(page, 'Ticked yellowlegs')).toBeChecked()
   await expect(rowBox(page, 'Pressed yellowlegs')).not.toBeChecked()
   await page.setViewportSize(PHONE)

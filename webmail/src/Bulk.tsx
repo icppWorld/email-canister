@@ -175,8 +175,8 @@ export function useSelectMode(ticks: Ticks) {
   }
   const press = (id: bigint) => {
     cancel()
-    fired.current = true
     if (!ticks.can(id)) return
+    fired.current = true
     setOn(true)
     ticks.tick(id, true)
   }
@@ -199,7 +199,11 @@ export function useSelectMode(ticks: Ticks) {
         cancel()
         if (e.button !== 0 || !e.isPrimary || !phone) return
         from.current = { x: e.clientX, y: e.clientY }
-        timer.current = window.setTimeout(() => press(id), LONG_PRESS_MS)
+        // Its click opens nothing, also on a row that cannot be ticked
+        timer.current = window.setTimeout(() => {
+          fired.current = true
+          press(id)
+        }, LONG_PRESS_MS)
       },
       onPointerMove: (e: PointerEvent) => {
         if (timer.current === undefined) return
