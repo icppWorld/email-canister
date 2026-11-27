@@ -1185,6 +1185,16 @@ test("at phone width the focus goes to the bar's ☰ of the page the drawer went
     await expect(page.getByRole('region', { name: region })).toBeVisible()
     await expect(menuButton).toBeFocused()
   }
+  // Opened by a tap that focuses no button, as in some browsers: a script's
+  // click, with the focus on the page body
+  await menuButton.evaluate((button) => {
+    ;(document.activeElement as HTMLElement | null)?.blur()
+    ;(button as HTMLElement).click()
+  })
+  await expect(drawer(page)).toBeVisible()
+  await drawerButton(page, 'Sent').click()
+  await expect(page.getByRole('region', { name: 'Sent mail' })).toBeVisible()
+  await expect(menuButton).toBeFocused()
   await context.close()
 })
 
