@@ -117,8 +117,8 @@ test('a ticked message that a reload takes off the list comes back unticked', as
   await waitDrained()
   const alice = await asAlice()
   const godwit = await uidOf(alice, 'alice', 'Tickgone godwit')
+  // The list reloads by itself only while no search is shown
   const { context, page } = await signedIn(browser, USER_A)
-  await search(page, 'Tickgone')
   await expect(messageRow(page, 'Tickgone')).toHaveCount(2)
   await page.getByLabel('Select Tickgone godwit', { exact: true }).check()
   // Moved away, as by another member, and gone at the list's next load

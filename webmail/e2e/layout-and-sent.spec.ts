@@ -173,12 +173,12 @@ test("at a wider width the list's bar spans the reader too, a ticked box makes i
   browser,
 }) => {
   for (const n of [1, 2]) {
-    deliver({ subject: `Barred godwit ${n}`, body: '<p>A godwit.</p>' })
+    deliver({ subject: `Ruddy turnstone ${n}`, body: '<p>A turnstone.</p>' })
   }
   await waitDrained()
   const { context, page } = await signedIn(browser, USER_A)
-  await search(page, 'Barred godwit')
-  await expect(messageRow(page, 'Barred godwit')).toHaveCount(2)
+  await search(page, 'Ruddy turnstone')
+  await expect(messageRow(page, 'Ruddy turnstone')).toHaveCount(2)
   // The list's bar spans the list and the reader, as any page's does
   const list = await page
     .getByRole('region', { name: 'Messages' })
@@ -190,7 +190,7 @@ test("at a wider width the list's bar spans the reader too, a ticked box makes i
   expect(top.y + top.height).toBeLessThanOrEqual(list.y)
   const bar = page.getByRole('toolbar', { name: 'Selected messages' })
   await expect(bar).toHaveCount(0)
-  const box = rowBox(page, 'Barred godwit 1')
+  const box = rowBox(page, 'Ruddy turnstone 1')
   await box.check()
   await expect(bar).toContainText('1 selected')
   // The box keeps the focus, for the next one
@@ -208,7 +208,7 @@ test("at a wider width the list's bar spans the reader too, a ticked box makes i
 
   // The search field stays in the bar; its ✕ only ends the search
   const field = page.getByRole('textbox', { name: 'Search mail' })
-  await expect(field).toHaveValue('Barred godwit')
+  await expect(field).toHaveValue('Ruddy turnstone')
   await page.getByRole('button', { name: 'Clear search', exact: true }).click()
   await expect(field).toHaveValue('')
   await expect(field).toBeFocused()
