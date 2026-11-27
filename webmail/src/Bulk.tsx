@@ -7,6 +7,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type MouseEvent,
@@ -39,6 +40,12 @@ export function useTicks(ids: bigint[]) {
     const now = new Set(ids)
     setChecked((before) => new Set([...before].filter((id) => now.has(id))))
   }
+  // The ids listed now: a handler made before a change, as a long press's
+  // timer, which mail that started sending meanwhile, asks these
+  const current = useRef(ids)
+  useLayoutEffect(() => {
+    current.current = ids
+  })
   // Mail being taken off the list leaves its tick at once
   const untick = useCallback(
     (gone: ReadonlySet<bigint>) =>
@@ -51,14 +58,17 @@ export function useTicks(ids: bigint[]) {
     ticked: ids.filter((id) => checked.has(id)),
     total: ids.length,
     has: (id: bigint) => checked.has(id),
-    can: (id: bigint) => ids.includes(id),
-    tick: (id: bigint, on: boolean) =>
+    can: (id: bigint) => current.current.includes(id),
+    // Only mail that can be ticked now is
+    tick: (id: bigint, on: boolean) => {
+      if (on && !current.current.includes(id)) return
       setChecked((before) => {
         const next = new Set(before)
         if (on) next.add(id)
         else next.delete(id)
         return next
-      }),
+      })
+    },
     all: (on: boolean) => setChecked(new Set(on ? ids : [])),
     untick,
   }
@@ -153,14 +163,20 @@ export function useSelectMode(ticks: Ticks) {
     timer.current = undefined
   }
   useEffect(() => cancel, [])
+  // A press pending as the page leaves phone width starts nothing
+  useEffect(() => {
+    if (phone) return
+    window.clearTimeout(timer.current)
+    timer.current = undefined
+  }, [phone])
   if (on && !phone) {
     setOn(false)
     ticks.all(false)
   }
   const press = (id: bigint) => {
     cancel()
-    if (!ticks.can(id)) return
     fired.current = true
+    if (!ticks.can(id)) return
     setOn(true)
     ticks.tick(id, true)
   }
@@ -208,7 +224,7 @@ export function useSelectMode(ticks: Ticks) {
         fired.current = false
         if (ending) return
         if (on && phone) {
-          if (ticks.can(id)) ticks.tick(id, !ticks.has(id))
+          ticks.tick(id, !ticks.has(id))
         } else {
           open()
         }

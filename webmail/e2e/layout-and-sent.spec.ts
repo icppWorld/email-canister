@@ -958,7 +958,7 @@ test("at phone width Sent has the bar, selection mode deletes the mail ticked, a
 
 const AVOCET = '5a'.repeat(32)
 
-test('at phone width mail being sent is ticked by neither a tap nor a long press, and stays unticked once sent', async ({
+test('at phone width mail being sent is ticked by neither a tap nor a long press, whose click opens nothing, and stays unticked once sent', async ({
   browser,
 }) => {
   const box = await sentMail('avocet', AVOCET, ['Sent avocet'])
@@ -981,7 +981,15 @@ test('at phone width mail being sent is ticked by neither a tap nor a long press
     await drawerItem(page, 'Sent')
     const held = page.locator('li.message-row', { hasText: 'Held avocet' })
     await expect(held).toContainText('Sending', { timeout: 30_000 })
-    // Its long press, as a touch screen sends it, starts no selection mode
+    // Its long press starts no selection mode, and the click that ends it
+    // opens nothing
+    await messageRow(page, 'Held avocet').hover()
+    await page.mouse.down()
+    await page.waitForTimeout(600)
+    await page.mouse.up()
+    await expect(barTitle(page)).toHaveText('Sent')
+    await expect(reader(page)).toHaveCount(0)
+    // nor does a touch screen's, as a right click sends it
     await messageRow(page, 'Held avocet').click({ button: 'right' })
     await expect(barTitle(page)).toHaveText('Sent')
     // In selection mode, a tap or a long press on it ticks nothing
@@ -1113,6 +1121,91 @@ test('a search made at a wider width shows in the bar at phone width, whose ✕ 
   await expect(field).toHaveCount(0)
   await expect(barTitle(page)).toHaveText('Inbox')
   await expect(messageRow(page, 'Unsought ruff')).toBeVisible()
+  await context.close()
+})
+
+test('at phone width an empty search sent from the bar closes its field, and the focus goes to 🔍', async ({
+  browser,
+}) => {
+  deliver({ subject: 'Cleared phalarope', body: '<p>A phalarope.</p>' })
+  await waitDrained()
+  const { context, page } = await signedIn(browser, USER_A)
+  await search(page, 'phalarope')
+  await expect(messageRow(page, 'Cleared phalarope')).toBeVisible()
+  await page.setViewportSize(PHONE)
+  const field = appBar(page).getByRole('textbox', { name: 'Search mail' })
+  await expect(field).toHaveValue('phalarope')
+  await field.fill('')
+  await field.press('Enter')
+  await expect(field).toHaveCount(0)
+  await expect(
+    appBar(page).getByRole('button', { name: 'Search', exact: true })
+  ).toBeFocused()
+  await context.close()
+})
+
+test('at phone width the field of a search made before takes no focus, at the resize or as selection mode ends', async ({
+  browser,
+}) => {
+  deliver({ subject: 'Unfocused courser', body: '<p>A courser.</p>' })
+  await waitDrained()
+  const { context, page } = await signedIn(browser, USER_A)
+  await search(page, 'courser')
+  await expect(messageRow(page, 'Unfocused courser')).toBeVisible()
+  await page.setViewportSize(PHONE)
+  const field = appBar(page).getByRole('textbox', { name: 'Search mail' })
+  await expect(field).toHaveValue('courser')
+  await expect(field).not.toBeFocused()
+  await menuItem(page, 'List actions', 'Select messages')
+  await expect(rowBox(page, 'Unfocused courser')).toBeVisible()
+  await stopSelecting(page)
+  await expect(
+    appBar(page).getByLabel('List actions', { exact: true })
+  ).toBeFocused()
+  await context.close()
+})
+
+test('a long press pending as the page leaves phone width starts nothing, and mail ticked at the wider width stays ticked', async ({
+  browser,
+}) => {
+  deliver({ subject: 'Ticked yellowlegs', body: '<p>A yellowlegs.</p>' })
+  deliver({ subject: 'Pressed yellowlegs', body: '<p>Another one.</p>' })
+  await waitDrained()
+  const { context, page } = await signedIn(browser, USER_A)
+  const desktop = { width: 1280, height: 800 }
+  await page.setViewportSize(desktop)
+  await rowBox(page, 'Ticked yellowlegs').check()
+  await page.setViewportSize(PHONE)
+  await expect(barTitle(page)).toHaveText('Inbox')
+  // A press made in the page, as a real pointer would meet the rows moving
+  // at the resize and end it by itself
+  const pressed = messageRow(page, 'Pressed yellowlegs')
+  const pointer = { button: 0, isPrimary: true, pointerId: 1 }
+  await pressed.dispatchEvent('pointerdown', pointer)
+  await page.setViewportSize(desktop)
+  await page.waitForTimeout(700)
+  await pressed.dispatchEvent('pointerup', pointer)
+  await expect(rowBox(page, 'Ticked yellowlegs')).toBeChecked()
+  await expect(rowBox(page, 'Pressed yellowlegs')).not.toBeChecked()
+  await page.setViewportSize(PHONE)
+  await expect(barTitle(page)).toHaveText('Inbox')
+  await context.close()
+})
+
+test('at phone width Enter on a row in selection mode, which a long press started, ticks that row', async ({
+  browser,
+}) => {
+  deliver({ subject: 'Pressed tattler', body: '<p>A tattler.</p>' })
+  deliver({ subject: 'Keyed tattler', body: '<p>Another tattler.</p>' })
+  await waitDrained()
+  const { context, page } = await signedInPhone(browser, USER_A)
+  // A long press, as a touch screen sends it: no click follows
+  await messageRow(page, 'Pressed tattler').click({ button: 'right' })
+  await expect(barTitle(page)).toHaveText('1 selected')
+  await messageRow(page, 'Keyed tattler').focus()
+  await page.keyboard.press('Enter')
+  await expect(rowBox(page, 'Keyed tattler')).toBeChecked()
+  await expect(barTitle(page)).toHaveText('2 selected')
   await context.close()
 })
 

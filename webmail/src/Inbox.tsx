@@ -608,6 +608,19 @@ export function Inbox({
   // 🔍, and while a search is shown, as one made at a wider width
   const [searchOpened, setSearchOpened] = useState(false)
   const searching = searchOpened || activeQuery !== ''
+  // The focus goes into the field as 🔍 opens it, and to 🔍 as the field
+  // closes under it; a field there for a search made before takes none
+  const searchField = useRef<HTMLInputElement>(null)
+  const searchButton = useRef<HTMLButtonElement>(null)
+  const wasSearching = useRef(searching)
+  useEffect(() => {
+    if (wasSearching.current === searching) return
+    wasSearching.current = searching
+    if (searching) searchField.current?.focus()
+    else if (document.activeElement === document.body) {
+      searchButton.current?.focus()
+    }
+  }, [searching])
   // The search shown now, for a reload by work that began under another
   const searched = useRef('')
   const [error, setError] = useState('')
@@ -1021,9 +1034,9 @@ export function Inbox({
                 onSubmit={submitSearch}
               >
                 <input
+                  ref={searchField}
                   aria-label="Search mail"
                   placeholder={placeholder}
-                  autoFocus
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                 />
@@ -1039,6 +1052,7 @@ export function Inbox({
             </>
           ) : (
             <IconButton
+              ref={searchButton}
               label="Search"
               icon="search"
               onClick={() => setSearchOpened(true)}

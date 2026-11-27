@@ -1,6 +1,6 @@
 // Buttons that look and read the same wherever they appear
 
-import type { ButtonHTMLAttributes } from 'react'
+import type { ButtonHTMLAttributes, Ref } from 'react'
 
 import { Icon, type IconName } from './Icon'
 
@@ -22,6 +22,7 @@ export function IconButton({
   name?: string
   icon: IconName
   variant?: 'primary' | 'danger' | 'bare'
+  ref?: Ref<HTMLButtonElement>
 } & Omit<
   ButtonHTMLAttributes<HTMLButtonElement>,
   'aria-label' | 'title' | 'children' | 'name'
