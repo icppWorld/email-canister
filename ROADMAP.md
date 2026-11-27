@@ -28,6 +28,7 @@ email-canister grows in small releases, driven by running it for real mailboxes.
 - An HTML file as the message (v0.11.0): Compose sends an HTML file, or HTML pasted into an empty message, as it is, with a preview.
 - A calendar per mailbox (v0.12.0): one-off events, entered in the browser's time zone and stored in UTC, or all-day, that every member sees and changes, and a secret address at which any calendar app that subscribes by URL follows it as an iCalendar file.
 - The webmail on a phone (v0.13.0): at phone width one bar along the top, with the page's title and actions, in place of the header, the folder list and the search row; a ☰ drawer with the mailboxes, the folders, the account items and Sign out; search in the bar; a selection mode started by a long press, with the bulk actions in the bar; an open message's toolbar as the bar; and Compose floating at the bottom right.
+- One navigation at every width (v0.14.0): on a wider screen it is pinned open beside the page, or unpinned into the ☰ drawer, with each page's bar along the top, the search field in it, and a selection bar for the ticked mail.
 
 ## Next
 
