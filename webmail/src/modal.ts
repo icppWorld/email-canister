@@ -2,14 +2,19 @@
 // into it, and goes back to where it was when it unmounts, if that is still
 // on the page
 
-import { useEffect, type RefObject } from 'react'
+import { useEffect, useRef, type RefObject } from 'react'
 
 export function useModal(ref: RefObject<HTMLDialogElement | null>): void {
+  // Kept across an effect run again (StrictMode in development), when the
+  // focus is already inside the dialog and no longer shows where it came from
+  const opener = useRef<Element | null>(null)
   useEffect(() => {
     const dialog = ref.current
-    const before = document.activeElement
+    const active = document.activeElement
+    if (!dialog?.contains(active)) opener.current = active
     if (dialog && !dialog.open) dialog.showModal()
     return () => {
+      const before = opener.current
       if (before instanceof HTMLElement && before.isConnected) before.focus()
     }
   }, [ref])
