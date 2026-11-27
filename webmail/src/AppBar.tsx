@@ -1,8 +1,9 @@
 // Each page's bar along the top: ☰ for the navigation, which opens the
 // drawer (Drawer.tsx), or folds a pinned one away and back, then the page's
 // title over the open mailbox's address, then the page's own actions. A mode,
-// such as selecting messages, puts its own button and title in their place,
-// or, as the search field does at phone width, takes the whole bar. Every
+// such as selecting messages, puts its own title in their place, and its own
+// button after ☰, or in ☰'s place at phone width where room is short; or, as
+// the search field does at phone width, it takes the whole bar. Every
 // bar is drawn in App's place for it, above the page, so a list's spans the
 // list and the reader beside it as any other page's does.
 
@@ -41,7 +42,7 @@ export const PageBar = createContext<{
 }>({ title: '', address: '', menu: () => {}, slot: null })
 
 // ☰, for the navigation
-export function MenuButton() {
+function MenuButton() {
   const page = useContext(PageBar)
   return (
     <IconButton
@@ -61,7 +62,7 @@ export function AppBar({
   ref,
   children,
 }: {
-  lead?: ReactNode // in place of ☰
+  lead?: ReactNode // a mode's button: after ☰, or at phone width in its place
   title?: string // a mode's own, in place of the page's title and address
   bare?: boolean // only the children, with no ☰ or title
   label?: string // a mode's bar is a toolbar of that name
@@ -69,6 +70,7 @@ export function AppBar({
   children?: ReactNode
 }) {
   const page = useContext(PageBar)
+  const phone = usePhone()
   if (!page.slot) return null
   return createPortal(
     <div
@@ -79,7 +81,8 @@ export function AppBar({
     >
       {!bare && (
         <>
-          {lead ?? <MenuButton />}
+          {(lead === undefined || !phone) && <MenuButton />}
+          {lead}
           <div className="appbar-title">
             <strong>{title ?? page.title}</strong>
             {title === undefined && (

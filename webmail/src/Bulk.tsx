@@ -15,7 +15,7 @@ import {
   type Ref,
 } from 'react'
 
-import { AppBar, MenuButton, usePhone } from './AppBar'
+import { AppBar, usePhone } from './AppBar'
 import { IconButton } from './Buttons'
 import { Icon, type IconName } from './Icon'
 import { Menu } from './Menu'
@@ -220,8 +220,8 @@ const selectAll = (ticks: Ticks): BulkAction => ({
 
 // The bar along the top while messages are ticked, or in selection mode: ✕
 // to untick them all, how many are ticked, the actions, and a ⋮ with Select
-// all. Wider, ☰ stays before the ✕; at phone width ✕ takes its place, and
-// the first two actions show, with the rest in the ⋮.
+// all (AppBar keeps ☰ before the ✕ where there is room); at phone width the
+// first two actions, with the rest in the ⋮
 export function SelectionBar({
   ticks,
   actions,
@@ -235,18 +235,12 @@ export function SelectionBar({
 }) {
   const ticked = ticks.ticked.length
   const none = ticked === 0
-  const phone = usePhone()
-  const inBar = phone ? 2 : actions.length
+  const inBar = usePhone() ? 2 : actions.length
   return (
     <AppBar
       ref={ref}
       label="Selected messages"
-      lead={
-        <>
-          {!phone && <MenuButton />}
-          <IconButton label="Stop selecting" icon="close" onClick={onExit} />
-        </>
-      }
+      lead={<IconButton label="Stop selecting" icon="close" onClick={onExit} />}
       title={`${ticked} selected`}
     >
       {actions.slice(0, inBar).map((action) => (
