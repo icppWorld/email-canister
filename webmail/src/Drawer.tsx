@@ -1,6 +1,7 @@
-// The ☰ drawer at phone width: a modal dialog along the left edge. The focus
-// moves into it as it opens, and back to where it was when it closes, or,
-// when it went to a page of its own, to that page's ☰.
+// The ☰ drawer: the navigation as a modal dialog along the left edge, at
+// phone width, and at a wider one while it is not pinned beside the page. The
+// focus moves into it as it opens, and back to where it was when it closes,
+// or, when it went to a page of its own, to that page's ☰.
 // Escape, a click on the backdrop beside it, and choosing one of its buttons
 // close it.
 
@@ -8,8 +9,9 @@ import { useRef, type ReactNode } from 'react'
 
 import { useModal } from './modal'
 
-// The ☰ of the page the drawer went to: its own one left with the page
-const focusMenu = () =>
+// The ☰ of the page shown, as the one the drawer was opened from left with
+// its page
+export const focusMenu = () =>
   document.querySelector<HTMLElement>('.appbar [aria-label="Menu"]')?.focus()
 
 export function Drawer({
@@ -35,7 +37,7 @@ export function Drawer({
         if (target === e.currentTarget || target.closest('button')) onClose()
       }}
     >
-      <div className="drawer-body">{children}</div>
+      <div className="navigation-body">{children}</div>
     </dialog>
   )
 }

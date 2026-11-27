@@ -6,18 +6,10 @@ import {
   useMemo,
   useRef,
   useState,
-  type ReactNode,
 } from 'react'
 import type { Identity } from '@icp-sdk/core/agent'
 
-import {
-  createBackend,
-  errorText,
-  mailbox,
-  type Backend,
-  type MailboxInfo,
-  type Me,
-} from './api'
+import { createBackend, errorText, mailbox, type Backend, type Me } from './api'
 import { createSession, type Session } from './auth'
 import { AdminPanel } from './AdminPanel'
 import { AppBar, PageBar, usePhone } from './AppBar'
@@ -27,9 +19,8 @@ import { formatBytes } from './format'
 import { Icon, type IconName } from './Icon'
 import { Compose, type Draft } from './Compose'
 import { useDownload } from './Download'
-import { Drawer } from './Drawer'
+import { Drawer, focusMenu } from './Drawer'
 import { Inbox, isFolder } from './Inbox'
-import { Menu } from './Menu'
 import { Sent } from './Sent'
 import { deployment } from './settings'
 import { store, stored } from './storage'
@@ -119,6 +110,10 @@ function hashOf(local: string, view: Page): string {
 const remembered = (principal: string) => stored(`mailbox:${principal}`)
 const remember = (principal: string, local: string) =>
   store(`mailbox:${principal}`, local)
+
+// Whether the navigation is pinned open beside the page, in this browser:
+// 'no' once unpinned, else it is
+const PINNED = 'navigation:pinned'
 
 // The light and dark versions swap with the system setting, without script
 function Logo({ large = false }: { large?: boolean }) {
@@ -216,13 +211,35 @@ export function App() {
   const [refresh, setRefresh] = useState(0)
   // Sends made here, for the Sent list alone: other folders keep their pages
   const [sends, setSends] = useState(0)
-  const [refreshing, setRefreshing] = useState(false)
-  const onLoaded = useCallback(() => setRefreshing(false), [])
   const [draft, setDraft] = useState<Draft | null>(null)
-  // The ☰ drawer, at phone width: closed as the page leaves it
+  // The navigation: wider than a phone, pinned open beside the page unless
+  // unpinned in this browser, and folded away and back by ☰; else the ☰
+  // drawer over the page, which gives way to a pinned panel as the page widens
+  const [pinned, setPinned] = useState(() => stored(PINNED) !== 'no')
+  const [folded, setFolded] = useState(false)
   const [drawer, setDrawer] = useState(false)
+  // Where each page's bar is drawn (AppBar.tsx)
+  const [head, setHead] = useState<HTMLElement | null>(null)
   const phone = usePhone()
-  if (drawer && !phone) setDrawer(false)
+  const beside = !phone && pinned
+  const docked = beside && !folded
+  if (drawer && beside) setDrawer(false)
+  // The focus in a panel that goes, as when unpinned, goes to ☰
+  const wasDocked = useRef(docked)
+  useEffect(() => {
+    if (
+      wasDocked.current &&
+      !docked &&
+      document.activeElement === document.body
+    )
+      focusMenu()
+    wasDocked.current = docked
+  }, [docked])
+  const pin = (on: boolean) => {
+    store(PINNED, on ? 'yes' : 'no')
+    setPinned(on)
+    setFolded(false)
+  }
   const [toast, setToast] = useState<ShownToast | null>(null)
   const toastIds = useRef(0)
   // Under the pointer or holding the focus, the note stays until let go
@@ -470,73 +487,13 @@ export function App() {
 
   // The folder shown again, and the mailboxes' counts
   const refreshFolder = () => {
-    setRefreshing(true)
     setRefresh((count) => count + 1)
     reloadMailboxes()
-  }
-
-  const refreshInbox = () => {
-    setView('inbox')
-    refreshFolder()
   }
 
   const usage =
     shown &&
     `${formatBytes(shown.used_bytes)} of ${formatBytes(shown.quota_bytes)} used`
-
-  // The open mailbox's folders, below its row in the list
-  const folders = (
-    <div className="folders">
-      <div className="folder">
-        <button
-          aria-current={current === 'inbox'}
-          onClick={() => setView('inbox')}
-        >
-          Inbox
-        </button>
-        <IconButton
-          className={refreshing ? 'refresh spinning' : 'refresh'}
-          label="Refresh"
-          icon="refresh"
-          aria-busy={refreshing}
-          disabled={refreshing}
-          onClick={refreshInbox}
-        />
-      </div>
-      {FOLDER_PAGES.filter((page) => page !== 'inbox').map((page) => (
-        <button
-          key={page}
-          aria-current={current === page}
-          onClick={() => setView(page)}
-        >
-          {PAGES[page]}
-        </button>
-      ))}
-    </div>
-  )
-
-  // A mailbox's button, with its unread count: in the list beside the mail
-  // by its name, with the address as its tooltip, and in the drawer by its
-  // address. The one shown is current, unless Admin is.
-  const mailboxButton = (m: MailboxInfo, inDrawer: boolean) => (
-    <button
-      className={inDrawer ? undefined : 'mailbox'}
-      title={inDrawer ? undefined : m.address}
-      aria-current={m.local === shown?.local && current !== 'admin'}
-      onClick={() => choose(m.local)}
-    >
-      {inDrawer && <Icon name="mail" />}
-      <span className="name">{inDrawer ? m.address : m.local}</span>
-      {m.unseen > 0n && (
-        <span
-          className="badge"
-          data-testid={inDrawer ? undefined : `unread-${m.local}`}
-        >
-          {m.unseen.toString()}
-        </span>
-      )}
-    </button>
-  )
 
   const address = shown?.address ?? 'Administrator'
   const brand = (
@@ -545,12 +502,63 @@ export function App() {
       {deployment().brand.label}
     </strong>
   )
-  // The header menu's items, which the ☰ drawer lists too, with what it
-  // shows before Reload
-  const accountItems = (beforeReload?: ReactNode) => (
+  // The navigation, pinned beside the page or in the ☰ drawer: the
+  // mailboxes, their folders and pages, and the account's own
+  const navigation = (
     <>
-      {box && (
+      <div className="navigation-head">
+        {brand}
+        {/* Wider than a phone, where there is room beside the page */}
+        {!phone && (
+          <IconButton
+            label="Pin the menu"
+            icon={pinned ? 'pinOff' : 'pin'}
+            aria-pressed={pinned}
+            onClick={() => pin(!pinned)}
+          />
+        )}
+      </div>
+      {!box && (
+        <p className="hint" data-testid="principal">
+          {principal}
+        </p>
+      )}
+      {box && shown && (
         <>
+          <ul aria-label="Mailboxes">
+            {me.mailboxes.map((m) => (
+              <li key={m.local}>
+                {/* The one shown is current, unless Admin is */}
+                <button
+                  aria-current={m.local === shown.local && current !== 'admin'}
+                  title={m.address}
+                  onClick={() => choose(m.local)}
+                >
+                  <Icon name="mail" />
+                  <span className="name">{m.address}</span>
+                  {m.unseen > 0n && (
+                    <span className="badge" data-testid={`unread-${m.local}`}>
+                      {m.unseen.toString()}
+                    </span>
+                  )}
+                </button>
+              </li>
+            ))}
+          </ul>
+          <ul className="navigation-folders" aria-label="Folders">
+            {FOLDER_PAGES.map((page) => (
+              <li key={page}>
+                <button
+                  aria-current={current === page}
+                  onClick={() => setView(page)}
+                >
+                  <Icon name={PAGE_ICONS[page]} />
+                  {PAGES[page]}
+                </button>
+              </li>
+            ))}
+          </ul>
+          <hr />
           <button
             aria-current={current === 'blocked'}
             onClick={() => setView('blocked')}
@@ -573,126 +581,56 @@ export function App() {
           Admin
         </button>
       )}
-      {beforeReload}
+      <hr />
+      {usage && (
+        <p className="usage" data-testid="usage">
+          {usage}
+        </p>
+      )}
       {/* The page again from the server, as a phone can keep an old one */}
       <button onClick={reload}>
         <Icon name="refresh" />
         Reload
       </button>
-      {/* One at a time: the header is not there at phone width, and the
-          drawer only there */}
       <p className="menu-note" data-testid="version">
         Webmail v{VERSION}
       </p>
+      <button onClick={signOut}>
+        <Icon name="signOut" />
+        Sign out
+      </button>
     </>
   )
 
-  // At phone width each page has a bar along the top: a folder's list has
-  // its own, the other pages this one
+  // Each page has a bar along the top: a folder's list has its own, the
+  // other pages this one
   const listed = box !== null && (isFolder(current) || current === 'sent')
 
   const app = (
-    <div className="app">
-      {phone && !listed && <AppBar />}
-      {phone && drawer && (
-        <Drawer onClose={() => setDrawer(false)}>
-          {brand}
-          {box && shown && (
-            <>
-              <ul aria-label="Mailboxes">
-                {me.mailboxes.map((m) => (
-                  <li key={m.local}>{mailboxButton(m, true)}</li>
-                ))}
-              </ul>
-              <ul className="drawer-folders" aria-label="Folders">
-                {FOLDER_PAGES.map((page) => (
-                  <li key={page}>
-                    <button
-                      aria-current={current === page}
-                      onClick={() => setView(page)}
-                    >
-                      <Icon name={PAGE_ICONS[page]} />
-                      {PAGES[page]}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-              <hr />
-            </>
-          )}
-          {accountItems(
-            <>
-              <hr />
-              {usage && <p className="usage">{usage}</p>}
-            </>
-          )}
-          <button onClick={signOut}>
-            <Icon name="signOut" />
-            Sign out
-          </button>
-        </Drawer>
+    <div className={docked ? 'app docked' : 'app'}>
+      {docked && (
+        <nav className="navigation" aria-label="Navigation">
+          <div className="navigation-body">{navigation}</div>
+        </nav>
       )}
-      {!phone && (
-        <header>
-          {brand}
-          <span className="address" data-testid="address">
-            {address}
-          </span>
-          <Menu label="More">{accountItems()}</Menu>
-          <IconButton label="Sign out" icon="signOut" onClick={signOut} />
-        </header>
+      {drawer && <Drawer onClose={() => setDrawer(false)}>{navigation}</Drawer>}
+      <div className="app-head" ref={setHead} />
+      {!listed && <AppBar />}
+      {/* A download started from the navigation, shown while it runs */}
+      {(download.progress || download.error) && (
+        <div className="notices">
+          {download.progress && (
+            <p className="download-status" role="status">
+              {download.progress}
+            </p>
+          )}
+          {download.error && (
+            <p className="error" role="alert">
+              {download.error}
+            </p>
+          )}
+        </div>
       )}
-      <nav aria-label="Folders">
-        {box && shown && (
-          <>
-            {/* At phone width it floats at the bottom right, and gives way
-                to a message being written, whose minimised bar is there */}
-            {!(phone && draft) && (
-              <IconButton
-                className="compose"
-                variant="primary"
-                label="Compose"
-                icon="compose"
-                onClick={() =>
-                  setDraft((open) => open ?? { from: shown.local })
-                }
-              />
-            )}
-            <ul className="mailboxes" aria-label="Mailboxes">
-              {me.mailboxes.map((m) => {
-                const isOpen = m.local === shown.local
-                return (
-                  <li key={m.local} className={isOpen ? 'open' : undefined}>
-                    {mailboxButton(m, false)}
-                    {isOpen && folders}
-                  </li>
-                )
-              })}
-            </ul>
-          </>
-        )}
-        {usage && (
-          <p className="usage" data-testid="usage">
-            {usage}
-          </p>
-        )}
-        {/* Started from the menu, and shown here while it runs */}
-        {download.progress && (
-          <p className="download-status" role="status">
-            {download.progress}
-          </p>
-        )}
-        {download.error && (
-          <p className="error" role="alert">
-            {download.error}
-          </p>
-        )}
-        {!box && (
-          <p className="hint" data-testid="principal">
-            {principal}
-          </p>
-        )}
-      </nav>
       <div className="content">
         {isFolder(current) && box && shown && (
           <Inbox
@@ -707,7 +645,6 @@ export function App() {
             }
             onCounts={reloadMailboxes}
             refresh={refresh}
-            onLoaded={onLoaded}
             onRefresh={refreshFolder}
             onBlocked={() => setView('blocked')}
             domain={shown.address.slice(shown.address.indexOf('@') + 1)}
@@ -739,6 +676,17 @@ export function App() {
         )}
         {current === 'admin' && <AdminPanel backend={backend} />}
       </div>
+      {/* Compose floats at the bottom right, and gives way to a message
+          being written, whose window or minimised bar is there */}
+      {box && shown && !draft && (
+        <IconButton
+          className="fab"
+          variant="primary"
+          label="Compose"
+          icon="compose"
+          onClick={() => setDraft({ from: shown.local })}
+        />
+      )}
       {draft && backend && (
         <Compose
           backend={backend}
@@ -784,7 +732,10 @@ export function App() {
       value={{
         title: current === 'admin' ? 'Admin' : PAGES[current],
         address,
-        openDrawer: () => setDrawer(true),
+        // Beside the page, ☰ folds the navigation away and back
+        menu: () => (beside ? setFolded((was) => !was) : setDrawer(true)),
+        expanded: beside ? docked : undefined,
+        slot: head,
       }}
     >
       {app}

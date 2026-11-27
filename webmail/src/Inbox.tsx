@@ -45,7 +45,6 @@ import {
 import { usePhone } from './AppBar'
 import { BackButton, IconButton, StarButton, starLabel } from './Buttons'
 import {
-  Bulk,
   ListBar,
   MenuAction,
   RowPick,
@@ -432,7 +431,7 @@ function Reader({
   return (
     <article className="reader">
       {/* At phone width, the bar along the top */}
-      <div className="toolbar">
+      <div className={phone ? 'toolbar appbar' : 'toolbar'}>
         <BackButton onClick={onBack} />
         {phone && <strong className="toolbar-title">{subject}</strong>}
         <IconButton
@@ -573,7 +572,6 @@ export function Inbox({
   onReply,
   onCounts,
   refresh,
-  onLoaded,
   onRefresh,
   onBlocked,
   domain,
@@ -586,7 +584,6 @@ export function Inbox({
   onCounts: () => void
   onReply: (draft: Omit<Draft, 'from'>) => void
   refresh: number
-  onLoaded: () => void
   onRefresh: () => void // the folder and the mailboxes' counts again
   onBlocked: () => void // to the Blocked senders page
   domain: string // the mailbox's own, whose addresses Spam never blocks
@@ -602,14 +599,16 @@ export function Inbox({
   // The messages ticked for an action on all of them
   const ticks = useTicks(items.map((m) => m.uid))
   const select = useSelectMode(ticks)
+  const phone = usePhone()
   const [query, setQuery] = useState('')
   const [activeQuery, setActiveQuery] = useState('')
-  // At phone width, the bar along the top is a search field: opened by its
-  // 🔍, and while a search is shown, as one made at a wider width
+  // The bar's search field. At phone width it takes the whole bar: opened
+  // by its 🔍, and while a search is shown, as one made at a wider width.
   const [searchOpened, setSearchOpened] = useState(false)
-  const searching = searchOpened || activeQuery !== ''
+  const searching = (phone && searchOpened) || activeQuery !== ''
   // The focus goes into the field as 🔍 opens it, and to 🔍 as the field
-  // closes under it; a field there for a search made before takes none
+  // closes under it, or wider, back to the field as its ✕ goes; a field
+  // there for a search made before takes none
   const searchField = useRef<HTMLInputElement>(null)
   const searchButton = useRef<HTMLButtonElement>(null)
   const wasSearching = useRef(searching)
@@ -618,7 +617,7 @@ export function Inbox({
     wasSearching.current = searching
     if (searching) searchField.current?.focus()
     else if (document.activeElement === document.body) {
-      searchButton.current?.focus()
+      ;(searchButton.current ?? searchField.current)?.focus()
     }
   }, [searching])
   // The search shown now, for a reload by work that began under another
@@ -680,14 +679,14 @@ export function Inbox({
   )
 
   useEffect(() => {
-    load([], false, activeQuery).finally(onLoaded)
+    load([], false, activeQuery)
     if (activeQuery) return
     // Refreshing replaces the list with its first page, so not while reading older mail
     const timer = window.setInterval(() => {
       if (!olderShown.current) load([], false, '')
     }, REFRESH_MS)
     return () => window.clearInterval(timer)
-  }, [load, activeQuery, refresh, onLoaded])
+  }, [load, activeQuery, refresh])
 
   // The first page again, of the search shown now
   const reload = () => load([], false, searched.current)
@@ -1014,22 +1013,41 @@ export function Inbox({
         className={select.on ? 'list selecting' : 'list'}
         aria-label="Messages"
       >
-        {/* At phone width: the page's bar, a search field, or selection
-            mode's actions */}
+        {/* The page's bar, or the selection bar; at phone width the search
+            field takes the whole bar while it is open */}
         <ListBar
           select={select}
           ticks={ticks}
           actions={bulk([...bulkActions, star])}
           listed={items.length > 0}
           empty={emptyFolder}
-          bare={searching}
+          bare={phone && searching}
+          reading={selected !== null}
           items={
-            <MenuAction
-              action={{ label: 'Refresh', icon: 'refresh', run: onRefresh }}
-            />
+            <>
+              <MenuAction
+                action={{ label: 'Refresh', icon: 'refresh', run: onRefresh }}
+              />
+              {folder === 'spam' && (
+                <MenuAction
+                  action={{
+                    label: 'Blocked senders',
+                    icon: 'block',
+                    run: onBlocked,
+                  }}
+                />
+              )}
+            </>
           }
         >
-          {searching ? (
+          {phone && !searching ? (
+            <IconButton
+              ref={searchButton}
+              label="Search"
+              icon="search"
+              onClick={() => setSearchOpened(true)}
+            />
+          ) : (
             <>
               <form
                 className="appbar-search"
@@ -1044,58 +1062,20 @@ export function Inbox({
                   onChange={(e) => setQuery(e.target.value)}
                 />
               </form>
-              <IconButton
-                label="Close search"
-                icon="close"
-                onClick={() => {
-                  clearSearch()
-                  setSearchOpened(false)
-                }}
-              />
+              {/* Wider, the field stays: its ✕ only ends a search */}
+              {searching && (
+                <IconButton
+                  label={phone ? 'Close search' : 'Clear search'}
+                  icon="close"
+                  onClick={() => {
+                    clearSearch()
+                    setSearchOpened(false)
+                  }}
+                />
+              )}
             </>
-          ) : (
-            <IconButton
-              ref={searchButton}
-              label="Search"
-              icon="search"
-              onClick={() => setSearchOpened(true)}
-            />
           )}
         </ListBar>
-        <div className="list-head">
-          <form className="search" role="search" onSubmit={submitSearch}>
-            <input
-              aria-label="Search mail"
-              placeholder={placeholder}
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-            />
-            {activeQuery && (
-              <IconButton
-                type="button"
-                label="Clear"
-                icon="close"
-                onClick={clearSearch}
-              />
-            )}
-          </form>
-          {folder === 'spam' && (
-            <div className="bulk">
-              <IconButton
-                label="Blocked senders"
-                icon="block"
-                onClick={onBlocked}
-              />
-            </div>
-          )}
-          {items.length > 0 && (
-            <Bulk
-              ticks={ticks}
-              actions={bulk(bulkActions)}
-              empty={emptyFolder}
-            />
-          )}
-        </div>
         {error && (
           <p className="error" role="alert">
             {error}

@@ -1,9 +1,11 @@
-// The bar along the top at phone width, in place of the header and the
-// folders beside the mail: ☰ opens the drawer (Drawer.tsx), then the page's
+// Each page's bar along the top: ☰ for the navigation, which opens the
+// drawer (Drawer.tsx), or folds a pinned one away and back, then the page's
 // title over the open mailbox's address, then the page's own actions. A mode,
-// such as selecting messages, puts its own button and title in their place,
-// or, as the search field does, takes the whole bar. Mounted at phone width
-// only.
+// such as selecting messages, puts its own title in their place, and its own
+// button after ☰, or in ☰'s place at phone width where room is short; or, as
+// the search field does at phone width, it takes the whole bar. Every
+// bar is drawn in App's place for it, above the page, so a list's spans the
+// list and the reader beside it as any other page's does.
 
 import {
   createContext,
@@ -12,6 +14,7 @@ import {
   type ReactNode,
   type Ref,
 } from 'react'
+import { createPortal } from 'react-dom'
 
 import { IconButton } from './Buttons'
 
@@ -30,40 +33,66 @@ export const usePhone = () =>
   useSyncExternalStore(watchWidth, () => phoneWidth().matches)
 
 // What App gives every page's bar
-export const PageBar = createContext({
-  title: '',
-  address: '',
-  openDrawer: () => {},
-})
+export const PageBar = createContext<{
+  title: string
+  address: string
+  menu: () => void // what ☰ does
+  expanded?: boolean // a pinned navigation's: shown or folded away
+  slot: HTMLElement | null // where the bar is drawn
+}>({ title: '', address: '', menu: () => {}, slot: null })
+
+// ☰, for the navigation
+function MenuButton() {
+  const page = useContext(PageBar)
+  return (
+    <IconButton
+      label="Menu"
+      icon="menu"
+      aria-expanded={page.expanded}
+      onClick={page.menu}
+    />
+  )
+}
 
 export function AppBar({
   lead,
   title,
   bare = false,
+  label,
   ref,
   children,
 }: {
-  lead?: ReactNode // in place of ☰
+  lead?: ReactNode // a mode's button: after ☰, or at phone width in its place
   title?: string // a mode's own, in place of the page's title and address
   bare?: boolean // only the children, with no ☰ or title
+  label?: string // a mode's bar is a toolbar of that name
   ref?: Ref<HTMLDivElement>
   children?: ReactNode
 }) {
   const page = useContext(PageBar)
-  return (
-    <div className="appbar" ref={ref}>
+  const phone = usePhone()
+  if (!page.slot) return null
+  return createPortal(
+    <div
+      className="appbar"
+      role={label ? 'toolbar' : undefined}
+      aria-label={label}
+      ref={ref}
+    >
       {!bare && (
         <>
-          {lead ?? (
-            <IconButton label="Menu" icon="menu" onClick={page.openDrawer} />
-          )}
+          {(lead === undefined || !phone) && <MenuButton />}
+          {lead}
           <div className="appbar-title">
             <strong>{title ?? page.title}</strong>
-            {title === undefined && <span>{page.address}</span>}
+            {title === undefined && (
+              <span data-testid="address">{page.address}</span>
+            )}
           </div>
         </>
       )}
       {children}
-    </div>
+    </div>,
+    page.slot
   )
 }

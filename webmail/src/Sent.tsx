@@ -15,7 +15,6 @@ import { attempt, BATCH, inBatches, MAX_BATCH } from './batch'
 import { usePhone } from './AppBar'
 import { BackButton, IconButton } from './Buttons'
 import {
-  Bulk,
   ListBar,
   RowPick,
   useSelectMode,
@@ -151,7 +150,7 @@ function Details({
   return (
     <article className="reader">
       {/* At phone width, the bar along the top */}
-      <div className="toolbar">
+      <div className={phone ? 'toolbar appbar' : 'toolbar'}>
         <BackButton onClick={onBack} />
         {phone && <strong className="toolbar-title">{subject}</strong>}
         {canResend && (
@@ -385,19 +384,15 @@ export function Sent({
         className={select.on ? 'list selecting' : 'list'}
         aria-label="Sent mail"
       >
-        {/* At phone width: the page's bar, or selection mode's actions */}
+        {/* The page's bar, or the selection bar */}
         <ListBar
           select={select}
           ticks={ticks}
           actions={[deleteTicked]}
           listed={items.length > 0}
           empty={emptySent}
+          reading={selected !== null}
         />
-        {items.length > 0 && (
-          <div className="list-head">
-            <Bulk ticks={ticks} actions={[deleteTicked]} empty={emptySent} />
-          </div>
-        )}
         {error && (
           <p className="error" role="alert">
             {error}

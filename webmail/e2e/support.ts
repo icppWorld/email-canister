@@ -275,8 +275,8 @@ export const messageRow = (page: Page, text: string) =>
 export const rowBox = (page: Page, text: string) =>
   page.locator('li.message-row', { hasText: text }).getByRole('checkbox')
 
-// A mailbox's button in a list of them: beside the mail, or in `scope`, such
-// as the ☰ drawer
+// A mailbox's button in a list of them: in the navigation shown, or in
+// `scope`, such as the ☰ drawer
 export const mailboxButton = (
   page: Page,
   local: string,
@@ -286,8 +286,8 @@ export const mailboxButton = (
     .getByRole('list', { name: 'Mailboxes' })
     .getByRole('button', { name: new RegExp(`^${local}`) })
 
-// A ⋮ menu, by the label of its button: More in the header, More actions in
-// the reader
+// A ⋮ menu, by the label of its button: List actions in a list's bar, More
+// actions in the reader
 export const menu = (page: Page, label: string) =>
   page
     .locator('details.menu')
@@ -306,22 +306,30 @@ export async function menuItem(
   await menu(page, label).getByRole('button', { name, exact: true }).click()
 }
 
-// A download of the mailbox shown, started from the header's menu
-export const downloadCopy = (page: Page) =>
-  menuItem(page, 'More', 'Download a copy')
-
-// The list of mailboxes and folders beside the mail
+// The navigation pinned beside the page, as it is wider than a phone unless
+// unpinned: the mailboxes, their folders and pages, and the account's own
 export const nav = (page: Page) =>
-  page.getByRole('navigation', { name: 'Folders' })
+  page.getByRole('navigation', { name: 'Navigation' })
 
-// At phone width: the screen's size, the bar along the top, which is there
-// only then, the ☰ drawer, the bar's 🔍 search, and selection mode
+// One of its buttons
+export const navButton = (page: Page, name: string) =>
+  nav(page).getByRole('button', { name, exact: true })
+
+export const navItem = (page: Page, name: string) =>
+  navButton(page, name).click()
+
+// A download of the mailbox shown, started from the navigation
+export const downloadCopy = (page: Page) => navItem(page, 'Download a copy')
+
+// The bar along the top
+export const appBar = (page: Page) => page.locator('.appbar')
+
+// At phone width: the screen's size, the ☰ drawer, the bar's 🔍 search, and
+// selection mode
 export const PHONE = { width: 390, height: 844 }
 
 export const signedInPhone = (browser: Browser, seed: string, options = {}) =>
   signedIn(browser, seed, { viewport: PHONE, ...options })
-
-export const appBar = (page: Page) => page.locator('.appbar')
 
 export const drawer = (page: Page) =>
   page.getByRole('dialog', { name: 'Navigation' })
@@ -358,12 +366,22 @@ export async function phoneOpenMail(page: Page, text: string): Promise<void> {
   await openFound(page, text)
 }
 
+// A list's ⋮ items: Refresh, and Select all, from the selection bar's ⋮
+// once messages are ticked
+export const refreshList = (page: Page) =>
+  menuItem(page, 'List actions', 'Refresh')
+
+// At a wider width, with none ticked
+export const selectAll = (page: Page) =>
+  menuItem(page, 'List actions', 'Select all')
+
 export const stopSelecting = (page: Page) =>
   page.getByRole('button', { name: 'Stop selecting', exact: true }).click()
 
-// What a download shows while it runs, below the folders. Gone once it has
-// ended, its thaw included: the menu's button is enabled again then.
-export const downloadStatus = (page: Page) => nav(page).getByRole('status')
+// What a download shows while it runs, below the bar. Gone once it has
+// ended, its thaw included: the navigation's button is enabled again then.
+export const downloadStatus = (page: Page) =>
+  page.locator('.notices').getByRole('status')
 
 async function searchIn(field: Locator, text: string): Promise<void> {
   await field.fill(text)
@@ -378,7 +396,7 @@ const openFound = (page: Page, text: string) =>
   messageRow(page, text).first().click()
 
 export async function openMail(page: Page, text: string): Promise<void> {
-  await page.getByRole('button', { name: 'Inbox' }).click()
+  await folder(page, 'Inbox')
   await search(page, text)
   await openFound(page, text)
 }
@@ -489,9 +507,8 @@ export function answer(page: Page, ...answers: (string | boolean)[]): string[] {
 
 export const undo = (page: Page) => toastButton(page, 'Undo')
 
-// A folder or page of the mailbox shown, from the list beside the mail
-export const folder = (page: Page, name: string) =>
-  nav(page).getByRole('button', { name, exact: true }).click()
+// A folder or page of the mailbox shown, from the navigation
+export const folder = navItem
 
 export const reader = (page: Page) => page.locator('article.reader')
 

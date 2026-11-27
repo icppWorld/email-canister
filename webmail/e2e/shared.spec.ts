@@ -25,12 +25,13 @@ import {
   joinMailbox,
   joinTeam,
   mailboxButton,
-  menu,
   menuItem,
+  navButton,
   openDrawer,
   openMail,
   phoneOpenMail,
   principalOf,
+  refreshList,
   send,
   signedIn,
   signedInPhone,
@@ -372,7 +373,7 @@ test('the unread count of a mailbox follows a delivery and a reading', async ({
   const before = (await badge.count()) ? Number(await badge.textContent()) : 0
   deliver({ subject: 'Counted dunlin', body: '<p>One more</p>', to: 'shore' })
   await waitDrained()
-  await page.getByRole('button', { name: 'Refresh' }).click()
+  await refreshList(page)
   await expect(badge).toHaveText(String(before + 1))
   // Read here, and counted at once: well before the 30 s refresh
   await mailboxButton(page, 'shore').click()
@@ -479,10 +480,8 @@ test('a download started from the menu shows below the folders, keeps going, and
   const saved = page.waitForEvent('download')
   await downloadCopy(page)
   await chunks.seen
-  // The menu closed behind its item; the download shows in the folders' column
-  await expect(
-    menu(page, 'More').getByRole('button', { name: 'Download a copy' })
-  ).toBeHidden()
+  // The download shows below the bar, and waits for its end to start again
+  await expect(navButton(page, 'Download a copy')).toBeDisabled()
   const status = downloadStatus(page)
   await expect(status).toHaveClass(/download-status/)
   await expect(status).toContainText(`heron@${DOMAIN}`)
@@ -504,8 +503,8 @@ test('a draft left open while another mailbox opens is sent from the mailbox it 
   await expect(page.getByTestId('address')).toHaveText(`heron@${DOMAIN}`)
   await compose(page, 'Kept whimbrel')
   await mailboxButton(page, 'shore').click()
-  // Compose again keeps the open draft, with its From
-  await page.getByRole('button', { name: 'Compose' }).click()
+  // Compose gives way to the open draft, which keeps its From
+  await expect(page.getByRole('button', { name: 'Compose' })).toHaveCount(0)
   await expect(page.getByLabel('Subject')).toHaveValue('Kept whimbrel')
   await expect(page.getByLabel('From')).toHaveValue('heron')
   await send(page)
@@ -570,7 +569,7 @@ test('a draft from a mailbox taken away meanwhile can be sent from another one',
   await expect(page.getByTestId('address')).toHaveText(`teal@${DOMAIN}`)
   await compose(page, 'Orphan stilt')
   backend('admin_remove_member', `("teal", principal "${principalOf(HAL)}")`)
-  await page.getByRole('button', { name: 'Refresh' }).click()
+  await refreshList(page)
   await expect(page.getByTestId('address')).toHaveText(`wren@${DOMAIN}`)
   // The draft still says where it is from, and another mailbox can be chosen,
   // also after the canister refused to send it from there
@@ -621,7 +620,7 @@ test('an older reload does not bring back an unread count', async ({
     arrived = true
   })
   await mailboxButton(page, 'shore').click()
-  await page.getByRole('button', { name: 'Refresh' }).click()
+  await refreshList(page)
   // Answered before the message is read, so the reply holds the old count
   await expect.poll(() => answered).toBe(true)
   await openMail(page, 'Stale godwit')
@@ -645,8 +644,7 @@ test('a mailbox chosen in another tab does not move this one', async ({
   await mailboxButton(other, 'shore').click()
   await expect(other.getByTestId('address')).toHaveText(`shore@${DOMAIN}`)
   // Drawn again, as every reload and keystroke does
-  await page.getByRole('button', { name: 'Refresh' }).click()
-  await expect(page.getByRole('button', { name: 'Refresh' })).toBeEnabled()
+  await refreshList(page)
   await expect(page.getByTestId('address')).toHaveText(`heron@${DOMAIN}`)
   // A folder switch here leaves the mailbox the other tab chose for the next
   await page.getByRole('button', { name: 'Sent' }).click()
@@ -715,8 +713,7 @@ test('a reload that fails does not discard an earlier one', async ({
   const first = await hold(page, 'mail_me', { late: true })
   deliver({ subject: 'Kept knot', body: '<p>One more</p>', to: 'shore' })
   await waitDrained()
-  const refresh = page.getByRole('button', { name: 'Refresh' })
-  await refresh.click()
+  await refreshList(page)
   await first.seen
   // Registered last, so it comes before the held one
   let failed = false
@@ -725,8 +722,7 @@ test('a reload that fails does not discard an earlier one', async ({
     failed = true
     return route.abort()
   })
-  await expect(refresh).toBeEnabled()
-  await refresh.click()
+  await refreshList(page)
   await expect.poll(() => failed).toBe(true)
   first.release()
   await expect.poll(unread, { timeout: 5_000 }).toBe(before + 1)

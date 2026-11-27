@@ -17,11 +17,11 @@ import {
   endSignIn,
   freshBackend,
   joinTeam,
-  menu,
+  nav,
   openMail,
-  openMenu,
   principalOf,
   reader,
+  refreshList,
   roleColour,
   send,
   sentMessage,
@@ -211,9 +211,8 @@ test('onboards two users through the Admin panel', async ({ browser }) => {
 
   await a.page.reload()
   await expect(a.page.getByTestId('address')).toHaveText(`alice@${DOMAIN}`)
-  await openMenu(a.page, 'More')
   await expect(
-    menu(a.page, 'More').getByRole('button', { name: 'Blocked senders' })
+    nav(a.page).getByRole('button', { name: 'Blocked senders' })
   ).toBeVisible()
   await expect(a.page.getByRole('button', { name: 'Admin' })).toHaveCount(0)
   await expect(a.page.locator('.brand img.logo')).toBeVisible()
@@ -800,20 +799,15 @@ test('a style with a long run of spaces does not hold the reader up', async ({
   await context.close()
 })
 
-test('the Refresh button shows new mail straight away', async ({ browser }) => {
+test('Refresh shows new mail straight away', async ({ browser }) => {
   const { context, page } = await signedIn(browser, USER_B)
-  await expect(
-    page.getByRole('button', { name: 'Refresh', exact: true })
-  ).toBeVisible()
+  await expect(page.getByTestId('address')).toHaveText(`bob@${DOMAIN}`)
   deliver({ to: 'bob', subject: 'Refresh ibis', body: '<p>x</p>' })
   await waitDrained()
-  await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+  await refreshList(page)
   await expect(
     page.locator('button.message', { hasText: 'Refresh ibis' })
   ).toBeVisible({ timeout: 5_000 })
-  await expect(
-    page.getByRole('button', { name: 'Refresh', exact: true })
-  ).toBeEnabled()
   await context.close()
 })
 
