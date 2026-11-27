@@ -110,7 +110,9 @@ const LONG_PRESS_SLOP = 10
 // row ticked, as does the browser's own long press on a touch screen, or a
 // right click, and the list's ⋮ starts it with none. A tap on a row then
 // ticks it rather than opening it. A row that cannot be ticked, as mail being
-// sent, does neither. Leaving it, or phone width, unticks them all.
+// sent, does neither. Leaving it, or phone width, unticks them all. Wider,
+// where the rows' boxes show, any box ticked is selecting, and the ⋮ has
+// Select all in its place.
 export function useSelectMode(ticks: Ticks) {
   const [on, setOn] = useState(false)
   const phone = usePhone()
@@ -144,10 +146,19 @@ export function useSelectMode(ticks: Ticks) {
   }
   return {
     on,
-    start: () => {
-      fired.current = false
-      setOn(true)
-    },
+    // The selection bar shows
+    selecting: phone ? on : ticks.ticked.length > 0,
+    // The list's ⋮ item that starts selecting
+    entry: phone
+      ? ({
+          label: 'Select messages',
+          icon: 'select',
+          run: () => {
+            fired.current = false
+            setOn(true)
+          },
+        } satisfies BulkAction)
+      : selectAll(ticks),
     exit: () => {
       cancel()
       fired.current = false
@@ -201,6 +212,12 @@ export function useSelectMode(ticks: Ticks) {
 
 export type SelectMode = ReturnType<typeof useSelectMode>
 
+const selectAll = (ticks: Ticks): BulkAction => ({
+  label: 'Select all',
+  icon: 'selectAll',
+  run: () => ticks.all(true),
+})
+
 // The bar along the top while messages are ticked, or in selection mode: ✕
 // to untick them all, how many are ticked, the actions, and a ⋮ with Select
 // all; at phone width the first two actions, with the rest in the ⋮
@@ -237,11 +254,7 @@ export function SelectionBar({
       ))}
       <Menu label="Selection actions">
         <MenuAction
-          action={{
-            label: 'Select all',
-            icon: 'selectAll',
-            run: () => ticks.all(true),
-          }}
+          action={selectAll(ticks)}
           disabled={ticks.total === 0 || ticked === ticks.total}
         />
         {actions.slice(inBar).map((action) => (
@@ -277,7 +290,7 @@ export function ListBar({
   children?: ReactNode // the page's own buttons, before the ⋮
 }) {
   const phone = usePhone()
-  const selecting = phone ? select.on : ticks.ticked.length > 0
+  const { selecting } = select
   const bar = useRef<HTMLDivElement>(null)
   const wasSelecting = useRef(selecting)
   useEffect(() => {
@@ -303,19 +316,7 @@ export function ListBar({
   return (
     <AppBar ref={bar} bare={bare}>
       {children}
-      <ListMenu
-        listed={listed}
-        select={
-          phone
-            ? { label: 'Select messages', icon: 'select', run: select.start }
-            : {
-                label: 'Select all',
-                icon: 'selectAll',
-                run: () => ticks.all(true),
-              }
-        }
-        empty={empty}
-      >
+      <ListMenu listed={listed} select={select.entry} empty={empty}>
         {items}
       </ListMenu>
     </AppBar>

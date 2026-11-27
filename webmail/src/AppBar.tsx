@@ -2,7 +2,9 @@
 // drawer (Drawer.tsx), or folds a pinned one away and back, then the page's
 // title over the open mailbox's address, then the page's own actions. A mode,
 // such as selecting messages, puts its own button and title in their place,
-// or, as the search field does at phone width, takes the whole bar.
+// or, as the search field does at phone width, takes the whole bar. Every
+// bar is drawn in App's place for it, above the page, so a list's spans the
+// list and the reader beside it as any other page's does.
 
 import {
   createContext,
@@ -11,6 +13,7 @@ import {
   type ReactNode,
   type Ref,
 } from 'react'
+import { createPortal } from 'react-dom'
 
 import { IconButton } from './Buttons'
 
@@ -34,7 +37,8 @@ export const PageBar = createContext<{
   address: string
   menu: () => void // what ☰ does
   expanded?: boolean // a pinned navigation's: shown or folded away
-}>({ title: '', address: '', menu: () => {} })
+  slot: HTMLElement | null // where the bar is drawn
+}>({ title: '', address: '', menu: () => {}, slot: null })
 
 export function AppBar({
   lead,
@@ -52,7 +56,8 @@ export function AppBar({
   children?: ReactNode
 }) {
   const page = useContext(PageBar)
-  return (
+  if (!page.slot) return null
+  return createPortal(
     <div
       className="appbar"
       role={label ? 'toolbar' : undefined}
@@ -78,6 +83,7 @@ export function AppBar({
         </>
       )}
       {children}
-    </div>
+    </div>,
+    page.slot
   )
 }

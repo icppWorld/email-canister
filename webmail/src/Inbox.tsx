@@ -431,7 +431,7 @@ function Reader({
   return (
     <article className="reader">
       {/* At phone width, the bar along the top */}
-      <div className="toolbar">
+      <div className={phone ? 'toolbar appbar' : 'toolbar'}>
         <BackButton onClick={onBack} />
         {phone && <strong className="toolbar-title">{subject}</strong>}
         <IconButton
@@ -1014,67 +1014,70 @@ export function Inbox({
         aria-label="Messages"
       >
         {/* The page's bar, or the selection bar; at phone width the search
-            field takes the whole bar while it is open */}
-        <ListBar
-          select={select}
-          ticks={ticks}
-          actions={bulk([...bulkActions, star])}
-          listed={items.length > 0}
-          empty={emptyFolder}
-          bare={phone && searching}
-          items={
-            <>
-              <MenuAction
-                action={{ label: 'Refresh', icon: 'refresh', run: onRefresh }}
-              />
-              {folder === 'spam' && (
+            field takes the whole bar while it is open, and the reader's
+            toolbar is the bar while a message is open */}
+        {!(phone && selected) && (
+          <ListBar
+            select={select}
+            ticks={ticks}
+            actions={bulk([...bulkActions, star])}
+            listed={items.length > 0}
+            empty={emptyFolder}
+            bare={phone && searching}
+            items={
+              <>
                 <MenuAction
-                  action={{
-                    label: 'Blocked senders',
-                    icon: 'block',
-                    run: onBlocked,
-                  }}
+                  action={{ label: 'Refresh', icon: 'refresh', run: onRefresh }}
                 />
-              )}
-            </>
-          }
-        >
-          {phone && !searching ? (
-            <IconButton
-              ref={searchButton}
-              label="Search"
-              icon="search"
-              onClick={() => setSearchOpened(true)}
-            />
-          ) : (
-            <>
-              <form
-                className="appbar-search"
-                role="search"
-                onSubmit={submitSearch}
-              >
-                <input
-                  ref={searchField}
-                  aria-label="Search mail"
-                  placeholder={placeholder}
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                />
-              </form>
-              {/* Wider, the field stays: its ✕ only ends a search */}
-              {(phone || activeQuery) && (
-                <IconButton
-                  label={phone ? 'Close search' : 'Clear search'}
-                  icon="close"
-                  onClick={() => {
-                    clearSearch()
-                    setSearchOpened(false)
-                  }}
-                />
-              )}
-            </>
-          )}
-        </ListBar>
+                {folder === 'spam' && (
+                  <MenuAction
+                    action={{
+                      label: 'Blocked senders',
+                      icon: 'block',
+                      run: onBlocked,
+                    }}
+                  />
+                )}
+              </>
+            }
+          >
+            {phone && !searching ? (
+              <IconButton
+                ref={searchButton}
+                label="Search"
+                icon="search"
+                onClick={() => setSearchOpened(true)}
+              />
+            ) : (
+              <>
+                <form
+                  className="appbar-search"
+                  role="search"
+                  onSubmit={submitSearch}
+                >
+                  <input
+                    ref={searchField}
+                    aria-label="Search mail"
+                    placeholder={placeholder}
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                  />
+                </form>
+                {/* Wider, the field stays: its ✕ only ends a search */}
+                {searching && (
+                  <IconButton
+                    label={phone ? 'Close search' : 'Clear search'}
+                    icon="close"
+                    onClick={() => {
+                      clearSearch()
+                      setSearchOpened(false)
+                    }}
+                  />
+                )}
+              </>
+            )}
+          </ListBar>
+        )}
         {error && (
           <p className="error" role="alert">
             {error}

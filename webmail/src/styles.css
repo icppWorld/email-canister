@@ -166,7 +166,7 @@ input[type='checkbox'] {
 }
 /* The navigation pinned open beside the page (App.tsx) */
 .app.docked {
-  grid-template: 'nav head' auto 'nav notices' auto 'nav main' 1fr / 260px minmax(
+  grid-template: 'nav head' auto 'nav notices' auto 'nav main' 1fr / 220px minmax(
       0,
       1fr
     );
@@ -188,6 +188,7 @@ nav.navigation {
 }
 .brand {
   margin-right: auto;
+  padding: 4px 8px;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -315,14 +316,10 @@ nav.navigation {
   text-align: left;
   white-space: nowrap;
 }
-.menu-items button[aria-current='true'] {
-  font-weight: 600;
-}
-/* The release, below the menu's actions */
+/* The release, below Reload in the navigation */
 .menu-note {
-  margin: 4px 0 0;
-  padding: 4px 8px 2px;
-  border-top: 1px solid var(--border);
+  margin: 0;
+  padding: 0 12px 4px 38px;
   color: var(--ink-muted);
   font-size: 12px;
 }
@@ -331,9 +328,6 @@ nav.navigation {
 .download-status {
   color: var(--ink-muted);
   font-size: 12px;
-}
-.usage {
-  margin-top: auto;
 }
 .content {
   grid-area: main;
@@ -816,8 +810,12 @@ th {
   flex-wrap: wrap;
   gap: 6px;
 }
-/* Each page's bar along the top (AppBar.tsx); at phone width the reader's
-   toolbar is drawn the same, named by the subject */
+/* Each page's bar along the top (AppBar.tsx draws it in .app-head); at
+   phone width the reader's toolbar is drawn the same, named by the subject */
+.app-head {
+  grid-area: head;
+  min-width: 0;
+}
 .appbar {
   position: sticky;
   top: 0;
@@ -830,9 +828,6 @@ th {
   background: var(--surface);
   border-bottom: 1px solid var(--border);
 }
-.appbar {
-  grid-area: head;
-}
 /* The bars' buttons are flat */
 .appbar button.icon-button:not(.primary) {
   border-color: transparent;
@@ -840,9 +835,6 @@ th {
 }
 .appbar button.icon-button:not(.primary):hover:not(:disabled) {
   background: var(--surface-muted);
-}
-.appbar button.icon-button[aria-pressed='true'] {
-  background: var(--selected);
 }
 .appbar-title {
   flex: 1;
@@ -919,15 +911,6 @@ dialog.drawer::backdrop {
   gap: 4px;
   padding: 0 0 8px;
 }
-.navigation-head .brand {
-  margin: 0 auto 0 0;
-  padding: 4px 8px;
-}
-.navigation-head button.icon-button {
-  width: auto;
-  border-color: transparent;
-  background: transparent;
-}
 .navigation-head button[aria-pressed='true'] {
   background: var(--selected);
 }
@@ -959,11 +942,6 @@ dialog.drawer::backdrop {
   margin: 0;
   padding: 4px 12px;
 }
-.navigation-body .menu-note {
-  margin: 0;
-  padding: 0 12px 4px 38px;
-  border: 0;
-}
 /* Compose floats at the bottom right (App.tsx takes it away while a
    message is being written) */
 button.fab {
@@ -985,19 +963,7 @@ button.fab {
   padding-bottom: 88px;
 }
 @media (max-width: 760px) {
-  /* The reader's toolbar is its bar */
-  .reader > .toolbar {
-    position: sticky;
-    top: 0;
-    z-index: 2;
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    min-height: 56px;
-    padding: 4px 8px;
-    background: var(--surface);
-    border-bottom: 1px solid var(--border);
-  }
+  /* The reader's toolbar is its bar (.appbar) */
   .reader {
     padding-top: 0;
   }
@@ -1017,14 +983,6 @@ button.fab {
     -webkit-touch-callout: none;
     -webkit-user-select: none;
     user-select: none;
-  }
-  /* The reader's buttons are flat, as the bar's */
-  .reader > .toolbar button.icon-button:not(.primary) {
-    border-color: transparent;
-    background: transparent;
-  }
-  .reader > .toolbar button.icon-button:not(.primary):hover:not(:disabled) {
-    background: var(--surface-muted);
   }
   /* The list, or the open message in its place */
   .split {

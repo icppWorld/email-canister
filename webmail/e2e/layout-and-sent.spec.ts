@@ -42,6 +42,7 @@ import {
   menuItem,
   messageRow,
   nav,
+  navButton,
   navItem,
   openDrawer,
   openMail,
@@ -133,7 +134,7 @@ test('unpinned, the navigation is the ☰ drawer over the page, as this browser 
 }) => {
   const { context, page } = await signedIn(browser, USER_A)
   await expect(page.getByTestId('address')).toHaveText(`alice@${DOMAIN}`)
-  const pin = nav(page).getByRole('button', { name: 'Pin the menu' })
+  const pin = navButton(page, 'Pin the menu')
   await expect(pin).toHaveAttribute('aria-pressed', 'true')
   await pin.click()
   await expect(nav(page)).toHaveCount(0)
@@ -168,7 +169,7 @@ test('unpinned, the navigation is the ☰ drawer over the page, as this browser 
   await context.close()
 })
 
-test('at a wider width a ticked box makes the bar the selection bar, and its ✕ unticks them all', async ({
+test("at a wider width the list's bar spans the reader too, a ticked box makes it the selection bar, and its ✕ unticks them all", async ({
   browser,
 }) => {
   for (const n of [1, 2]) {
@@ -178,6 +179,15 @@ test('at a wider width a ticked box makes the bar the selection bar, and its ✕
   const { context, page } = await signedIn(browser, USER_A)
   await search(page, 'Barred godwit')
   await expect(messageRow(page, 'Barred godwit')).toHaveCount(2)
+  // The list's bar spans the list and the reader, as any page's does
+  const list = await page
+    .getByRole('region', { name: 'Messages' })
+    .boundingBox()
+  const top = await appBar(page).boundingBox()
+  if (!list || !top) throw new Error('no list or bar')
+  expect(top.x).toBeCloseTo(list.x, 0)
+  expect(top.width).toBeGreaterThan(list.width + 300)
+  expect(top.y + top.height).toBeLessThanOrEqual(list.y)
   const bar = page.getByRole('toolbar', { name: 'Selected messages' })
   await expect(bar).toHaveCount(0)
   const box = rowBox(page, 'Barred godwit 1')
@@ -189,14 +199,12 @@ test('at a wider width a ticked box makes the bar the selection bar, and its ✕
   for (const name of ['Delete', 'Spam', 'Mark read', 'Mark unread', 'Star']) {
     await expect(bar.getByRole('button', { name, exact: true })).toBeVisible()
   }
-  await selectAll(page)
+  await menuItem(page, 'Selection actions', 'Select all')
   await expect(bar).toContainText('2 selected')
   await stopSelecting(page)
   await expect(bar).toHaveCount(0)
   await expect(box).not.toBeChecked()
-  await expect(
-    page.getByRole('button', { name: 'List actions', exact: true })
-  ).toBeFocused()
+  await expect(page.getByLabel('List actions', { exact: true })).toBeFocused()
 
   // The search field stays in the bar; its ✕ only ends the search
   const field = page.getByRole('textbox', { name: 'Search mail' })
@@ -277,8 +285,8 @@ test('the selected folder is bold, with a bar in the action-text colour, and a h
   browser,
 }) => {
   const { context, page } = await signedIn(browser, USER_A)
-  const inbox = nav(page).getByRole('button', { name: 'Inbox', exact: true })
-  const trash = nav(page).getByRole('button', { name: 'Trash', exact: true })
+  const inbox = navButton(page, 'Inbox')
+  const trash = navButton(page, 'Trash')
   await expect(inbox).toHaveAttribute('aria-current', 'true')
   const style = (button: Locator) =>
     button.evaluate((el) => {

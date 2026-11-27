@@ -312,20 +312,24 @@ export const nav = (page: Page) =>
   page.getByRole('navigation', { name: 'Navigation' })
 
 // One of its buttons
+export const navButton = (page: Page, name: string) =>
+  nav(page).getByRole('button', { name, exact: true })
+
 export const navItem = (page: Page, name: string) =>
-  nav(page).getByRole('button', { name, exact: true }).click()
+  navButton(page, name).click()
 
 // A download of the mailbox shown, started from the navigation
 export const downloadCopy = (page: Page) => navItem(page, 'Download a copy')
 
-// At phone width: the screen's size, the bar along the top, which is there
-// only then, the ☰ drawer, the bar's 🔍 search, and selection mode
+// The bar along the top
+export const appBar = (page: Page) => page.locator('.appbar')
+
+// At phone width: the screen's size, the ☰ drawer, the bar's 🔍 search, and
+// selection mode
 export const PHONE = { width: 390, height: 844 }
 
 export const signedInPhone = (browser: Browser, seed: string, options = {}) =>
   signedIn(browser, seed, { viewport: PHONE, ...options })
-
-export const appBar = (page: Page) => page.locator('.appbar')
 
 export const drawer = (page: Page) =>
   page.getByRole('dialog', { name: 'Navigation' })
@@ -367,16 +371,9 @@ export async function phoneOpenMail(page: Page, text: string): Promise<void> {
 export const refreshList = (page: Page) =>
   menuItem(page, 'List actions', 'Refresh')
 
-export async function selectAll(page: Page): Promise<void> {
-  const ticking = await page
-    .getByRole('toolbar', { name: 'Selected messages' })
-    .isVisible()
-  await menuItem(
-    page,
-    ticking ? 'Selection actions' : 'List actions',
-    'Select all'
-  )
-}
+// At a wider width, with none ticked
+export const selectAll = (page: Page) =>
+  menuItem(page, 'List actions', 'Select all')
 
 export const stopSelecting = (page: Page) =>
   page.getByRole('button', { name: 'Stop selecting', exact: true }).click()

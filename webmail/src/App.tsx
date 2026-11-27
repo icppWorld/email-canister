@@ -218,6 +218,8 @@ export function App() {
   const [pinned, setPinned] = useState(() => stored(PINNED) !== 'no')
   const [folded, setFolded] = useState(false)
   const [drawer, setDrawer] = useState(false)
+  // Where each page's bar is drawn (AppBar.tsx)
+  const [head, setHead] = useState<HTMLElement | null>(null)
   const phone = usePhone()
   const beside = !phone && pinned
   const docked = beside && !folded
@@ -611,6 +613,7 @@ export function App() {
         </nav>
       )}
       {drawer && <Drawer onClose={() => setDrawer(false)}>{navigation}</Drawer>}
+      <div className="app-head" ref={setHead} />
       {!listed && <AppBar />}
       {/* A download started from the navigation, shown while it runs */}
       {(download.progress || download.error) && (
@@ -731,6 +734,7 @@ export function App() {
         // Beside the page, ☰ folds the navigation away and back
         menu: () => (beside ? setFolded((was) => !was) : setDrawer(true)),
         expanded: beside ? docked : undefined,
+        slot: head,
       }}
     >
       {app}

@@ -108,21 +108,28 @@ test('Delete moves mail to Trash, where Undo, Restore and Delete forever work', 
   await context.close()
 })
 
-test('a ticked message that a search takes off the list comes back unticked', async ({
+test('a ticked message that a reload takes off the list comes back unticked', async ({
   browser,
 }) => {
   for (const bird of ['godwit', 'curlew']) {
     deliver({ subject: `Tickgone ${bird}`, body: `<p>A ${bird}.</p>` })
   }
   await waitDrained()
+  const alice = await asAlice()
+  const godwit = await uidOf(alice, 'alice', 'Tickgone godwit')
   const { context, page } = await signedIn(browser, USER_A)
   await search(page, 'Tickgone')
   await expect(messageRow(page, 'Tickgone')).toHaveCount(2)
   await page.getByLabel('Select Tickgone godwit', { exact: true }).check()
-  await search(page, 'curlew')
-  await expect(messageRow(page, 'Tickgone godwit')).toHaveCount(0)
+  // Moved away, as by another member, and gone at the list's next load
+  await alice.mail_move('alice', [godwit], FOLDER_TRASH)
+  await expect(messageRow(page, 'Tickgone godwit')).toHaveCount(0, {
+    timeout: 30_000,
+  })
   await expect(messageRow(page, 'Tickgone curlew')).toHaveCount(1)
-  await search(page, 'Tickgone')
+  // and back
+  await alice.mail_move('alice', [godwit], FOLDER_INBOX)
+  await refreshList(page)
   await expect(messageRow(page, 'Tickgone')).toHaveCount(2)
   await expect(
     page.getByLabel('Select Tickgone godwit', { exact: true })

@@ -21,7 +21,7 @@ import {
   freshBackend,
   hold,
   joinMailbox,
-  nav,
+  navButton,
   noDownloadHeld,
   openMail,
   principalOf,
@@ -75,8 +75,10 @@ test('a failed chunk ends the download with an error, and frees the mailbox', as
       : route.fallback()
   )
   await downloadCopy(page)
-  // Below the folders, where the download shows
-  await expect(nav(page).getByRole('alert')).toBeVisible({ timeout: 30_000 })
+  // Below the bar, where the download shows
+  await expect(page.locator('.notices').getByRole('alert')).toBeVisible({
+    timeout: 30_000,
+  })
   await expect(downloadStatus(page)).toHaveCount(0)
   await noDownloadHeld()
   await context.close()
@@ -295,7 +297,7 @@ test('the Download button waits until the download has ended', async ({
   await download(page, () => downloadCopy(page))
   await thaw.seen
   // Saved, but the freeze has not ended yet: a new download would be refused
-  const button = nav(page).getByRole('button', { name: 'Download a copy' })
+  const button = navButton(page, 'Download a copy')
   await expect(button).toBeDisabled()
   await expect(downloadStatus(page)).toBeVisible()
   thaw.release()
@@ -329,9 +331,7 @@ test('signing out ends a download under way, and the next sign-in shows none', a
   // Nothing of it is left on the new sign-in: a new download can start
   await expect(downloadStatus(page)).toHaveCount(0)
   await expect(page.locator('.notices')).toHaveCount(0)
-  await expect(
-    nav(page).getByRole('button', { name: 'Download a copy' })
-  ).toBeEnabled()
+  await expect(navButton(page, 'Download a copy')).toBeEnabled()
   await context.close()
 })
 
@@ -396,9 +396,7 @@ test('a mailbox that is briefly busy is read again, without an error', async ({
 }) => {
   const { context, page } = await signedIn(browser, USER_B)
   try {
-    await expect(
-      page.getByRole('button', { name: 'List actions', exact: true })
-    ).toBeVisible()
+    await expect(page.getByLabel('List actions', { exact: true })).toBeVisible()
     // Each read of the mailbox: whether it started after a "busy:" answer,
     // and whether its own answer was one (undefined until read)
     const reads = new Map<Request, { afterBusy: boolean; busy?: boolean }>()

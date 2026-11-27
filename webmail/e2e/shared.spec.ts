@@ -26,7 +26,7 @@ import {
   joinTeam,
   mailboxButton,
   menuItem,
-  nav,
+  navButton,
   openDrawer,
   openMail,
   phoneOpenMail,
@@ -481,9 +481,7 @@ test('a download started from the menu shows below the folders, keeps going, and
   await downloadCopy(page)
   await chunks.seen
   // The download shows below the bar, and waits for its end to start again
-  await expect(
-    nav(page).getByRole('button', { name: 'Download a copy' })
-  ).toBeDisabled()
+  await expect(navButton(page, 'Download a copy')).toBeDisabled()
   const status = downloadStatus(page)
   await expect(status).toHaveClass(/download-status/)
   await expect(status).toContainText(`heron@${DOMAIN}`)
