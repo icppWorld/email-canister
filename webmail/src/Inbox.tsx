@@ -624,7 +624,9 @@ export function Inbox({
   }, [searching])
   // The search shown now, for a reload by work that began under another
   const searched = useRef('')
+  // The list's own error, which a reload clears, and an action's refusal
   const [error, setError] = useState('')
+  const [actionError, setActionError] = useState('')
   // Replies can arrive out of order, and only the newest may be shown
   const latestLoad = useRef(0)
   // Flags set and mail moved here, which a reply read before them would undo
@@ -922,7 +924,7 @@ export function Inbox({
   }
 
   // A refusal in the list shows above it
-  const act = (run: () => Promise<unknown>) => attempt(run, setError)
+  const act = (run: () => Promise<unknown>) => attempt(run, setActionError)
 
   const searchFor = (text: string) => {
     searched.current = text
@@ -1082,6 +1084,11 @@ export function Inbox({
           )}
         </ListBar>
         <ListError error={error} />
+        {actionError && (
+          <p className="error" role="alert">
+            {actionError}
+          </p>
+        )}
         {items.length === 0 && !error && <p className="hint">{emptyHint}</p>}
         <ul>
           {items.map((m) => {

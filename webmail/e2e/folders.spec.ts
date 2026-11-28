@@ -585,8 +585,7 @@ test('Empty Trash refused part way leaves only what is still there', async ({
     timeout: 2_000,
   })
 
-  // The rest goes, but the list cannot load again: it says so, quietly, as
-  // the next refresh may get through
+  // The rest goes, but the list cannot load again: that refusal stays shown
   await page.unrouteAll({ behavior: 'wait' })
   let lists = 0
   await page.route('**/api/*/canister/*/*', (route) =>
@@ -596,14 +595,12 @@ test('Empty Trash refused part way leaves only what is still there', async ({
   )
   page.once('dialog', (dialog) => dialog.accept())
   await menuItem(page, 'List actions', 'Empty Trash')
-  // One page holds the rest. The reload is asked 3 times more, each with the
-  // agent's 3 tries more.
-  await expect
-    .poll(() => lists, { timeout: 60_000 })
-    .toBeGreaterThanOrEqual(1 + 4 * 4)
-  const messages = page.getByRole('region', { name: 'Messages' })
-  await expect(messages.getByRole('status')).toHaveText('Reconnecting…')
-  await expect(messages.getByRole('alert')).toHaveCount(0)
+  // One page holds the rest. The reload and the agent's 3 tries more, then at
+  // once, not at the next timed refresh.
+  await expect.poll(() => lists, { timeout: 60_000 }).toBe(5)
+  await expect(
+    page.getByRole('region', { name: 'Messages' }).getByRole('alert')
+  ).toBeVisible({ timeout: 2_000 })
   await context.close()
 })
 

@@ -2,7 +2,7 @@
 // and sending.
 // Each spec file runs on a backend of its own (freshBackend in support.ts).
 
-import { expect, test } from '@playwright/test'
+import { expect, test, type Route } from '@playwright/test'
 import { asUser } from './as_user'
 import { env } from './local'
 import {
@@ -23,6 +23,7 @@ import {
   openMail,
   principalOf,
   reader,
+  readsTime,
   refreshList,
   roleColour,
   send,
@@ -814,11 +815,16 @@ test('Refresh shows new mail straight away', async ({ browser }) => {
 })
 
 // The network's answer to a request whose expiry its clock is past
-const EXPIRY_REFUSED =
-  'Invalid request expiry: Specified ingress_expiry not within expected range: ' +
-  'Minimum allowed expiry: 2026-11-27 18:37:11.767894135 UTC, ' +
-  'Maximum allowed expiry: 2026-11-27 18:42:41.767894135 UTC, ' +
-  'Provided expiry: 2026-11-27 18:37:00 UTC'
+const refuseExpiry = (route: Route) =>
+  route.fulfill({
+    status: 400,
+    contentType: 'text/plain',
+    body:
+      'Invalid request expiry: Specified ingress_expiry not within expected range: ' +
+      'Minimum allowed expiry: 2026-11-27 18:37:11.767894135 UTC, ' +
+      'Maximum allowed expiry: 2026-11-27 18:42:41.767894135 UTC, ' +
+      'Provided expiry: 2026-11-27 18:37:00 UTC',
+  })
 
 test('a list load whose expiry the network refuses sets the clock by the network and asks again, every time', async ({
   browser,
@@ -832,20 +838,11 @@ test('a list load whose expiry the network refuses sets the clock by the network
   let synced = false
   await page.route('**/api/*/canister/*/*', (route) => {
     const request = route.request()
-    if (
-      new URL(request.url()).pathname.endsWith('/read_state') &&
-      request.postDataBuffer()?.includes('time')
-    )
-      synced = true
-    if (!callsTo(request, 'mail_list') || synced) {
-      if (callsTo(request, 'mail_list')) synced = false
-      return route.fallback()
-    }
-    return route.fulfill({
-      status: 400,
-      contentType: 'text/plain',
-      body: EXPIRY_REFUSED,
-    })
+    if (readsTime(request)) synced = true
+    if (!callsTo(request, 'mail_list')) return route.fallback()
+    if (!synced) return refuseExpiry(route)
+    synced = false
+    return route.fallback()
   })
   // The agent itself reads the time only at its first refusal: the second
   // and later ones are the page's
@@ -861,7 +858,7 @@ test('a list load whose expiry the network refuses sets the clock by the network
   await context.close()
 })
 
-test('a list that cannot reach the backend says Reconnecting quietly until it can, and an action says the connection was interrupted', async ({
+test('a list whose loads are refused says Reconnecting quietly until one gets through, and a refused action asks to check it', async ({
   browser,
 }) => {
   const { context, page } = await signedIn(browser, USER_B)
@@ -869,12 +866,13 @@ test('a list that cannot reach the backend says Reconnecting quietly until it ca
   const messages = page.getByRole('region', { name: 'Messages' })
   const ibis = page.locator('button.message', { hasText: 'Clock ibis' })
   await expect(ibis).toBeVisible()
-  let lost = true
+  // Refused however often the page sets its clock
+  let refusing = true
   await page.route('**/api/*/canister/*/*', (route) =>
-    lost &&
+    refusing &&
     (callsTo(route.request(), 'mail_list') ||
       callsTo(route.request(), 'mail_outbox_list'))
-      ? route.abort('failed')
+      ? refuseExpiry(route)
       : route.fallback()
   )
   await refreshList(page)
@@ -882,33 +880,35 @@ test('a list that cannot reach the backend says Reconnecting quietly until it ca
   await expect(messages.getByRole('alert')).toHaveCount(0)
   // The mail already shown stays
   await expect(ibis).toBeVisible()
-  // The next load that gets through clears it
-  lost = false
-  await refreshList(page)
-  await expect(messages.getByText('Reconnecting…')).toHaveCount(0)
-  await expect(messages.getByRole('alert')).toHaveCount(0)
 
-  // So does Sent's list, which refreshes by itself
-  lost = true
-  await navButton(page, 'Sent').click()
-  const sent = page.getByRole('region', { name: 'Sent mail' })
-  await expect(sent.getByRole('status')).toHaveText('Reconnecting…')
-  await expect(sent.getByRole('alert')).toHaveCount(0)
-  lost = false
-  await expect(sent.getByText('Reconnecting…')).toHaveCount(0)
-  await navButton(page, 'Inbox').click()
-
-  // An action is not asked again, as it may have run: it says why it failed,
-  // in plain words
+  // An update is not asked again, as it may have run: the refusal says to
+  // check, and a refresh refused meanwhile does not take its place
   const calls = /\/api\/v\d\/canister\/[^/]+\/call$/
-  await page.route(calls, (route) => route.abort('failed'))
+  await page.route(calls, refuseExpiry)
   await messages
     .getByRole('button', { name: 'Star Clock ibis', exact: true })
     .click()
   await expect(messages.getByRole('alert')).toHaveText(
-    'The connection to the mail server was interrupted. Try again in a moment.'
+    'The connection to the mail server was interrupted. Check whether this went through before trying again.'
   )
+  await refreshList(page)
+  await expect(messages.getByRole('status')).toHaveText('Reconnecting…')
+  await expect(messages.getByRole('alert')).toBeVisible()
   await page.unroute(calls)
+
+  // The next load that gets through clears Reconnecting
+  refusing = false
+  await refreshList(page)
+  await expect(messages.getByText('Reconnecting…')).toHaveCount(0)
+
+  // So does Sent's list, which refreshes by itself
+  refusing = true
+  await navButton(page, 'Sent').click()
+  const sent = page.getByRole('region', { name: 'Sent mail' })
+  await expect(sent.getByRole('status')).toHaveText('Reconnecting…')
+  await expect(sent.getByRole('alert')).toHaveCount(0)
+  refusing = false
+  await expect(sent.getByText('Reconnecting…')).toHaveCount(0)
   await context.close()
 })
 
