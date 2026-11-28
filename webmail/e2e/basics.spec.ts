@@ -834,16 +834,19 @@ test('a list read refused for its expiry, as one signed before a phone slept, is
   const { context, page } = await signedIn(browser, USER_B)
   await expect(page.getByTestId('address')).toHaveText(`bob@${DOMAIN}`)
   const messages = page.getByRole('region', { name: 'Messages' })
-  // A list read gets through only right after one was refused: the next
-  // timed refresh comes too late
+  // A list read gets through only right after one was refused, and signed
+  // anew: the next timed refresh comes too late
   let refusedAt = 0
+  let refused: Buffer = Buffer.alloc(0)
   await page.route('**/api/*/canister/*/*', (route) => {
     if (!callsTo(route.request(), 'mail_list')) return route.fallback()
-    if (Date.now() - refusedAt < 10_000) {
+    const body = route.request().postDataBuffer() ?? Buffer.alloc(0)
+    if (Date.now() - refusedAt < 10_000 && !body.equals(refused)) {
       refusedAt = 0
       return route.fallback()
     }
     refusedAt = Date.now()
+    refused = body
     return refuseExpiry(route)
   })
   // The agent itself asks again only at its first refusal: the second and
