@@ -4,6 +4,7 @@
 
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { expect, test, type Route } from '@playwright/test'
 import { asUser } from './as_user'
 import { env } from './local'
@@ -910,7 +911,7 @@ test('a list read under way when a phone slept is sent again when it wakes, and 
   // The agent's default backoff reads the time through this getter, so the
   // test can move its clock alone. Without it the test would pass unfixed.
   const backoff = path.join(
-    path.dirname(new URL(import.meta.url).pathname),
+    path.dirname(fileURLToPath(import.meta.url)),
     '../node_modules/@icp-sdk/core/lib/esm/agent/polling/backoff.js'
   )
   expect(readFileSync(backoff, 'utf8')).toMatch(

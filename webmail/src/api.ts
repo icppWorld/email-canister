@@ -311,8 +311,9 @@ export type Backend = Named<Mailbox> & {
 // and how often, as its own default has them. Its default also gives up once
 // 15 minutes have passed since the request began, which a request under way
 // when a phone slept had passed when it woke, so it failed at once. Sent
-// again, it is refused for its expiry, and retrying() signs a read anew, or
-// says to check whether an action went through.
+// again, it is refused for its expiry: a read is then signed anew, by the
+// agent or by retrying(), and an action says to check whether it went
+// through.
 const AGENT_RETRIES = 3
 function retryDelays() {
   let interval = 500
