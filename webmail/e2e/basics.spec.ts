@@ -835,9 +835,10 @@ test('a list read refused for its expiry, as one signed before a phone slept, is
   await expect(page.getByTestId('address')).toHaveText(`bob@${DOMAIN}`)
   const messages = page.getByRole('region', { name: 'Messages' })
   // A list read gets through only right after one was refused: the next
-  // timed refresh comes too late. Not by its bytes: within a minute, a query
-  // signed anew is the same request, as its expiry is rounded to the minute
-  // and it has no nonce. A real refusal is of one signed minutes before.
+  // timed refresh comes too late. Not by its bytes: the test's identity signs
+  // the same bytes the same way, and a query has no nonce and an expiry
+  // rounded to the minute, so one signed anew within that minute is the same
+  // request. A real refusal is of one signed minutes before.
   let refusedAt = 0
   await page.route('**/api/*/canister/*/*', (route) => {
     if (!callsTo(route.request(), 'mail_list')) return route.fallback()
