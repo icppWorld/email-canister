@@ -2,7 +2,13 @@
 // and sending.
 // Each spec file runs on a backend of its own (freshBackend in support.ts).
 
-import { expect, test, type Route } from '@playwright/test'
+import {
+  expect,
+  test,
+  type Page,
+  type Request,
+  type Route,
+} from '@playwright/test'
 import { asUser } from './as_user'
 import { env } from './local'
 import {
@@ -814,17 +820,32 @@ test('Refresh shows new mail straight away', async ({ browser }) => {
   await context.close()
 })
 
-// The network's answer to a request whose expiry its clock is past
-const refuseExpiry = (route: Route) =>
-  route.fulfill({
+// The network's answer to a request whose expiry its clock is past, the
+// earliest one it takes being its time now. With `ahead`, the network's clock
+// is that far ahead of this device's.
+function refuseExpiry(route: Route, ahead = 0) {
+  const now = Date.now() + ahead
+  const time = (ms: number) =>
+    new Date(ms).toISOString().replace('T', ' ').replace('Z', '000000 UTC')
+  return route.fulfill({
     status: 400,
     contentType: 'text/plain',
     body:
       'Invalid request expiry: Specified ingress_expiry not within expected range: ' +
-      'Minimum allowed expiry: 2026-11-27 18:37:11.767894135 UTC, ' +
-      'Maximum allowed expiry: 2026-11-27 18:42:41.767894135 UTC, ' +
-      'Provided expiry: 2026-11-27 18:37:00 UTC',
+      `Minimum allowed expiry: ${time(now)}, ` +
+      `Maximum allowed expiry: ${time(now + 330_000)}, ` +
+      `Provided expiry: ${time(now - 11_000)}`,
   })
+}
+
+// The page's reads of the network's time, as they are sent
+function watchTimeReads(page: Page): Request[] {
+  const seen: Request[] = []
+  page.on('request', (request) => {
+    if (readsTime(request)) seen.push(request)
+  })
+  return seen
+}
 
 test('a list load whose expiry the network refuses sets the clock by the network and asks again, every time', async ({
   browser,
@@ -861,13 +882,16 @@ test('a list load whose expiry the network refuses sets the clock by the network
 test('a list whose loads are refused says Reconnecting quietly until one gets through, and a refused action asks to check it', async ({
   browser,
 }) => {
+  deliver({ to: 'bob', subject: 'Quiet avocet', body: '<p>x</p>' })
+  await waitDrained()
   const { context, page } = await signedIn(browser, USER_B)
   await expect(page.getByTestId('address')).toHaveText(`bob@${DOMAIN}`)
   const messages = page.getByRole('region', { name: 'Messages' })
-  const ibis = page.locator('button.message', { hasText: 'Clock ibis' })
-  await expect(ibis).toBeVisible()
+  const avocet = page.locator('button.message', { hasText: 'Quiet avocet' })
+  await expect(avocet).toBeVisible()
   // Refused however often the page sets its clock
   let refusing = true
+  let ahead = 0
   let refusedLists = 0
   await page.route('**/api/*/canister/*/*', (route) => {
     if (
@@ -879,20 +903,20 @@ test('a list whose loads are refused says Reconnecting quietly until one gets th
     )
       return route.fallback()
     refusedLists++
-    return refuseExpiry(route)
+    return refuseExpiry(route, ahead)
   })
   await refreshList(page)
   await expect(messages.getByRole('status')).toHaveText('Reconnecting…')
   await expect(messages.getByRole('alert')).toHaveCount(0)
   // The mail already shown stays
-  await expect(ibis).toBeVisible()
+  await expect(avocet).toBeVisible()
 
   // An update is not asked again, as it may have run: the refusal says to
   // check, and a refresh refused meanwhile does not take its place
   const calls = /\/api\/v\d\/canister\/[^/]+\/call$/
-  await page.route(calls, refuseExpiry)
+  await page.route(calls, (route) => refuseExpiry(route))
   await messages
-    .getByRole('button', { name: 'Star Clock ibis', exact: true })
+    .getByRole('button', { name: 'Star Quiet avocet', exact: true })
     .click()
   await expect(messages.getByRole('alert')).toHaveText(
     'The connection to the mail server was interrupted. Check whether this went through before trying again.'
@@ -913,17 +937,18 @@ test('a list whose loads are refused says Reconnecting quietly until one gets th
   await refreshList(page)
   await expect(messages.getByText('Reconnecting…')).toHaveCount(0)
 
-  // A clock that cannot be set is not a passing state: the list says so
-  const api = '**/api/*/canister/*/*'
-  const noTime = (route: Route) =>
-    readsTime(route.request()) ? route.abort('failed') : route.fallback()
-  await page.route(api, noTime)
+  // A device whose own clock is off is not a passing state: the list says so,
+  // and its clock is not set by the network's, which would be refused in turn
+  const timeReads = watchTimeReads(page)
   refusing = true
+  ahead = 60 * 60_000
+  const read = timeReads.length
   await refreshList(page)
   await expect(messages.getByRole('alert')).toHaveText(
-    'The connection to the mail server was interrupted. Try again in a moment.'
+    "This device's clock is off, so the mail server refuses its requests. Set its date and time automatically, then reload this page."
   )
-  await page.unroute(api, noTime)
+  expect(timeReads.length).toBe(read)
+  ahead = 0
   refusing = false
   await refreshList(page)
   await expect(messages.getByRole('alert')).toHaveCount(0)

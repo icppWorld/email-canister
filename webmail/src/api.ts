@@ -351,10 +351,13 @@ export function mailbox(backend: Backend, local: string): Mailbox {
 // short wait covers. A download answers "downloading:" instead: it can last
 // minutes, so the reader sees that at once.
 //
-// A request whose expiry the network refuses, as after a phone slept, has the
-// agent set its clock by the network's; the agent itself does so only the first
-// time. A query is then asked again. An update is not: one refused while its
-// result was awaited may have run already.
+// A request whose expiry the network refuses, as one signed before a phone
+// slept, has the agent set its clock by the network's; the agent itself does
+// so only the first time. A query is then asked again. An update is not: one
+// refused while its result was awaited may have run already.
+//
+// Not while the device's own clock is off: the agent reads the network's time
+// with a request of that clock, which is refused in turn, and so on for good.
 const RETRIES = 3
 const RETRY_WAIT_MS = 1500
 
@@ -374,17 +377,9 @@ function retrying(
             return await method.apply(target, args)
           } catch (error) {
             const refused = expiryRefused(error)
-            // A clock that cannot be set is not a passing state: it says so
-            if (
-              refused &&
-              !(await syncTime().then(
-                () => true,
-                () => false
-              ))
-            )
-              throw new Error(`${INTERRUPTED} Try again in a moment.`, {
-                cause: error,
-              })
+            if (refused && clockOff(error))
+              throw new Error(CLOCK_OFF, { cause: error })
+            if (refused) await syncTime().catch(() => {})
             if (refused && !query)
               throw new Error(UNCONFIRMED, { cause: error })
             if (
@@ -404,6 +399,22 @@ function retrying(
 
 const expiryRefused = (error: unknown) =>
   error instanceof AgentError && error.hasCode(IngressExpiryInvalidErrorCode)
+
+// The refusal names the earliest expiry the network takes, which is its time
+// now: a device whose clock is more than a minute from it is off
+const CLOCK_SLACK_MS = 60_000
+function clockOff(error: unknown): boolean {
+  const earliest =
+    /Minimum allowed expiry: (\d{4}-\d\d-\d\d) (\d\d:\d\d:\d\d)/.exec(
+      error instanceof Error ? error.message : ''
+    )
+  if (!earliest) return false
+  const network = Date.parse(`${earliest[1]}T${earliest[2]}Z`)
+  return Math.abs(network - Date.now()) > CLOCK_SLACK_MS
+}
+
+const CLOCK_OFF =
+  "This device's clock is off, so the mail server refuses its requests. Set its date and time automatically, then reload this page."
 
 const INTERRUPTED = 'The connection to the mail server was interrupted.'
 const UNCONFIRMED = `${INTERRUPTED} Check whether this went through before trying again.`
