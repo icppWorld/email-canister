@@ -821,10 +821,8 @@ test('Refresh shows new mail straight away', async ({ browser }) => {
 })
 
 // The network's answer to a request whose expiry its clock is past, the
-// earliest one it takes being its time now. With `ahead`, the network's clock
-// is that far ahead of this device's.
-function refuseExpiry(route: Route, ahead = 0) {
-  const now = Date.now() + ahead
+// earliest one it takes being its time `now`
+function refuseExpiry(route: Route, now = Date.now()) {
   const time = (ms: number) =>
     new Date(ms).toISOString().replace('T', ' ').replace('Z', '000000 UTC')
   return route.fulfill({
@@ -879,6 +877,33 @@ test('a list load whose expiry the network refuses sets the clock by the network
   await context.close()
 })
 
+test('a refusal read late, as by a page that slept, is not taken for a clock that is off', async ({
+  browser,
+}) => {
+  test.setTimeout(240_000)
+  deliver({ to: 'bob', subject: 'Late dunlin', body: '<p>dunlin</p>' })
+  await waitDrained()
+  const { context, page } = await signedIn(browser, USER_B)
+  await expect(page.getByTestId('address')).toHaveText(`bob@${DOMAIN}`)
+  // The message's first read is refused, with the network's time when it
+  // came, and the refusal reaches the page more than a minute later
+  let held = false
+  await page.route('**/api/*/canister/*/*', async (route) => {
+    if (held || !callsTo(route.request(), 'mail_get')) return route.fallback()
+    held = true
+    const came = Date.now()
+    await new Promise((resolve) => setTimeout(resolve, 65_000))
+    return refuseExpiry(route, came)
+  })
+  await openMail(page, 'dunlin')
+  await expect(bodyOf(page).getByText('dunlin')).toBeVisible({
+    timeout: 120_000,
+  })
+  expect(held).toBe(true)
+  await expect(reader(page).getByRole('alert')).toHaveCount(0)
+  await context.close()
+})
+
 test('a list whose loads are refused says Reconnecting quietly until one gets through, and a refused action asks to check it', async ({
   browser,
 }) => {
@@ -903,7 +928,7 @@ test('a list whose loads are refused says Reconnecting quietly until one gets th
     )
       return route.fallback()
     refusedLists++
-    return refuseExpiry(route, ahead)
+    return refuseExpiry(route, Date.now() + ahead)
   })
   await refreshList(page)
   await expect(messages.getByRole('status')).toHaveText('Reconnecting…')

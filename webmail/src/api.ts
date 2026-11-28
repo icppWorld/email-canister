@@ -373,11 +373,12 @@ function retrying(
       const query = typeof name === 'string' && queries.has(name)
       return async (...args: unknown[]) => {
         for (let attempt = 0; ; attempt++) {
+          const sent = Date.now()
           try {
             return await method.apply(target, args)
           } catch (error) {
             const refused = expiryRefused(error)
-            if (refused && clockOff(error))
+            if (refused && clockOff(error, sent))
               throw new Error(CLOCK_OFF, { cause: error })
             if (refused) await syncTime().catch(() => {})
             if (refused && !query)
@@ -401,16 +402,19 @@ const expiryRefused = (error: unknown) =>
   error instanceof AgentError && error.hasCode(IngressExpiryInvalidErrorCode)
 
 // The refusal names the earliest expiry the network takes, which is its time
-// now: a device whose clock is more than a minute from it is off
+// then: a device whose clock puts that more than a minute outside the time the
+// request took is off. A page that slept meanwhile reads the refusal late.
 const CLOCK_SLACK_MS = 60_000
-function clockOff(error: unknown): boolean {
+function clockOff(error: unknown, sent: number): boolean {
   const earliest =
     /Minimum allowed expiry: (\d{4}-\d\d-\d\d) (\d\d:\d\d:\d\d)/.exec(
       error instanceof Error ? error.message : ''
     )
   if (!earliest) return false
   const network = Date.parse(`${earliest[1]}T${earliest[2]}Z`)
-  return Math.abs(network - Date.now()) > CLOCK_SLACK_MS
+  return (
+    network < sent - CLOCK_SLACK_MS || network > Date.now() + CLOCK_SLACK_MS
+  )
 }
 
 const CLOCK_OFF =
