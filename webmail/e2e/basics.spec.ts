@@ -868,13 +868,19 @@ test('a list whose loads are refused says Reconnecting quietly until one gets th
   await expect(ibis).toBeVisible()
   // Refused however often the page sets its clock
   let refusing = true
-  await page.route('**/api/*/canister/*/*', (route) =>
-    refusing &&
-    (callsTo(route.request(), 'mail_list') ||
-      callsTo(route.request(), 'mail_outbox_list'))
-      ? refuseExpiry(route)
-      : route.fallback()
-  )
+  let refusedLists = 0
+  await page.route('**/api/*/canister/*/*', (route) => {
+    if (
+      !refusing ||
+      !(
+        callsTo(route.request(), 'mail_list') ||
+        callsTo(route.request(), 'mail_outbox_list')
+      )
+    )
+      return route.fallback()
+    refusedLists++
+    return refuseExpiry(route)
+  })
   await refreshList(page)
   await expect(messages.getByRole('status')).toHaveText('Reconnecting…')
   await expect(messages.getByRole('alert')).toHaveCount(0)
@@ -891,15 +897,36 @@ test('a list whose loads are refused says Reconnecting quietly until one gets th
   await expect(messages.getByRole('alert')).toHaveText(
     'The connection to the mail server was interrupted. Check whether this went through before trying again.'
   )
+  // The refresh and its 3 tries more, all refused, then time for the page to
+  // show what it would
+  const before = refusedLists
   await refreshList(page)
-  await expect(messages.getByRole('status')).toHaveText('Reconnecting…')
-  await expect(messages.getByRole('alert')).toBeVisible()
+  await expect.poll(() => refusedLists).toBeGreaterThanOrEqual(before + 4)
+  await page.waitForTimeout(1_000)
+  await expect(messages.getByRole('alert')).toHaveText(
+    'The connection to the mail server was interrupted. Check whether this went through before trying again.'
+  )
   await page.unroute(calls)
 
   // The next load that gets through clears Reconnecting
   refusing = false
   await refreshList(page)
   await expect(messages.getByText('Reconnecting…')).toHaveCount(0)
+
+  // A clock that cannot be set is not a passing state: the list says so
+  const api = '**/api/*/canister/*/*'
+  const noTime = (route: Route) =>
+    readsTime(route.request()) ? route.abort('failed') : route.fallback()
+  await page.route(api, noTime)
+  refusing = true
+  await refreshList(page)
+  await expect(messages.getByRole('alert')).toHaveText(
+    'The connection to the mail server was interrupted. Try again in a moment.'
+  )
+  await page.unroute(api, noTime)
+  refusing = false
+  await refreshList(page)
+  await expect(messages.getByRole('alert')).toHaveCount(0)
 
   // So does Sent's list, which refreshes by itself
   refusing = true

@@ -374,14 +374,27 @@ function retrying(
             return await method.apply(target, args)
           } catch (error) {
             const refused = expiryRefused(error)
-            if (refused) await syncTime().catch(() => {})
-            if (refused && !query) throw new Error(UNCONFIRMED)
+            // A clock that cannot be set is not a passing state: it says so
+            if (
+              refused &&
+              !(await syncTime().then(
+                () => true,
+                () => false
+              ))
+            )
+              throw new Error(`${INTERRUPTED} Try again in a moment.`, {
+                cause: error,
+              })
+            if (refused && !query)
+              throw new Error(UNCONFIRMED, { cause: error })
             if (
               attempt >= RETRIES ||
               !(refused || errorText(error).startsWith('busy:'))
             )
               throw error
-            await new Promise((resolve) => setTimeout(resolve, RETRY_WAIT_MS))
+            // A refused one can go at once: the clock is set again
+            if (!refused)
+              await new Promise((resolve) => setTimeout(resolve, RETRY_WAIT_MS))
           }
         }
       }
