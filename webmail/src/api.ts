@@ -308,15 +308,19 @@ export type Backend = Named<Mailbox> & {
 }
 
 // The delays before the agent sends a request that did not get through again,
-// as its own default has them; the agent stops after its 3 tries. Its default
-// also gives up once 15 minutes have passed since the request began, which a
-// request under way when a phone slept had passed when it woke, so it failed
-// at once. Sent again, it is refused for its expiry, and retrying() signs a
-// read anew, or says to check whether an action went through.
+// and how often, as its own default has them. Its default also gives up once
+// 15 minutes have passed since the request began, which a request under way
+// when a phone slept had passed when it woke, so it failed at once. Sent
+// again, it is refused for its expiry, and retrying() signs a read anew, or
+// says to check whether an action went through.
+const AGENT_RETRIES = 3
 function retryDelays() {
   let interval = 500
+  let tries = 0
   return {
     next: () => {
+      if (tries === AGENT_RETRIES) return null
+      tries += 1
       interval *= 1.5
       return interval * (0.5 + Math.random())
     },
@@ -330,6 +334,7 @@ export function createBackend(identity: Identity): Backend {
     host: window.location.origin,
     identity,
     shouldFetchRootKey: deployment().network === 'local',
+    retryTimes: AGENT_RETRIES,
     backoffStrategy: retryDelays,
   })
   const actor: ActorSubclass = Actor.createActor(idlFactory, {

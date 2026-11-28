@@ -2,6 +2,8 @@
 // and sending.
 // Each spec file runs on a backend of its own (freshBackend in support.ts).
 
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
 import { expect, test, type Route } from '@playwright/test'
 import { asUser } from './as_user'
 import { env } from './local'
@@ -905,12 +907,22 @@ test("a refused action says to check whether it went through, and a read refused
 test('a list read under way when a phone slept is sent again when it wakes, and signed anew', async ({
   browser,
 }) => {
+  // The agent's default backoff reads the time through this getter, so the
+  // test can move its clock alone. Without it the test would pass unfixed.
+  const backoff = path.join(
+    path.dirname(new URL(import.meta.url).pathname),
+    '../node_modules/@icp-sdk/core/lib/esm/agent/polling/backoff.js'
+  )
+  expect(readFileSync(backoff, 'utf8')).toMatch(
+    /get ellapsedTimeInMsec\(\) \{\s*return this\.#date\.now\(\)/
+  )
   const { context, page } = await signedIn(browser, USER_B)
   await expect(page.getByTestId('address')).toHaveText(`bob@${DOMAIN}`)
   await page.evaluate(() => {
     // The agent's backoff, alone, finds 16 minutes passed since its request
     // began, as after a sleep: the rest of the page keeps the real time
     const now = Date.now.bind(Date)
+    ;(window as unknown as { realNow: () => number }).realNow = now
     Date.now = () =>
       /ellapsedTimeInMsec/.test(new Error().stack ?? '')
         ? now() + 16 * 60_000
@@ -930,11 +942,16 @@ test('a list read under way when a phone slept is sent again when it wakes, and 
   // The list read does not get through. Sent again on waking, it is refused
   // for its expiry, which passed during the sleep; signed anew, it is read.
   let tries = 0
-  const wakes = (route: Route) => {
+  const wakes = async (route: Route) => {
     if (!callsTo(route.request(), 'mail_list') || tries === 2)
       return route.fallback()
     tries += 1
-    return tries === 1 ? route.abort('failed') : refuseExpiry(route)
+    if (tries === 1) return route.abort('failed')
+    // Woken: the real time again, for every caller
+    await page.evaluate(() => {
+      Date.now = (window as unknown as { realNow: () => number }).realNow
+    })
+    return refuseExpiry(route)
   }
   await page.route('**/api/*/canister/*/*', wakes)
   deliver({ to: 'bob', subject: 'Woken curlew', body: '<p>x</p>' })
