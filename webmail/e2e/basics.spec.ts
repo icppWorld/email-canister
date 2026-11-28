@@ -902,6 +902,63 @@ test("a refused action says to check whether it went through, and a read refused
   await context.close()
 })
 
+test('a list read under way when a phone slept is sent again when it wakes', async ({
+  browser,
+}) => {
+  const { context, page } = await signedIn(browser, USER_B)
+  await expect(page.getByTestId('address')).toHaveText(`bob@${DOMAIN}`)
+  // Any error shown, even one a later refresh clears
+  await page.evaluate(() => {
+    const seen = window as unknown as { alerted: boolean }
+    seen.alerted = false
+    new MutationObserver(() => {
+      if (document.querySelector('[role=alert]')) seen.alerted = true
+    }).observe(document.body, {
+      subtree: true,
+      childList: true,
+      characterData: true,
+    })
+  })
+  // A list read does not get through, and the page's clock says 16 minutes
+  // have passed, as after a sleep, until the read is sent again. The clock
+  // goes back first, as the reply is checked against it.
+  const asleep = 16 * 60_000
+  let step = 0
+  const sleeps = async (route: Route) => {
+    if (!callsTo(route.request(), 'mail_list') || step === 2)
+      return route.fallback()
+    step += 1
+    if (step === 2) {
+      await page.evaluate(() => {
+        const clock = window as unknown as { realNow?: () => number }
+        if (clock.realNow) Date.now = clock.realNow
+      })
+      return route.fallback()
+    }
+    await page.evaluate((ms) => {
+      const clock = window as unknown as { realNow: () => number }
+      clock.realNow = Date.now
+      Date.now = () => clock.realNow() + ms
+    }, asleep)
+    return route.abort('failed')
+  }
+  await page.route('**/api/*/canister/*/*', sleeps)
+  deliver({ to: 'bob', subject: 'Woken curlew', body: '<p>x</p>' })
+  await waitDrained()
+  await refreshList(page)
+  await expect(
+    page.locator('button.message', { hasText: 'Woken curlew' })
+  ).toBeVisible({ timeout: 10_000 })
+  expect(step).toBe(2)
+  expect(
+    await page.evaluate(
+      () => (window as unknown as { alerted: boolean }).alerted
+    )
+  ).toBe(false)
+  await page.unroute('**/api/*/canister/*/*', sleeps)
+  await context.close()
+})
+
 test('a draft kept over a new sign-in is sent from the mailbox it was started in', async ({
   browser,
 }) => {

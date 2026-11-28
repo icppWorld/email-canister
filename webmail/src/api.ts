@@ -307,6 +307,25 @@ export type Backend = Named<Mailbox> & {
   admin_storage_totals(): Promise<StorageTotals>
 }
 
+// The delays before the agent sends a request that did not get through again,
+// as its own default has them, but limited only by the number of tries. Its
+// default also gives up once 15 minutes have passed since the request began:
+// a read under way when a phone slept had passed that when it woke, so it
+// failed without another try.
+const AGENT_RETRIES = 3
+function retryDelays() {
+  let interval = 500
+  let tries = 0
+  return {
+    next: () => {
+      if (tries === AGENT_RETRIES) return null
+      tries += 1
+      interval *= 1.5
+      return interval * (0.5 + Math.random())
+    },
+  }
+}
+
 export function createBackend(identity: Identity): Backend {
   // On a canister's icp0.io address the agent itself switches to https://icp0.io,
   // so public/.ic-assets.json5 has to allow that host in connect-src
@@ -314,6 +333,8 @@ export function createBackend(identity: Identity): Backend {
     host: window.location.origin,
     identity,
     shouldFetchRootKey: deployment().network === 'local',
+    retryTimes: AGENT_RETRIES,
+    backoffStrategy: retryDelays,
   })
   const actor: ActorSubclass = Actor.createActor(idlFactory, {
     agent,
