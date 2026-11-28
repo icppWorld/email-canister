@@ -10,6 +10,7 @@ import {
   asAlice,
   backend,
   bodyOf,
+  callsTo,
   compose,
   deliver,
   DOMAIN,
@@ -18,6 +19,7 @@ import {
   freshBackend,
   joinTeam,
   nav,
+  navButton,
   openMail,
   principalOf,
   reader,
@@ -808,6 +810,105 @@ test('Refresh shows new mail straight away', async ({ browser }) => {
   await expect(
     page.locator('button.message', { hasText: 'Refresh ibis' })
   ).toBeVisible({ timeout: 5_000 })
+  await context.close()
+})
+
+// The network's answer to a request whose expiry its clock is past
+const EXPIRY_REFUSED =
+  'Invalid request expiry: Specified ingress_expiry not within expected range: ' +
+  'Minimum allowed expiry: 2026-11-27 18:37:11.767894135 UTC, ' +
+  'Maximum allowed expiry: 2026-11-27 18:42:41.767894135 UTC, ' +
+  'Provided expiry: 2026-11-27 18:37:00 UTC'
+
+test('a list load whose expiry the network refuses sets the clock by the network and asks again, every time', async ({
+  browser,
+}) => {
+  const { context, page } = await signedIn(browser, USER_B)
+  await expect(page.getByTestId('address')).toHaveText(`bob@${DOMAIN}`)
+  const messages = page.getByRole('region', { name: 'Messages' })
+  // As for a device whose clock is off, or a request signed before a phone
+  // slept: each list request is refused until the page has read the
+  // network's time since the last refusal
+  let synced = false
+  await page.route('**/api/*/canister/*/*', (route) => {
+    const request = route.request()
+    if (
+      new URL(request.url()).pathname.endsWith('/read_state') &&
+      request.postDataBuffer()?.includes('time')
+    )
+      synced = true
+    if (!callsTo(request, 'mail_list') || synced) {
+      if (callsTo(request, 'mail_list')) synced = false
+      return route.fallback()
+    }
+    return route.fulfill({
+      status: 400,
+      contentType: 'text/plain',
+      body: EXPIRY_REFUSED,
+    })
+  })
+  // The agent itself reads the time only at its first refusal: the second
+  // and later ones are the page's
+  for (const bird of ['Clock ibis', 'Clock stilt', 'Clock godwit']) {
+    deliver({ to: 'bob', subject: bird, body: '<p>x</p>' })
+    await waitDrained()
+    await refreshList(page)
+    await expect(
+      page.locator('button.message', { hasText: bird })
+    ).toBeVisible()
+    await expect(messages.getByRole('alert')).toHaveCount(0)
+  }
+  await context.close()
+})
+
+test('a list that cannot reach the backend says Reconnecting quietly until it can, and an action says the connection was interrupted', async ({
+  browser,
+}) => {
+  const { context, page } = await signedIn(browser, USER_B)
+  await expect(page.getByTestId('address')).toHaveText(`bob@${DOMAIN}`)
+  const messages = page.getByRole('region', { name: 'Messages' })
+  const ibis = page.locator('button.message', { hasText: 'Clock ibis' })
+  await expect(ibis).toBeVisible()
+  let lost = true
+  await page.route('**/api/*/canister/*/*', (route) =>
+    lost &&
+    (callsTo(route.request(), 'mail_list') ||
+      callsTo(route.request(), 'mail_outbox_list'))
+      ? route.abort('failed')
+      : route.fallback()
+  )
+  await refreshList(page)
+  await expect(messages.getByRole('status')).toHaveText('Reconnecting…')
+  await expect(messages.getByRole('alert')).toHaveCount(0)
+  // The mail already shown stays
+  await expect(ibis).toBeVisible()
+  // The next load that gets through clears it
+  lost = false
+  await refreshList(page)
+  await expect(messages.getByText('Reconnecting…')).toHaveCount(0)
+  await expect(messages.getByRole('alert')).toHaveCount(0)
+
+  // So does Sent's list, which refreshes by itself
+  lost = true
+  await navButton(page, 'Sent').click()
+  const sent = page.getByRole('region', { name: 'Sent mail' })
+  await expect(sent.getByRole('status')).toHaveText('Reconnecting…')
+  await expect(sent.getByRole('alert')).toHaveCount(0)
+  lost = false
+  await expect(sent.getByText('Reconnecting…')).toHaveCount(0)
+  await navButton(page, 'Inbox').click()
+
+  // An action is not asked again, as it may have run: it says why it failed,
+  // in plain words
+  const calls = /\/api\/v\d\/canister\/[^/]+\/call$/
+  await page.route(calls, (route) => route.abort('failed'))
+  await messages
+    .getByRole('button', { name: 'Star Clock ibis', exact: true })
+    .click()
+  await expect(messages.getByRole('alert')).toHaveText(
+    'The connection to the mail server was interrupted. Try again in a moment.'
+  )
+  await page.unroute(calls)
   await context.close()
 })
 

@@ -2,7 +2,10 @@
 
 import {
   Actor,
+  AgentError,
   HttpAgent,
+  HttpFetchErrorCode,
+  IngressExpiryInvalidErrorCode,
   type ActorSubclass,
   type Identity,
 } from '@icp-sdk/core/agent'
@@ -317,7 +320,14 @@ export function createBackend(identity: Identity): Backend {
     agent,
     canisterId: deployment().backend,
   })
-  return retryingWhileBusy(actor as unknown as Backend)
+  const queries = new Set(
+    Actor.interfaceOf(actor)
+      ._fields.filter(([, method]) => method.annotations.includes('query'))
+      .map(([name]) => name)
+  )
+  const syncTime = () =>
+    agent.syncTime({ canisterId: Principal.from(deployment().backend) })
+  return retrying(actor as unknown as Backend, queries, syncTime)
 }
 
 // The backend's methods of the mailbox `local`
@@ -340,25 +350,36 @@ export function mailbox(backend: Backend, local: string): Mailbox {
 // A call answers "busy:" while the mailbox's file cannot be opened, which a
 // short wait covers. A download answers "downloading:" instead: it can last
 // minutes, so the reader sees that at once.
-const BUSY_RETRIES = 3
-const BUSY_WAIT_MS = 1500
+//
+// A query whose connection was lost is asked again too, after the agent has set
+// its clock by the network's when the request's expiry was refused. An update is
+// not: one refused while its result was awaited may have run already.
+const RETRIES = 3
+const RETRY_WAIT_MS = 1500
 
-function retryingWhileBusy(backend: Backend): Backend {
+function retrying(
+  backend: Backend,
+  queries: Set<string>,
+  syncTime: () => Promise<void>
+): Backend {
   return new Proxy(backend, {
     get(target, name, receiver) {
       const method = Reflect.get(target, name, receiver)
       if (typeof method !== 'function') return method
+      const query = typeof name === 'string' && queries.has(name)
       return async (...args: unknown[]) => {
         for (let attempt = 0; ; attempt++) {
           try {
             return await method.apply(target, args)
           } catch (error) {
+            const lost = query && connectionLost(error)
             if (
-              attempt >= BUSY_RETRIES ||
-              !errorText(error).startsWith('busy:')
+              attempt >= RETRIES ||
+              !(lost || errorText(error).startsWith('busy:'))
             )
               throw error
-            await new Promise((resolve) => setTimeout(resolve, BUSY_WAIT_MS))
+            if (lost && expiryRefused(error)) await syncTime().catch(() => {})
+            await new Promise((resolve) => setTimeout(resolve, RETRY_WAIT_MS))
           }
         }
       }
@@ -366,9 +387,28 @@ function retryingWhileBusy(backend: Backend): Backend {
   })
 }
 
-// The message a canister trapped with, or else the error without the stack
-// trace a failed fetch carries
+const expiryRefused = (error: unknown) =>
+  error instanceof AgentError && error.hasCode(IngressExpiryInvalidErrorCode)
+
+// The network refused the request's expiry, or the request never reached it:
+// both pass, as when a phone wakes from sleep
+export const connectionLost = (error: unknown) =>
+  expiryRefused(error) ||
+  (error instanceof AgentError && error.hasCode(HttpFetchErrorCode))
+
+// What a list shows while its refresh cannot reach the backend; the next one
+// that does clears it
+export const RECONNECTING = 'Reconnecting…'
+
+// A list load's error, which a reload clears
+export const loadError = (error: unknown) =>
+  connectionLost(error) ? RECONNECTING : errorText(error)
+
+// A lost connection in plain words, the message a canister trapped with, or
+// else the error without the stack trace a failed fetch carries
 export function errorText(error: unknown): string {
+  if (connectionLost(error))
+    return 'The connection to the mail server was interrupted. Try again in a moment.'
   const text = error instanceof Error ? error.message : String(error)
   const trapped =
     /with message: '([\s\S]*?)'\.?\s+Consider/.exec(text) ??

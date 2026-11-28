@@ -11,6 +11,7 @@ import { Principal } from '@icp-sdk/core/principal'
 
 import {
   errorText,
+  loadError,
   FLAG_FLAGGED,
   FLAG_SEEN,
   FOLDER_INBOX,
@@ -46,6 +47,7 @@ import { usePhone } from './AppBar'
 import { BackButton, IconButton, StarButton, starLabel } from './Buttons'
 import {
   ListBar,
+  ListError,
   MenuAction,
   RowPick,
   useSelectMode,
@@ -672,7 +674,10 @@ export function Inbox({
         setMore({ search, cursor: page.cursor })
         setError('')
       } catch (e) {
-        if (request === latestLoad.current) setError(errorText(e))
+        // Only a load the timer repeats waits quietly for its next try
+        const repeated = !append && !search && !olderShown.current
+        if (request === latestLoad.current)
+          setError(repeated ? loadError(e) : errorText(e))
       }
     },
     [backend, here]
@@ -1076,11 +1081,7 @@ export function Inbox({
             </>
           )}
         </ListBar>
-        {error && (
-          <p className="error" role="alert">
-            {error}
-          </p>
-        )}
+        <ListError error={error} />
         {items.length === 0 && !error && <p className="hint">{emptyHint}</p>}
         <ul>
           {items.map((m) => {

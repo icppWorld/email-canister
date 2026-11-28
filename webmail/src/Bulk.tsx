@@ -15,6 +15,7 @@ import {
   type Ref,
 } from 'react'
 
+import { RECONNECTING } from './api'
 import { AppBar, usePhone } from './AppBar'
 import { IconButton } from './Buttons'
 import { Icon, type IconName } from './Icon'
@@ -362,5 +363,20 @@ export function ListMenu({
       <MenuAction action={select} disabled={!listed} />
       {listed && empty && <MenuAction action={empty} />}
     </Menu>
+  )
+}
+
+// A list's own error. A refresh that cannot reach the backend only says so
+// quietly: the next one that does clears it.
+export function ListError({ error }: { error: string }) {
+  if (!error) return null
+  return error === RECONNECTING ? (
+    <p className="hint" role="status">
+      {error}
+    </p>
+  ) : (
+    <p className="error" role="alert">
+      {error}
+    </p>
   )
 }
