@@ -213,18 +213,6 @@ export async function stale(
   })
 }
 
-// Whether a request reads the network's time, as the agent does to set its
-// clock by it
-export function readsTime(request: Request): boolean {
-  if (!new URL(request.url()).pathname.endsWith('/read_state')) return false
-  const { content } = Cbor.decode<{ content: { paths?: Uint8Array[][] } }>(
-    request.postDataBuffer() ?? Buffer.alloc(0)
-  )
-  return (content.paths ?? []).some(
-    (path) => path.length === 1 && Buffer.from(path[0]).toString() === 'time'
-  )
-}
-
 // The page's requests for `method`, as they are sent
 export function watch(page: Page, method: string): Request[] {
   const seen: Request[] = []

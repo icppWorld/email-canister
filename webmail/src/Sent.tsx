@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import {
   errorText,
-  loadError,
   OUTBOX_ACCEPTED,
   OUTBOX_QUEUED,
   OUTBOX_REJECTED,
@@ -17,7 +16,6 @@ import { usePhone } from './AppBar'
 import { BackButton, IconButton } from './Buttons'
 import {
   ListBar,
-  ListError,
   RowPick,
   useSelectMode,
   useTicks,
@@ -288,7 +286,7 @@ export function Sent({
       setError('')
     } catch (e) {
       if (request !== latestLoad.current) return
-      setError(loadError(e))
+      setError(errorText(e))
       failed.current = true
     } finally {
       if (request === latestLoad.current) loading.current = false
@@ -395,7 +393,11 @@ export function Sent({
           empty={emptySent}
           reading={selected !== null}
         />
-        <ListError error={error} />
+        {error && (
+          <p className="error" role="alert">
+            {error}
+          </p>
+        )}
         {actionError && (
           <p className="error" role="alert">
             {actionError}

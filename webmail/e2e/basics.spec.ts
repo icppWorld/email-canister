@@ -2,13 +2,7 @@
 // and sending.
 // Each spec file runs on a backend of its own (freshBackend in support.ts).
 
-import {
-  expect,
-  test,
-  type Page,
-  type Request,
-  type Route,
-} from '@playwright/test'
+import { expect, test, type Route } from '@playwright/test'
 import { asUser } from './as_user'
 import { env } from './local'
 import {
@@ -25,11 +19,9 @@ import {
   freshBackend,
   joinTeam,
   nav,
-  navButton,
   openMail,
   principalOf,
   reader,
-  readsTime,
   refreshList,
   roleColour,
   send,
@@ -820,9 +812,9 @@ test('Refresh shows new mail straight away', async ({ browser }) => {
   await context.close()
 })
 
-// The network's answer to a request whose expiry its clock is past, the
-// earliest one it takes being its time `now`
-function refuseExpiry(route: Route, now = Date.now()) {
+// The network's answer to a request whose expiry has passed
+function refuseExpiry(route: Route) {
+  const now = Date.now()
   const time = (ms: number) =>
     new Date(ms).toISOString().replace('T', ' ').replace('Z', '000000 UTC')
   return route.fulfill({
@@ -836,36 +828,27 @@ function refuseExpiry(route: Route, now = Date.now()) {
   })
 }
 
-// The page's reads of the network's time, as they are sent
-function watchTimeReads(page: Page): Request[] {
-  const seen: Request[] = []
-  page.on('request', (request) => {
-    if (readsTime(request)) seen.push(request)
-  })
-  return seen
-}
-
-test('a list load whose expiry the network refuses sets the clock by the network and asks again, every time', async ({
+test('a list read refused for its expiry, as one signed before a phone slept, is asked again at once, every time', async ({
   browser,
 }) => {
   const { context, page } = await signedIn(browser, USER_B)
   await expect(page.getByTestId('address')).toHaveText(`bob@${DOMAIN}`)
   const messages = page.getByRole('region', { name: 'Messages' })
-  // As for a device whose clock is off, or a request signed before a phone
-  // slept: each list request is refused until the page has read the
-  // network's time since the last refusal
-  let synced = false
+  // A list read gets through only right after one was refused: the next
+  // timed refresh comes too late
+  let refusedAt = 0
   await page.route('**/api/*/canister/*/*', (route) => {
-    const request = route.request()
-    if (readsTime(request)) synced = true
-    if (!callsTo(request, 'mail_list')) return route.fallback()
-    if (!synced) return refuseExpiry(route)
-    synced = false
-    return route.fallback()
+    if (!callsTo(route.request(), 'mail_list')) return route.fallback()
+    if (Date.now() - refusedAt < 10_000) {
+      refusedAt = 0
+      return route.fallback()
+    }
+    refusedAt = Date.now()
+    return refuseExpiry(route)
   })
-  // The agent itself reads the time only at its first refusal: the second
-  // and later ones are the page's
-  for (const bird of ['Clock ibis', 'Clock stilt', 'Clock godwit']) {
+  // The agent itself asks again only at its first refusal: the second and
+  // later ones are the page's
+  for (const bird of ['Signed ibis', 'Signed stilt', 'Signed godwit']) {
     deliver({ to: 'bob', subject: bird, body: '<p>x</p>' })
     await waitDrained()
     await refreshList(page)
@@ -877,115 +860,42 @@ test('a list load whose expiry the network refuses sets the clock by the network
   await context.close()
 })
 
-test('a refusal read late, as by a page that slept, is not taken for a clock that is off', async ({
+test("a refused action says to check whether it went through, and a read refused every time says to check the device's time", async ({
   browser,
 }) => {
-  test.setTimeout(240_000)
-  deliver({ to: 'bob', subject: 'Late dunlin', body: '<p>dunlin</p>' })
-  await waitDrained()
-  const { context, page } = await signedIn(browser, USER_B)
-  await expect(page.getByTestId('address')).toHaveText(`bob@${DOMAIN}`)
-  // The message's first read is refused, with the network's time when it
-  // came, and the refusal reaches the page more than a minute later
-  let held = false
-  await page.route('**/api/*/canister/*/*', async (route) => {
-    if (held || !callsTo(route.request(), 'mail_get')) return route.fallback()
-    held = true
-    const came = Date.now()
-    await new Promise((resolve) => setTimeout(resolve, 65_000))
-    return refuseExpiry(route, came)
-  })
-  await openMail(page, 'dunlin')
-  await expect(bodyOf(page).getByText('dunlin')).toBeVisible({
-    timeout: 120_000,
-  })
-  expect(held).toBe(true)
-  await expect(reader(page).getByRole('alert')).toHaveCount(0)
-  await context.close()
-})
-
-test('a list whose loads are refused says Reconnecting quietly until one gets through, and a refused action asks to check it', async ({
-  browser,
-}) => {
-  deliver({ to: 'bob', subject: 'Quiet avocet', body: '<p>x</p>' })
+  deliver({ to: 'bob', subject: 'Refused avocet', body: '<p>x</p>' })
   await waitDrained()
   const { context, page } = await signedIn(browser, USER_B)
   await expect(page.getByTestId('address')).toHaveText(`bob@${DOMAIN}`)
   const messages = page.getByRole('region', { name: 'Messages' })
-  const avocet = page.locator('button.message', { hasText: 'Quiet avocet' })
-  await expect(avocet).toBeVisible()
-  // Refused however often the page sets its clock
-  let refusing = true
-  let ahead = 0
-  let refusedLists = 0
-  await page.route('**/api/*/canister/*/*', (route) => {
-    if (
-      !refusing ||
-      !(
-        callsTo(route.request(), 'mail_list') ||
-        callsTo(route.request(), 'mail_outbox_list')
-      )
-    )
-      return route.fallback()
-    refusedLists++
-    return refuseExpiry(route, Date.now() + ahead)
-  })
-  await refreshList(page)
-  await expect(messages.getByRole('status')).toHaveText('Reconnecting…')
-  await expect(messages.getByRole('alert')).toHaveCount(0)
-  // The mail already shown stays
-  await expect(avocet).toBeVisible()
+  await expect(
+    page.locator('button.message', { hasText: 'Refused avocet' })
+  ).toBeVisible()
 
-  // An update is not asked again, as it may have run: the refusal says to
-  // check, and a refresh refused meanwhile does not take its place
+  // An update is not asked again, as it may have run
   const calls = /\/api\/v\d\/canister\/[^/]+\/call$/
-  await page.route(calls, (route) => refuseExpiry(route))
+  await page.route(calls, refuseExpiry)
   await messages
-    .getByRole('button', { name: 'Star Quiet avocet', exact: true })
+    .getByRole('button', { name: 'Star Refused avocet', exact: true })
     .click()
-  await expect(messages.getByRole('alert')).toHaveText(
-    'The connection to the mail server was interrupted. Check whether this went through before trying again.'
-  )
-  // The refresh and its 3 tries more, all refused, then time for the page to
-  // show what it would
-  const before = refusedLists
-  await refreshList(page)
-  await expect.poll(() => refusedLists).toBeGreaterThanOrEqual(before + 4)
-  await page.waitForTimeout(1_000)
   await expect(messages.getByRole('alert')).toHaveText(
     'The connection to the mail server was interrupted. Check whether this went through before trying again.'
   )
   await page.unroute(calls)
 
-  // The next load that gets through clears Reconnecting
-  refusing = false
-  await refreshList(page)
-  await expect(messages.getByText('Reconnecting…')).toHaveCount(0)
-
-  // A device whose own clock is off is not a passing state: the list says so,
-  // and its clock is not set by the network's, which would be refused in turn
-  const timeReads = watchTimeReads(page)
-  refusing = true
-  ahead = 60 * 60_000
-  const read = timeReads.length
+  // A read refused however often it is signed anew
+  const lists = (route: Route) =>
+    callsTo(route.request(), 'mail_list')
+      ? refuseExpiry(route)
+      : route.fallback()
+  await page.route('**/api/*/canister/*/*', lists)
   await refreshList(page)
   await expect(messages.getByRole('alert')).toHaveText(
-    "This device's clock is off, so the mail server refuses its requests. Set its date and time automatically, then reload this page."
+    "The mail server refuses this device's time. Check that its date and time are set automatically, then reload this page."
   )
-  expect(timeReads.length).toBe(read)
-  ahead = 0
-  refusing = false
+  await page.unroute('**/api/*/canister/*/*', lists)
   await refreshList(page)
   await expect(messages.getByRole('alert')).toHaveCount(0)
-
-  // So does Sent's list, which refreshes by itself
-  refusing = true
-  await navButton(page, 'Sent').click()
-  const sent = page.getByRole('region', { name: 'Sent mail' })
-  await expect(sent.getByRole('status')).toHaveText('Reconnecting…')
-  await expect(sent.getByRole('alert')).toHaveCount(0)
-  refusing = false
-  await expect(sent.getByText('Reconnecting…')).toHaveCount(0)
   await context.close()
 })
 

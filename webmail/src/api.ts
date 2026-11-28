@@ -324,10 +324,7 @@ export function createBackend(identity: Identity): Backend {
       ._fields.filter(([, method]) => method.annotations.includes('query'))
       .map(([name]) => name)
   )
-  // The backend's subnet checks the expiry, so its clock is the one to keep to
-  const syncTime = () =>
-    agent.syncTime({ canisterId: Principal.from(deployment().backend) })
-  return retrying(actor as unknown as Backend, queries, syncTime)
+  return retrying(actor as unknown as Backend, queries)
 }
 
 // The backend's methods of the mailbox `local`
@@ -351,21 +348,14 @@ export function mailbox(backend: Backend, local: string): Mailbox {
 // short wait covers. A download answers "downloading:" instead: it can last
 // minutes, so the reader sees that at once.
 //
-// A request whose expiry the network refuses, as one signed before a phone
-// slept, has the agent set its clock by the network's; the agent itself does
-// so only the first time. A query is then asked again. An update is not: one
-// refused while its result was awaited may have run already.
-//
-// Not while the device's own clock is off: the agent reads the network's time
-// with a request of that clock, which is refused in turn, and so on for good.
+// The network refuses a request whose expiry has passed, as one signed before
+// a phone slept and sent when it woke. A query is asked again at once, signed
+// anew. An update is not: one refused while its result was awaited may have
+// run already.
 const RETRIES = 3
-const RETRY_WAIT_MS = 1500
+const BUSY_WAIT_MS = 1500
 
-function retrying(
-  backend: Backend,
-  queries: Set<string>,
-  syncTime: () => Promise<void>
-): Backend {
+function retrying(backend: Backend, queries: Set<string>): Backend {
   return new Proxy(backend, {
     get(target, name, receiver) {
       const method = Reflect.get(target, name, receiver)
@@ -373,14 +363,10 @@ function retrying(
       const query = typeof name === 'string' && queries.has(name)
       return async (...args: unknown[]) => {
         for (let attempt = 0; ; attempt++) {
-          const sent = Date.now()
           try {
             return await method.apply(target, args)
           } catch (error) {
             const refused = expiryRefused(error)
-            if (refused && clockOff(error, sent))
-              throw new Error(CLOCK_OFF, { cause: error })
-            if (refused) await syncTime().catch(() => {})
             if (refused && !query)
               throw new Error(UNCONFIRMED, { cause: error })
             if (
@@ -388,9 +374,8 @@ function retrying(
               !(refused || errorText(error).startsWith('busy:'))
             )
               throw error
-            // A refused one can go at once: the clock is set again
             if (!refused)
-              await new Promise((resolve) => setTimeout(resolve, RETRY_WAIT_MS))
+              await new Promise((resolve) => setTimeout(resolve, BUSY_WAIT_MS))
           }
         }
       }
@@ -401,40 +386,15 @@ function retrying(
 const expiryRefused = (error: unknown) =>
   error instanceof AgentError && error.hasCode(IngressExpiryInvalidErrorCode)
 
-// The refusal names the earliest expiry the network takes, which is its time
-// then: a device whose clock puts that more than a minute outside the time the
-// request took is off. A page that slept meanwhile reads the refusal late.
-const CLOCK_SLACK_MS = 60_000
-function clockOff(error: unknown, sent: number): boolean {
-  const earliest =
-    /Minimum allowed expiry: (\d{4}-\d\d-\d\d) (\d\d:\d\d:\d\d)/.exec(
-      error instanceof Error ? error.message : ''
-    )
-  if (!earliest) return false
-  const network = Date.parse(`${earliest[1]}T${earliest[2]}Z`)
-  return (
-    network < sent - CLOCK_SLACK_MS || network > Date.now() + CLOCK_SLACK_MS
-  )
-}
+const UNCONFIRMED =
+  'The connection to the mail server was interrupted. Check whether this went through before trying again.'
 
-const CLOCK_OFF =
-  "This device's clock is off, so the mail server refuses its requests. Set its date and time automatically, then reload this page."
-
-const INTERRUPTED = 'The connection to the mail server was interrupted.'
-const UNCONFIRMED = `${INTERRUPTED} Check whether this went through before trying again.`
-
-// What a list shows while its refresh is refused; the next one that gets
-// through clears it
-export const RECONNECTING = 'Reconnecting…'
-
-// A list load's error, which a reload clears
-export const loadError = (error: unknown) =>
-  expiryRefused(error) ? RECONNECTING : errorText(error)
-
-// A refused expiry in plain words, the message a canister trapped with, or
-// else the error without the stack trace a failed fetch carries
+// A refused expiry in plain words: one that a fresh request does not get past
+// is a clock that is off. Or the message a canister trapped with, or else the
+// error without the stack trace a failed fetch carries.
 export function errorText(error: unknown): string {
-  if (expiryRefused(error)) return `${INTERRUPTED} Try again in a moment.`
+  if (expiryRefused(error))
+    return "The mail server refuses this device's time. Check that its date and time are set automatically, then reload this page."
   const text = error instanceof Error ? error.message : String(error)
   const trapped =
     /with message: '([\s\S]*?)'\.?\s+Consider/.exec(text) ??
