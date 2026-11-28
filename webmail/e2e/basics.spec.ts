@@ -2,7 +2,7 @@
 // and sending.
 // Each spec file runs on a backend of its own (freshBackend in support.ts).
 
-import { expect, test } from '@playwright/test'
+import { expect, test, type Route } from '@playwright/test'
 import { asUser } from './as_user'
 import { env } from './local'
 import {
@@ -10,6 +10,7 @@ import {
   asAlice,
   backend,
   bodyOf,
+  callsTo,
   compose,
   deliver,
   DOMAIN,
@@ -808,6 +809,96 @@ test('Refresh shows new mail straight away', async ({ browser }) => {
   await expect(
     page.locator('button.message', { hasText: 'Refresh ibis' })
   ).toBeVisible({ timeout: 5_000 })
+  await context.close()
+})
+
+// The network's answer to a request whose expiry has passed
+function refuseExpiry(route: Route) {
+  const now = Date.now()
+  const time = (ms: number) =>
+    new Date(ms).toISOString().replace('T', ' ').replace('Z', '000000 UTC')
+  return route.fulfill({
+    status: 400,
+    contentType: 'text/plain',
+    body:
+      'Invalid request expiry: Specified ingress_expiry not within expected range: ' +
+      `Minimum allowed expiry: ${time(now)}, ` +
+      `Maximum allowed expiry: ${time(now + 330_000)}, ` +
+      `Provided expiry: ${time(now - 11_000)}`,
+  })
+}
+
+test('a list read refused for its expiry, as one signed before a phone slept, is asked again at once, every time', async ({
+  browser,
+}) => {
+  const { context, page } = await signedIn(browser, USER_B)
+  await expect(page.getByTestId('address')).toHaveText(`bob@${DOMAIN}`)
+  const messages = page.getByRole('region', { name: 'Messages' })
+  // A list read gets through only right after one was refused: the next
+  // timed refresh comes too late. Not by its bytes: the test's identity signs
+  // the same bytes the same way, and a query has no nonce and an expiry
+  // rounded to the minute, so one signed anew within that minute is the same
+  // request. A real refusal is of one signed minutes before.
+  let refusedAt = 0
+  await page.route('**/api/*/canister/*/*', (route) => {
+    if (!callsTo(route.request(), 'mail_list')) return route.fallback()
+    if (Date.now() - refusedAt < 10_000) {
+      refusedAt = 0
+      return route.fallback()
+    }
+    refusedAt = Date.now()
+    return refuseExpiry(route)
+  })
+  // The agent itself asks again only at its first refusal: the second and
+  // later ones are the page's
+  for (const bird of ['Signed ibis', 'Signed stilt', 'Signed godwit']) {
+    deliver({ to: 'bob', subject: bird, body: '<p>x</p>' })
+    await waitDrained()
+    await refreshList(page)
+    await expect(
+      page.locator('button.message', { hasText: bird })
+    ).toBeVisible()
+    await expect(messages.getByRole('alert')).toHaveCount(0)
+  }
+  await context.close()
+})
+
+test("a refused action says to check whether it went through, and a read refused every time says to check the device's time", async ({
+  browser,
+}) => {
+  deliver({ to: 'bob', subject: 'Refused avocet', body: '<p>x</p>' })
+  await waitDrained()
+  const { context, page } = await signedIn(browser, USER_B)
+  await expect(page.getByTestId('address')).toHaveText(`bob@${DOMAIN}`)
+  const messages = page.getByRole('region', { name: 'Messages' })
+  await expect(
+    page.locator('button.message', { hasText: 'Refused avocet' })
+  ).toBeVisible()
+
+  // An update is not asked again, as it may have run
+  const calls = /\/api\/v\d\/canister\/[^/]+\/call$/
+  await page.route(calls, refuseExpiry)
+  await messages
+    .getByRole('button', { name: 'Star Refused avocet', exact: true })
+    .click()
+  await expect(messages.getByRole('alert')).toHaveText(
+    'The connection to the mail server was interrupted. Check whether this went through before trying again.'
+  )
+  await page.unroute(calls)
+
+  // A read refused however often it is signed anew
+  const lists = (route: Route) =>
+    callsTo(route.request(), 'mail_list')
+      ? refuseExpiry(route)
+      : route.fallback()
+  await page.route('**/api/*/canister/*/*', lists)
+  await refreshList(page)
+  await expect(messages.getByRole('alert')).toHaveText(
+    "The mail server refuses this device's time. Check that its date and time are set automatically, then reload this page."
+  )
+  await page.unroute('**/api/*/canister/*/*', lists)
+  await refreshList(page)
+  await expect(messages.getByRole('alert')).toHaveCount(0)
   await context.close()
 })
 

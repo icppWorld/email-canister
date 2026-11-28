@@ -2,7 +2,9 @@
 
 import {
   Actor,
+  AgentError,
   HttpAgent,
+  IngressExpiryInvalidErrorCode,
   type ActorSubclass,
   type Identity,
 } from '@icp-sdk/core/agent'
@@ -317,7 +319,12 @@ export function createBackend(identity: Identity): Backend {
     agent,
     canisterId: deployment().backend,
   })
-  return retryingWhileBusy(actor as unknown as Backend)
+  const queries = new Set(
+    Actor.interfaceOf(actor)
+      ._fields.filter(([, method]) => method.annotations.includes('query'))
+      .map(([name]) => name)
+  )
+  return retrying(actor as unknown as Backend, queries)
 }
 
 // The backend's methods of the mailbox `local`
@@ -340,25 +347,35 @@ export function mailbox(backend: Backend, local: string): Mailbox {
 // A call answers "busy:" while the mailbox's file cannot be opened, which a
 // short wait covers. A download answers "downloading:" instead: it can last
 // minutes, so the reader sees that at once.
-const BUSY_RETRIES = 3
+//
+// The network refuses a request whose expiry has passed, as one signed before
+// a phone slept and sent when it woke. A query is asked again at once, signed
+// anew. An update is not: one refused while its result was awaited may have
+// run already.
+const RETRIES = 3
 const BUSY_WAIT_MS = 1500
 
-function retryingWhileBusy(backend: Backend): Backend {
+function retrying(backend: Backend, queries: Set<string>): Backend {
   return new Proxy(backend, {
     get(target, name, receiver) {
       const method = Reflect.get(target, name, receiver)
       if (typeof method !== 'function') return method
+      const query = typeof name === 'string' && queries.has(name)
       return async (...args: unknown[]) => {
         for (let attempt = 0; ; attempt++) {
           try {
             return await method.apply(target, args)
           } catch (error) {
+            const refused = expiryRefused(error)
+            if (refused && !query)
+              throw new Error(UNCONFIRMED, { cause: error })
             if (
-              attempt >= BUSY_RETRIES ||
-              !errorText(error).startsWith('busy:')
+              attempt >= RETRIES ||
+              !(refused || errorText(error).startsWith('busy:'))
             )
               throw error
-            await new Promise((resolve) => setTimeout(resolve, BUSY_WAIT_MS))
+            if (!refused)
+              await new Promise((resolve) => setTimeout(resolve, BUSY_WAIT_MS))
           }
         }
       }
@@ -366,9 +383,18 @@ function retryingWhileBusy(backend: Backend): Backend {
   })
 }
 
-// The message a canister trapped with, or else the error without the stack
-// trace a failed fetch carries
+const expiryRefused = (error: unknown) =>
+  error instanceof AgentError && error.hasCode(IngressExpiryInvalidErrorCode)
+
+const UNCONFIRMED =
+  'The connection to the mail server was interrupted. Check whether this went through before trying again.'
+
+// A refused expiry in plain words: one that a fresh request does not get past
+// is a clock that is off. Or the message a canister trapped with, or else the
+// error without the stack trace a failed fetch carries.
 export function errorText(error: unknown): string {
+  if (expiryRefused(error))
+    return "The mail server refuses this device's time. Check that its date and time are set automatically, then reload this page."
   const text = error instanceof Error ? error.message : String(error)
   const trapped =
     /with message: '([\s\S]*?)'\.?\s+Consider/.exec(text) ??
